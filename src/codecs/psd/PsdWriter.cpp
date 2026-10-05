@@ -88,6 +88,13 @@ Result<Bytes> encodePsd(const PsdWriteRequest& request) {
 
         records.insert(records.end(), {'8', 'B', 'I', 'M'});
         const char* blendKey = "norm";
+        switch (layer.blend) {
+        case BlendMode::Normal: blendKey = "norm"; break;
+        case BlendMode::Multiply: blendKey = "mul "; break;
+        case BlendMode::Screen: blendKey = "scrn"; break;
+        case BlendMode::Darken: blendKey = "dark"; break;
+        case BlendMode::Lighten: blendKey = "lite"; break;
+        }
         records.insert(records.end(), blendKey, blendKey + 4);
         records.push_back(layer.opacity);
         records.push_back(0);
