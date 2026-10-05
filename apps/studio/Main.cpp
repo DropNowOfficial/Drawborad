@@ -56,7 +56,7 @@ int main(int argc,char**argv){
         QObject::connect(window,&QQuickWindow::frameSwapped,window,[&,count]{
             if(++*count!=2)return;std::optional<std::string> active;auto iface=window->rendererInterface();auto raw=static_cast<ID3D11Device*>(iface->getResource(window,QSGRendererInterface::DeviceResource));
             if(raw){IDXGIDevice*device=nullptr;if(SUCCEEDED(raw->QueryInterface(__uuidof(IDXGIDevice),reinterpret_cast<void**>(&device)))){IDXGIAdapter*adapter=nullptr;if(SUCCEEDED(device->GetAdapter(&adapter))){DXGI_ADAPTER_DESC desc{};if(SUCCEEDED(adapter->GetDesc(&desc))){std::ostringstream s;s<<std::hex<<std::setfill('0')<<std::setw(8)<<std::uint32_t(desc.AdapterLuid.HighPart)<<std::setw(8)<<desc.AdapterLuid.LowPart;active=s.str();}adapter->Release();}device->Release();}}
-            QMetaObject::invokeMethod(&app,[&,active]{auto r=collectDeviceReport();r.activeRenderLuid=active;r.sceneGraph="Direct3D11";int code=writeReport(path,r);if(!active||!r.moduleScanCompleted||!r.webviewModules.empty()||window->width()!=1280||window->height()!=800)code=1;app.exit(code);},Qt::QueuedConnection);
+            QMetaObject::invokeMethod(&app,[&,active]{auto r=collectDeviceReport();r.activeRenderLuid=active;r.sceneGraph="Direct3D11";int code=writeReport(path,r);auto canvas=window->findChild<QQuickItem*>("nativeCanvas");if(!active||!r.moduleScanCompleted||!r.webviewModules.empty()||window->width()!=1280||window->height()!=800||!canvas||canvas->width()<600||canvas->height()<500)code=1;app.exit(code);},Qt::QueuedConnection);
         },Qt::DirectConnection);
         QTimer::singleShot(30000,&app,[&]{app.exit(3);});QTimer::singleShot(100,window,[window]{window->update();});
     }
