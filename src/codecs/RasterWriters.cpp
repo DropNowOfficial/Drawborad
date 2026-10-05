@@ -184,15 +184,25 @@ tmsize_t tiffRead(thandle_t h,void* data,tmsize_t n){
     return tmsize_t(take);
 }
 tmsize_t tiffWrite(thandle_t h,void* data,tmsize_t n){
-    auto* m=static_cast<TiffMemory*>(h);if(n<0)return -1;
-    const auto end=m->pos+toff_t(n);if(end>std::numeric_limits<std::size_t>::max())return -1;
-    if(std::size_t(end)>m->data.size())m->data.resize(std::size_t(end));
-    std::memcpy(m->data.data()+m->pos,data,std::size_t(n));m->pos=end;return n;
+    auto* m=static_cast<TiffMemory*>(h);
+    if(n<0)return -1;
+    const auto end=m->pos+toff_t(n);
+    if(end>std::numeric_limits<std::size_t>::max())return -1;
+    if(std::size_t(end)>m->data.size())
+        m->data.resize(std::size_t(end));
+    std::memcpy(m->data.data()+m->pos,data,std::size_t(n));
+    m->pos=end;
+    return n;
 }
 toff_t tiffSeek(thandle_t h,toff_t off,int whence){
-    auto* m=static_cast<TiffMemory*>(h);toff_t next=0;
-    if(whence==SEEK_SET)next=off;else if(whence==SEEK_CUR)next=m->pos+off;else if(whence==SEEK_END)next=m->data.size()+off;else return toff_t(-1);
-    m->pos=next;return next;
+    auto* m=static_cast<TiffMemory*>(h);
+    toff_t next=0;
+    if(whence==SEEK_SET) next=off;
+    else if(whence==SEEK_CUR) next=m->pos+off;
+    else if(whence==SEEK_END) next=m->data.size()+off;
+    else return toff_t(-1);
+    m->pos=next;
+    return next;
 }
 int tiffClose(thandle_t){return 0;}
 toff_t tiffSize(thandle_t h){return static_cast<TiffMemory*>(h)->data.size();}
