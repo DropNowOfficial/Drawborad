@@ -190,8 +190,8 @@ Result<InferenceOutput> OrtSession::run(const InferenceRequest& q, std::stop_tok
         }
         result.peakBytes = knownTensorBytes;
         return result;
-    } catch (const Ort::Exception&) {
-        return error(ErrorCode::CorruptData, "model.onnxruntime-error");
+    } catch (const Ort::Exception& ex) {
+        return Error{ErrorCode::CorruptData, "model.onnxruntime-error", ex.what()};
     } catch (const std::bad_alloc&) {
         return error(ErrorCode::BudgetExceeded, "model.runtime-allocation");
     }
