@@ -113,7 +113,8 @@ Result<InferenceOutput> OrtSession::run(const InferenceRequest& q, std::stop_tok
             if (q.tensorRefs[i].size() % sizeof(float))
                 return error(ErrorCode::InvalidInput, "model.input-byte-alignment");
             const auto elements = q.tensorRefs[i].size() / sizeof(float);
-            auto type = session.GetInputTypeInfo(i).GetTensorTypeAndShapeInfo();
+            auto inputTypeInfo = session.GetInputTypeInfo(i);
+            auto type = inputTypeInfo.GetTensorTypeAndShapeInfo();
             const auto runtimeInputType = type.GetElementType();
             if (runtimeInputType != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
                 return Error{ErrorCode::UnsupportedFeature, "model.runtime-input-dtype",
