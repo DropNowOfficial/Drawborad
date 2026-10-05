@@ -1,6 +1,7 @@
 #include "Test.h"
 #include "codecs/ExportService.h"
 #include "codecs/RasterWriters.h"
+#include "codecs/LayerArchive.h"
 using namespace drawborad;
 TEST("C06 CMYK to PNG requires explicit RGB conversion consent"){ExportRequest r;r.format=ExportFormat::Png;r.path="x.png";r.size={10,10};CHECK(!preflightExport(ColorMode::CMYK,r));r.conversionConsent=true;auto p=preflightExport(ColorMode::CMYK,r);CHECK(p);CHECK(p.value().requiresRgbConversion);}
 TEST("C06 JPEG alpha requires matte choice"){ExportRequest r;r.format=ExportFormat::Jpeg;r.path="x.jpg";r.size={10,10};r.alpha=true;CHECK(!preflightExport(ColorMode::RGB,r));r.matteChosen=true;CHECK(preflightExport(ColorMode::RGB,r));}
@@ -40,4 +41,44 @@ TEST("C06 writeRaster atomically publishes actual encoded bytes"){
     NativeFileIO io; auto bytes=io.read(path,1024*1024); CHECK(bytes); CHECK(bytes.value()[0]==0x89);
     CHECK(report.value().hashes[0]==sha256(bytes.value()));
     std::filesystem::remove(path);
+}
+
+namespace {
+std::string firstZipName(const Bytes& b){
+    if(b.size()<30||b[0]!='P'||b[1]!='K'||b[2]!=3||b[3]!=4)return {};
+    auto n=std::uint16_t(b[26]|(std::uint16_t(b[27])<<8));
+    if(30u+n>b.size())return {};
+    return std::string(b.begin()+30,b.begin()+30+n);
+}
+std::string firstZipData(const Bytes& b){
+    if(b.size()<30)return {};
+    auto n=std::uint16_t(b[26]|(std::uint16_t(b[27])<<8));
+    auto extra=std::uint16_t(b[28]|(std::uint16_t(b[29])<<8));
+    auto size=std::uint32_t(b[18])|(std::uint32_t(b[19])<<8)|(std::uint32_t(b[20])<<16)|(std::uint32_t(b[21])<<24);
+    auto start=30u+n+extra;
+    if(start+size>b.size())return {};
+    return std::string(b.begin()+start,b.begin()+start+size);
+}
+}
+TEST("C06 OpenRaster starts with uncompressed mimetype and contains real PNG layers"){
+    RasterEncodingOptions o; auto p=rgba8();
+    ArchiveLayer layer; layer.name="图层 & one"; layer.pixels=p; layer.opacity=.5; layer.blend=BlendMode::Multiply;
+    std::array<ArchiveLayer,1> layers{layer};
+    auto ora=encodeOra({2,2},layers,p,o); CHECK(ora);
+    CHECK(firstZipName(ora.value())=="mimetype");
+    CHECK(firstZipData(ora.value())=="image/openraster");
+    std::string all(ora.value().begin(),ora.value().end());
+    CHECK(all.find("stack.xml")!=std::string::npos);
+    CHECK(all.find("data/layer0.png")!=std::string::npos);
+    CHECK(all.find("mergedimage.png")!=std::string::npos);
+}
+TEST("C06 layer ZIP carries a manifest and Unicode layer name"){
+    RasterEncodingOptions o; auto p=rgba8();
+    ArchiveLayer layer; layer.name="前景"; layer.pixels=p; layer.x=12; layer.y=-4;
+    std::array<ArchiveLayer,1> layers{layer};
+    auto z=encodeLayerZip({2,2},layers,o); CHECK(z);
+    CHECK(firstZipName(z.value())=="manifest.json");
+    auto manifest=firstZipData(z.value());
+    CHECK(manifest.find("layers/0.png")!=std::string::npos);
+    CHECK(manifest.find("12")!=std::string::npos);
 }
