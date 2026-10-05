@@ -46,6 +46,25 @@ std::string xml(std::string_view s){
     for(char c:s){switch(c){case '&':o+="&amp;";break;case '<':o+="&lt;";break;case '>':o+="&gt;";break;case '"':o+="&quot;";break;case '\'':o+="&apos;";break;default:o+=c;}}
     return o;
 }
+std::string json(std::string_view s){
+    static const char hex[]="0123456789abcdef";
+    std::string o;
+    for(unsigned char c:s){
+        switch(c){
+        case '"': o+="\\\""; break;
+        case '\\': o+="\\\\"; break;
+        case '\b': o+="\\b"; break;
+        case '\f': o+="\\f"; break;
+        case '\n': o+="\\n"; break;
+        case '\r': o+="\\r"; break;
+        case '\t': o+="\\t"; break;
+        default:
+            if(c<0x20){o+="\\u00";o+=hex[c>>4];o+=hex[c&15];}
+            else o+=char(c);
+        }
+    }
+    return o;
+}
 const char* composite(BlendMode b){
     switch(b){case BlendMode::Normal:return "svg:src-over";case BlendMode::Multiply:return "svg:multiply";case BlendMode::Screen:return "svg:screen";case BlendMode::Darken:return "svg:darken";case BlendMode::Lighten:return "svg:lighten";}
     return "svg:src-over";
