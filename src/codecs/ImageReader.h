@@ -4,6 +4,7 @@
 #include "core/PixelFormat.h"
 #include <filesystem>
 #include <stop_token>
+#include <optional>
 namespace drawborad {
 using InputPath = std::filesystem::path;
 enum class ImageFormat { Png, Jpeg, Webp, Tiff, Bmp, Psd, Psb, Heic, Unknown };
@@ -18,7 +19,7 @@ struct InputInfo {
     bool hasAlpha{};
     std::uint16_t orientation{1};
 };
-struct ImportedImage { InputInfo info; Bytes encodedSource; };
+struct ImportedImage { InputInfo info; Bytes encodedSource; std::optional<TileData> decodedPixels; };
 Result<InputInfo> preflightInput(const InputPath&, const ResourceBudget&);
 Result<ImportedImage> decodeImage(const InputPath&, const DecodeOptions&, std::stop_token = {});
 }
