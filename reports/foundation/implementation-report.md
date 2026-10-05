@@ -7,25 +7,29 @@ Scope: approved native foundation plan only. Original remote plan commit:
 
 | Task | Implemented | Evidence | Remaining acceptance |
 |---|---|---|---|
-| F01 | Dependency verifier, explicit developer acquisition, offline verification, presets, task runner | 12 verifier + 4 runner tests; deliberately unqualified Windows lock returns exit 2 | Real Windows artifact acquisition, digests, DLL/ABI/security/license qualification **Blocked** |
-| F02 | Checked free dimensions, PPI, resource estimates, RGB/CMYK U8/U16 descriptors | 6 native cases, including overflow/NaN/custom aspect/CMYKA16 | Target MSVC build not run |
-| F03 | Object/stage tree, immutable snapshots, resource DAG, commands, undo/redo | 14 native cases including 10,000 edits/undo/redo, locked ancestors and mutable-alias rejection | Pixel flattening is not implemented here; composite merge/split preserves structure |
-| F04 | Tile store, SHA-256, delta journal, atomic save/backup, recovery, leases, autosave clock, history budget | 14 native cases; injected write/flush/replace failures; every-byte truncation; real file roundtrips | Windows flush/replace/locking and power-loss qualification **Blocked** |
-| F05 | Worker protocol, stale/nonce/hash checks, resource admission, cancellation; Win32 transport source | 12 native policy cases plus real child-process probe | Win32 pipe/Job Object/read-only mapping test **Blocked** |
-| F06 | Controller, Qt/QML shell source, diagnostic CLI and platform smoke runner | 4 controller/diagnostic cases and real Linux diagnostic executable | Qt/MSVC build, WARP and actual hardware D3D11 startup **Blocked** |
+| F01 | Dependency verifier, explicit developer acquisition, offline verification, presets, task runner | Windows 11 x64 validation configure/build succeeds with MSVC 19.42 + Qt 6.12; F01 and F01.Runner pass | Release dependency artifact digests, ABI/security/license qualification are still pending |
+| F02 | Checked free dimensions, PPI, resource estimates, RGB/CMYK U8/U16 descriptors | MSVC Windows test passes, plus portable overflow/NaN/custom-aspect/CMYKA16 coverage | No foundation blocker |
+| F03 | Object/stage tree, immutable snapshots, resource DAG, commands, undo/redo | MSVC Windows test passes; portable suite includes 10,000 edits/undo/redo, locked ancestors and mutable-alias rejection | Pixel flattening remains a later rendering task |
+| F04 | Tile store, SHA-256, delta journal, atomic save/backup, recovery, leases, autosave clock, history budget | MSVC Windows test passes; injected failure and truncation recovery cases pass | Destructive power-loss qualification remains a later release durability test |
+| F05 | Worker protocol, stale/nonce/hash checks, resource admission, cancellation; Win32 transport | F05, F05.NativeTransport and F05.ProcessProtocol all pass on Windows | No foundation blocker |
+| F06 | Controller, Qt/QML shell, diagnostic CLI and platform smoke runner | Qt/MSVC build passes; WARP and hardware D3D11 startup pass; active adapter verified as RTX 4070 Laptop GPU | No foundation blocker |
 
-**The six tasks are implemented at source level with tested portable components;
-full Windows acceptance is not complete.** No Windows EXE/installer is presented.
-F01 in particular is intentionally not marked complete: its vendor qualification
-artifacts cannot be invented. Later rendering/ICC/PSD/AI/UX tasks are not claimed.
+**The Windows development-validation gate for F01–F06 now passes.** This does
+not mean release dependency qualification, installer qualification, destructive
+power-loss testing, later renderer/ICC/PSD/AI work, or production benchmarks are
+complete.
 
 ## Actual runs
 
-Each final configuration (`lab-debug`, `lab-release`, `lab-asan`) ran ten CTest
-entries: **eight passed, zero failed, two skipped**. The skipped entries are
-`F05.NativeTransport` and `F06`, both guarded by an explicit Windows prerequisite.
-CTest's generic “100% tests passed” headline includes these skips; this report does
-not count them as passes. See the three JUnit files and `test-summary.json`.
+Portable final configurations (`lab-debug`, `lab-release`, `lab-asan`) ran ten
+CTest entries: **eight passed, zero failed, two skipped** because Windows-only
+transport and window tests were unavailable in the lab environment.
+
+A subsequent Windows 11 x64 validation run on the target machine configured and
+built the Qt desktop target with MSVC 19.42 and Qt 6.12. The complete validation
+suite then reported **10/10 tests passed, zero failed**. This includes
+`F05.NativeTransport`, `F05.ProcessProtocol`, and the `F06` WARP/hardware Qt
+startup test.
 
 The ASan run enabled `detect_leaks=1:halt_on_error=1`; UBSan used `halt_on_error=1`.
 The portable suite contains 50 C++ behavior cases and 16 Python unit cases. A real
@@ -33,9 +37,13 @@ native worker process additionally handles hello/cancel and rejects empty,
 truncated and oversized frames. The policy fake worker tests do not qualify the
 real Windows transport.
 
-No benchmark was run on the user's 185H/32GB/4070 Laptop machine. Linux timing is
-not quoted as Windows performance. No real Qt render adapter or CUDA device was
-invented in diagnostics; absent fields remain absent.
+The target-machine diagnostic run reports an Intel Core Ultra 9 185H, 32 GB RAM,
+22 logical threads, Direct3D 11 scene graph, and an NVIDIA GeForce RTX 4070 Laptop
+GPU with about 8 GB dedicated memory. Qt's active render LUID
+`000000000001167b` matches the NVIDIA adapter LUID and the CUDA device LUID.
+The Qt scene-graph log independently reports the NVIDIA adapter as “using this
+adapter”. No WebView modules were detected. These are validation facts, not a
+rendering-performance benchmark.
 
 ## Review and regressions
 
@@ -106,12 +114,17 @@ Deferred minor: DXGI's raw diagnostic driver fields are not yet presented in a
 polished consumer-facing label. Native diagnostics preserve measured information.
 No release blocker is relabeled as a minor.
 
-## Next mandatory acceptance, not a new product questionnaire
+## Next engineering gate
 
-Acquire/qualify the real Windows dependency set, compile with the pinned MSVC/Qt
-combination, run `F05.NativeTransport` and `F06` on WARP and the actual GPU, and
-exercise native durability and window responsiveness. Do not change skipped tests
-to unconditional passes or mark the release lock qualified without evidence.
+The Windows development-validation blockers are closed. Proceed to the next
+approved implementation batch: tile-backed canvas/render cache and color/file
+interoperability work.
+
+Release dependency qualification remains separate. Do not mark the release lock
+qualified until the shipped dependency artifacts have real digests, ABI/security
+checks, and license records. Destructive power-loss, installer, Photoshop
+interoperability, and long-duration performance tests also remain later release
+gates.
 
 Relevant implementation references (interfaces, not proof of our runtime behavior):
 
@@ -120,3 +133,27 @@ Relevant implementation references (interfaces, not proof of our runtime behavio
 - https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew
 - https://learn.microsoft.com/en-us/cpp/sanitizers/asan
 - https://doc.qt.io/qt-6/qquickwindow.html
+
+
+## Windows target-machine validation — 2026-10-05
+
+Observed target-machine results supplied from a fresh PowerShell session:
+
+- Global `PATH` still resolved an unrelated P4V `Qt6Core.dll` first.
+- CTest nevertheless passed F06 after the project added a test-local Qt 6.12
+  `PATH` prepend. This confirms the runtime-isolation fix rather than relying on
+  a modified global environment.
+- `ctest --preset win-validation --output-on-failure`:
+  **10/10 passed, 0 failed**, total reported time 4.49 s.
+- Qt scene graph: `Direct3D11`.
+- Qt D3D11 adapter: `NVIDIA GeForce RTX 4070 Laptop GPU`.
+- Active render LUID: `000000000001167b`.
+- NVIDIA adapter LUID: `000000000001167b`.
+- CUDA device 0: `NVIDIA GeForce RTX 4070 Laptop GPU`, same LUID.
+- Intel Arc adapters were enumerated but not selected.
+- Microsoft Basic Render Driver was enumerated as software but not selected.
+- Diagnostic warnings: none.
+
+The reported OS version string is `Windows 10.0.26200`; Windows 11 uses the NT
+10.0 version family, so this string is not treated as evidence that the machine is
+running Windows 10.
