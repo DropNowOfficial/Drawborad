@@ -25,7 +25,7 @@ TEST("M02 real ONNX Runtime executes a verified float32 model") {
     request.tensorRefs = {input};
 
     auto output = session.run(request);
-    CHECK(output);
+    if (!output) throw std::runtime_error(output.error().messageKey + ": " + output.error().diagnosticId);
     CHECK(output.value().tensorRefs.size() == 1);
     CHECK(output.value().tensorRefs[0] == input);
     CHECK(output.value().peakBytes >= input.size() * 2);
