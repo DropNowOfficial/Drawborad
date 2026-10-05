@@ -55,12 +55,12 @@ void putHashes(Writer& w,const std::vector<Hash>& hs){w.u64(hs.size());for(auto 
 std::vector<Hash> hashes(Reader& r){auto n=r.count();std::vector<Hash> v;v.reserve(n);while(n--)v.push_back(r.hash());return v;}
 void put(Writer& w,const LayerNode& n){
  w.id(n.id);w.id(n.parent);w.id(n.objectId);w.u64(std::uint64_t(n.kind));w.text(n.name);w.text(n.stage);w.hash(n.maskId);w.hash(n.sourceResource);putHashes(w,n.content);
- for(auto a:n.transform.affine)w.real(a);w.real(n.opacity);w.u64(std::uint64_t(n.blend));w.boolean(n.visible);w.boolean(n.locked);w.u64(std::uint64_t(n.sourceKind));
+ for(auto a:n.transform.affine){w.real(a);}w.real(n.opacity);w.u64(std::uint64_t(n.blend));w.boolean(n.visible);w.boolean(n.locked);w.u64(std::uint64_t(n.sourceKind));
  w.u64(std::bit_cast<std::uint64_t>(n.bounds.x));w.u64(std::bit_cast<std::uint64_t>(n.bounds.y));w.u64(n.bounds.width);w.u64(n.bounds.height);putIds(w,n.children);putIds(w,n.provenance);w.boolean(n.composite);
 }
 LayerNode node(Reader& r){
  LayerNode n;n.id=r.id();n.parent=r.id();n.objectId=r.id();auto k=r.u64();if(k>3)throw binary::Invalid{};n.kind=NodeKind(k);n.name=r.text();n.stage=r.text(256);n.maskId=r.hash();n.sourceResource=r.hash();n.content=hashes(r);
- for(auto& a:n.transform.affine)a=r.real();n.opacity=r.real();auto b=r.u64();if(b>4)throw binary::Invalid{};n.blend=BlendMode(b);n.visible=r.boolean();n.locked=r.boolean();auto s=r.u64();if(s>2)throw binary::Invalid{};n.sourceKind=SourceKind(s);
+ for(auto& a:n.transform.affine){a=r.real();}n.opacity=r.real();auto b=r.u64();if(b>4)throw binary::Invalid{};n.blend=BlendMode(b);n.visible=r.boolean();n.locked=r.boolean();auto s=r.u64();if(s>2)throw binary::Invalid{};n.sourceKind=SourceKind(s);
  n.bounds={std::bit_cast<std::int64_t>(r.u64()),std::bit_cast<std::int64_t>(r.u64()),r.u64(),r.u64()};n.children=ids(r);n.provenance=ids(r);n.composite=r.boolean();return n;
 }
 void put(Writer& w,const Resource& a){w.hash(a.id);w.u64(std::uint64_t(a.kind));putHashes(w,a.dependencies);w.hash(sha256(*a.bytes));w.blob(*a.bytes);}
