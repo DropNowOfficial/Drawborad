@@ -1,14 +1,23 @@
 #pragma once
 #include "segmentation/ProposalEngine.h"
+#include <limits>
 namespace drawborad {
 enum class MaskEditOp { AddBrush, SubtractBrush, Feather, Grow, Shrink, Merge, Split, Transform, Lock, Unlock };
-struct MaskEdit { MaskEditOp operation{MaskEditOp::AddBrush}; std::size_t objectIndex{}; Rect region{}; double radiusPx{}; Revision expectedRevision{}; };
+struct MaskEdit {
+    MaskEditOp operation{MaskEditOp::AddBrush};
+    std::size_t objectIndex{};
+    Rect region{};
+    double radiusPx{};
+    Revision expectedRevision{};
+    std::size_t secondaryIndex{std::numeric_limits<std::size_t>::max()};
+    LayerTransform transform{};
+};
 struct ReviewedObjects { std::vector<Bytes> masks; Revision confirmedRevision{}; bool canReconstruct{}; };
 class ReviewSession {
     ProposalSet proposals_;
     MaskSet masks_;
     Revision revision_{};
-    struct UndoState { MaskSet masks; std::vector<bool> locked; };
+    struct UndoState { ProposalSet proposals; MaskSet masks; std::vector<bool> locked; };
     std::vector<UndoState> undo_;
     std::vector<bool> locked_;
   public:
