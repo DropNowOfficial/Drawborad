@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
+import Drawborad.Native 1.0
 ApplicationWindow {
     id: window
     objectName: "nativeWindow"
@@ -31,12 +32,7 @@ ApplicationWindow {
         anchors.fill: parent; anchors.margins: 24; spacing: 24
         Rectangle {
             Layout.fillWidth: true; Layout.fillHeight: true; color: "#323235"; radius: 10
-            Rectangle {
-                anchors.centerIn: parent
-                width: Math.min(parent.width - 64, (parent.height - 64) * 0.78)
-                height: width / 0.78
-                color: "#faf9f6"; visible: studio.hasDocument
-            }
+            NativeCanvas { anchors.fill: parent; anchors.margins: 24; visible: studio.hasDocument; bridge: studio }
             Label { anchors.centerIn: parent; visible: !studio.hasDocument; text: qsTr("Create a document to begin"); color: "#bcbcc4"; font.pixelSize: 18 }
         }
         ColumnLayout {

@@ -85,7 +85,6 @@ Result<void> validateSnapshot(const DocumentSnapshot& s) {
     }
     if (listed.size() + 1 != ns.size())
         return error(ErrorCode::CorruptData, "node.unreachable");
-    // Separate DAG: ownership is not inferred from resource dependencies.
     std::map<Hash, int> colors;
     for (auto& [id, r] : *s.resources) {
         if (id.empty() || r.id != id || !r.bytes || r.bytes->size() > 64ull * 1024 * 1024 ||
@@ -116,10 +115,16 @@ Result<void> validateSnapshot(const DocumentSnapshot& s) {
     for (auto& e : *s.eventIndex) {
         if (e.id.empty() || !events.insert(e.id).second || e.geometry.empty() ||
             e.geometry.size() > 1000000 || e.startUs > e.endUs || !validColor(e.color, f.mode) ||
-            e.color.profileId != s.spec.colorSpec.profileId || e.engineVersion == 0 ||
-            e.toolId.empty() || e.toolId.size() > 256)
+            e.color.profileId != s.spec.colorSpec.profileId ||
+            (e.engineVersion != 1 && e.engineVersion != 2) || e.toolId.empty() ||
+            e.toolId.size() > 256 || !std::isfinite(e.style.width) || e.style.width <= 0 ||
+            e.style.width > 8192 || !std::isfinite(e.style.opacity) || e.style.opacity < 0 ||
+            e.style.opacity > 1 || !std::isfinite(e.style.hardness) || e.style.hardness < 0 ||
+            e.style.hardness > 1 || e.style.angle > 7 ||
+            (e.style.shape != NibShape::Round && e.style.shape != NibShape::Chisel) ||
+            (!e.style.grain.empty() && e.style.grain.size() != 64) ||
+            (e.engineVersion == 1 && e.style != StrokeStyle{}))
             return error(ErrorCode::CorruptData, "event.invalid");
-        // Events belonging to deleted layers remain in history for provenance/undo.
         std::uint64_t last = 0;
         for (auto& p : e.geometry) {
             if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.pressure) ||
@@ -186,12 +191,8 @@ Result<ChangeSet> Document::restore(std::vector<DocumentSnapshot>& from,
     state_ = std::move(next);
     return c;
 }
-Result<ChangeSet> Document::undo() {
-    return restore(undo_, redo_);
-}
-Result<ChangeSet> Document::redo() {
-    return restore(redo_, undo_);
-}
+Result<ChangeSet> Document::undo() { return restore(undo_, redo_); }
+Result<ChangeSet> Document::redo() { return restore(redo_, undo_); }
 Result<ChangeSet> Document::commitExternal(const DocumentSnapshot& next, Revision expected) {
     if (state_.revision != expected || expected == UINT64_MAX || next.revision != expected + 1 ||
         next.documentId != state_.documentId)
@@ -255,9 +256,6 @@ Result<ChangeSet> Document::commitExternal(const DocumentSnapshot& next, Revisio
         if (std::find(c.changedNodes.begin(), c.changedNodes.end(), id) == c.changedNodes.end())
             c.changedNodes.push_back(id);
     }
-    // A worker batch may contain brushes whose footprint is defined by a later
-    // renderer version. Conservatively invalidate the document until R01 owns
-    // exact event-to-tile bounds; never omit an event-only change.
     if (!c.changedNodes.empty())
         c.dirtyRegions.push_back({0, 0, state_.spec.pixelSize.width, state_.spec.pixelSize.height});
     undo_.push_back(state_);
@@ -265,5 +263,4 @@ Result<ChangeSet> Document::commitExternal(const DocumentSnapshot& next, Revisio
     state_ = next;
     return c;
 }
-
 } // namespace drawborad

@@ -1,0 +1,6 @@
+#include "ReplayEngine.h"
+namespace drawborad {
+Result<ReplayFrame> ReplayEngine::seek(const ReplayRequest& q,std::stop_token stop){if(q.eventCount>q.snapshot.eventIndex->size())return error(ErrorCode::InvalidInput,"replay.event-count");EventLimit l{q.snapshot.revision,q.eventCount,q.timeUs};auto t=renderer_.render(q.snapshot,q.tile,l,stop);if(!t)return t.error();ReplayFrame f{t.value(),canonicalPixelHash(t.value()),q.eventCount,{}};for(std::size_t i=0;i<q.eventCount;i++)if(q.snapshot.eventIndex->at(i).endUs<=q.timeUs)f.completedEventIds.push_back(q.snapshot.eventIndex->at(i).id);last_=q;hasLast_=true;return f;}
+Result<ReplayFrame> ReplayEngine::step(EventDirection d,std::stop_token stop){if(!hasLast_)return error(ErrorCode::InvalidInput,"replay.no-position");auto q=last_;if(d==EventDirection::Forward){if(q.eventCount<q.snapshot.eventIndex->size())q.eventCount++;}else if(q.eventCount)q.eventCount--;return seek(q,stop);}
+Result<ReplayFrame> ReplayEngine::newMarks(const ReplayRequest& q,std::size_t first,std::stop_token stop){if(first>q.eventCount)return error(ErrorCode::InvalidInput,"replay.range");auto r=seek(q,stop);if(!r)return r.error();r.value().completedEventIds.clear();for(std::size_t i=first;i<q.eventCount;i++)if(q.snapshot.eventIndex->at(i).endUs<=q.timeUs)r.value().completedEventIds.push_back(q.snapshot.eventIndex->at(i).id);return r;}
+}

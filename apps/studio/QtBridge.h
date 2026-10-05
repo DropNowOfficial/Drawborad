@@ -20,20 +20,15 @@ class QtBridge : public QObject {
     QTimer poll_;
     std::optional<JobId> running_;
     QString workerMessage_;
-
   public:
     explicit QtBridge(QObject* parent = nullptr);
     QString message() const;
     QString dimensions() const;
-    bool hasDocument() const {
-        return bool(app_.snapshot());
-    }
-    bool dirty() const {
-        return app_.dirty();
-    }
-    bool busy() const {
-        return running_.has_value();
-    }
+    bool hasDocument() const { return bool(app_.snapshot()); }
+    bool dirty() const { return app_.dirty(); }
+    bool busy() const { return running_.has_value(); }
+    std::optional<DocumentSnapshot> canvasSnapshot() const { return app_.snapshot(); }
+    Result<void> commitStroke(const StrokeEvent&);
     Q_INVOKABLE void createDocument(double width, double height, double ppi);
     Q_INVOKABLE void openUrl(const QUrl&);
     Q_INVOKABLE void saveUrl(const QUrl&);
@@ -42,4 +37,4 @@ class QtBridge : public QObject {
   signals:
     void changed();
 };
-} // namespace drawborad
+}

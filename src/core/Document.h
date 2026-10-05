@@ -40,6 +40,16 @@ struct InputSample {
     std::uint32_t deviceKind{}, capabilities{};
     bool operator==(const InputSample&) const = default;
 };
+enum class NibShape : std::uint8_t { Round, Chisel };
+struct StrokeStyle {
+    double width = 1.0;
+    double opacity = 1.0;
+    double hardness = 1.0;
+    NibShape shape = NibShape::Round;
+    std::uint8_t angle = 0;
+    Bytes grain;
+    bool operator==(const StrokeStyle&) const = default;
+};
 struct StrokeEvent {
     Id id;
     NodeId objectId, layerId;
@@ -50,6 +60,7 @@ struct StrokeEvent {
     std::uint64_t seed{};
     Revision parentRevision{};
     std::uint32_t engineVersion = 1;
+    StrokeStyle style;
     bool operator==(const StrokeEvent&) const = default;
 };
 using NodeMap = std::map<NodeId, LayerNode>;
