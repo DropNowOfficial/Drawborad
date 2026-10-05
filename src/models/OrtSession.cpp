@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cstring>
 #include <limits>
+#include <cmath>
 #ifdef DRAWBORAD_HAS_ONNXRUNTIME
 #include <onnxruntime_cxx_api.h>
 #endif
@@ -184,9 +185,13 @@ Result<InferenceOutput> OrtSession::run(const InferenceRequest& q, std::stop_tok
             if (!manifest_.outputs.empty() && manifest_.outputs[i].byteLimit &&
                 bytesResult.value() > manifest_.outputs[i].byteLimit)
                 return error(ErrorCode::BudgetExceeded, "model.output-byte-limit");
+            const auto* outputData = outputs[i].GetTensorData<float>();
+            for (std::size_t n = 0; n < count; ++n)
+                if (!std::isfinite(outputData[n]))
+                    return error(ErrorCode::CorruptData, "model.nonfinite-output");
             Bytes bytes(std::size_t(bytesResult.value()));
             if (!bytes.empty())
-                std::memcpy(bytes.data(), outputs[i].GetTensorData<float>(), bytes.size());
+                std::memcpy(bytes.data(), outputData, bytes.size());
             auto next = checkedAdd(knownTensorBytes, bytes.size());
             if (!next)
                 return next.error();
