@@ -85,3 +85,5 @@ feature_task(M03 tests/segmentation/ProposalTests.cpp)
 feature_task(M04 tests/review/MaskEditTests.cpp)
 feature_task(M05 tests/models/CustomAdapterTests.cpp)
 feature_task(M06 tests/jobs/QueueTests.cpp)
+
+feature_task(X13.Stress tests/stress/ColorModelStressTests.cpp)
