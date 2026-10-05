@@ -1,9 +1,27 @@
 #include "ImageReader.h"
-#include <fstream>
+#include "storage/FileIO.h"
+#include <algorithm>
+#include <array>
 #include <cstring>
-namespace drawborad {
-Result<ImportedImage> decodeImage(const InputPath&p,const DecodeOptions&o,std::stop_token stop){if(stop.stop_requested())return error(ErrorCode::Cancelled,"codec.cancelled");ResourceBudget b;b.ramReclaimBytes=o.maxDecodedBytes;b.scratchBytes=o.maxDecodedBytes;auto info=preflightInput(p,b);if(!info)return info.error();if(info.value().estimatedBytes>o.maxDecodedBytes)return error(ErrorCode::BudgetExceeded,"codec.decode-budget");
- if(info.value().format!=ImageFormat::BMP)return error(ErrorCode::UnsupportedFeature,"codec.backend-not-qualified");
- std::ifstream f(p,std::ios::binary);Bytes h(54);f.read((char*)h.data(),54);if(f.gcount()!=54)return error(ErrorCode::CorruptData,"bmp.header");auto le32=[](const std::uint8_t*q){return std::uint32_t(q[0]|(q[1]<<8)|(q[2]<<16)|(q[3]<<24));};auto off=le32(h.data()+10),w=le32(h.data()+18),hh=le32(h.data()+22);auto bpp=std::uint16_t(h[28]|(h[29]<<8));auto comp=le32(h.data()+30);if(!w||!hh||(bpp!=24&&bpp!=32)||comp!=0)return error(ErrorCode::UnsupportedFeature,"bmp.layout");std::uint64_t stride=((std::uint64_t(w)*bpp+31)/32)*4;auto need=checkedMultiply(stride,hh);if(!need||need.value()>o.maxDecodedBytes)return error(ErrorCode::BudgetExceeded,"bmp.size");f.seekg(off);Bytes src(std::size_t(need.value()));f.read((char*)src.data(),std::streamsize(src.size()));if(std::size_t(f.gcount())!=src.size())return error(ErrorCode::CorruptData,"bmp.truncated");
- ImportedImage out;out.info=info.value();out.provenance="bmp:qualified-native";out.pixels.width=w;out.pixels.height=hh;out.pixels.format={ColorMode::RGB,Depth::U8,true};out.pixels.rowStride=std::uint64_t(w)*4;out.pixels.bytes.resize(std::size_t(out.pixels.rowStride*hh));for(std::uint32_t y=0;y<hh;y++){auto*sr=src.data()+std::size_t((hh-1-y)*stride);auto*dr=out.pixels.bytes.data()+std::size_t(y*out.pixels.rowStride);for(std::uint32_t x=0;x<w;x++){dr[x*4+0]=sr[x*(bpp/8)+2];dr[x*4+1]=sr[x*(bpp/8)+1];dr[x*4+2]=sr[x*(bpp/8)+0];dr[x*4+3]=bpp==32?sr[x*4+3]:255;}}return out;}
+namespace drawborad { namespace {
+std::uint16_t be16(const std::uint8_t* p){return std::uint16_t((p[0]<<8)|p[1]);}
+std::uint32_t be32(const std::uint8_t* p){return (std::uint32_t(p[0])<<24)|(std::uint32_t(p[1])<<16)|(std::uint32_t(p[2])<<8)|p[3];}
+std::uint32_t le32(const std::uint8_t* p){return std::uint32_t(p[0])|(std::uint32_t(p[1])<<8)|(std::uint32_t(p[2])<<16)|(std::uint32_t(p[3])<<24);}
+bool sig(std::span<const std::uint8_t>b,std::size_t o,const char*s,std::size_t n){return o+n<=b.size()&&std::memcmp(b.data()+o,s,n)==0;}
+Result<InputInfo> inspect(std::span<const std::uint8_t>b){
+ if(b.size()<12)return error(ErrorCode::CorruptData,"codec.short");
+ InputInfo i;i.sourceHash=sha256(b);
+ if(sig(b,0,"\x89PNG\r\n\x1a\n",8)){if(b.size()<24||!sig(b,12,"IHDR",4))return error(ErrorCode::CorruptData,"png.header");i.format=ImageFormat::Png;i.originalSize={be32(b.data()+16),be32(b.data()+20)};i.hasAlpha=true;}
+ else if(b[0]==0xff&&b[1]==0xd8){i.format=ImageFormat::Jpeg;std::size_t p=2;bool found=false;while(p+4<=b.size()){if(b[p]!=0xff){++p;continue;}auto m=b[p+1];p+=2;if(m==0xd9||m==0xda)break;if(p+2>b.size())break;auto n=be16(b.data()+p);if(n<2||p+n>b.size())return error(ErrorCode::CorruptData,"jpeg.segment");if((m>=0xc0&&m<=0xc3)&&n>=7){i.originalSize={be16(b.data()+p+5),be16(b.data()+p+3)};found=true;break;}p+=n;}if(!found)return error(ErrorCode::CorruptData,"jpeg.dimensions");}
+ else if(sig(b,0,"RIFF",4)&&sig(b,8,"WEBP",4)){i.format=ImageFormat::Webp;if(b.size()>=30&&sig(b,12,"VP8X",4)){auto w=1u+std::uint32_t(b[24])+(std::uint32_t(b[25])<<8)+(std::uint32_t(b[26])<<16);auto h=1u+std::uint32_t(b[27])+(std::uint32_t(b[28])<<8)+(std::uint32_t(b[29])<<16);i.originalSize={w,h};i.hasAlpha=(b[20]&0x10)!=0;}else return error(ErrorCode::UnsupportedFeature,"webp.non-vp8x-preflight");}
+ else if(sig(b,0,"BM",2)){if(b.size()<26)return error(ErrorCode::CorruptData,"bmp.header");i.format=ImageFormat::Bmp;i.originalSize={le32(b.data()+18),std::uint64_t(std::abs(std::int32_t(le32(b.data()+22))))};}
+ else if(sig(b,0,"8BPS",4)){if(b.size()<26)return error(ErrorCode::CorruptData,"psd.header");auto v=be16(b.data()+4);i.format=v==1?ImageFormat::Psd:v==2?ImageFormat::Psb:ImageFormat::Unknown;if(i.format==ImageFormat::Unknown)return error(ErrorCode::UnsupportedFeature,"psd.version");i.originalSize={be32(b.data()+18),be32(b.data()+14)};}
+ else if(sig(b,0,"II*\0",4)||sig(b,0,"MM\0*",4)){i.format=ImageFormat::Tiff;return error(ErrorCode::UnsupportedFeature,"tiff.preflight-needs-parser");}
+ else return error(ErrorCode::UnsupportedFeature,"codec.magic");
+ if(!i.originalSize.width||!i.originalSize.height)return error(ErrorCode::CorruptData,"codec.zero-size");
+ auto pixels=checkedMultiply(i.originalSize.width,i.originalSize.height);if(!pixels)return pixels.error();auto est=checkedMultiply(pixels.value(),8);if(!est)return est.error();i.estimatedBytes=est.value();i.orientedSize=i.originalSize;return i;
+}
+}
+Result<InputInfo> preflightInput(const InputPath& p,const ResourceBudget& budget){NativeFileIO io;auto b=io.read(p,std::min<std::uint64_t>(budget.scratchBytes,64*1024*1024));if(!b)return b.error();auto i=inspect(b.value());if(!i)return i.error();if(i.value().estimatedBytes>budget.ramReclaimBytes)return error(ErrorCode::BudgetExceeded,"codec.preflight-budget");return i;}
+Result<ImportedImage> decodeImage(const InputPath& p,const DecodeOptions& o,std::stop_token st){if(st.stop_requested())return error(ErrorCode::Cancelled,"codec.cancelled");NativeFileIO io;auto b=io.read(p,o.limits.encodedBytes);if(!b)return b.error();auto i=inspect(b.value());if(!i)return i.error();if(i.value().estimatedBytes>o.limits.decodedBytes)return error(ErrorCode::BudgetExceeded,"codec.decode-budget");if(st.stop_requested())return error(ErrorCode::Cancelled,"codec.cancelled");return ImportedImage{i.value(),std::move(b.value())};}
 }
