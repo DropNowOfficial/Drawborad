@@ -31,12 +31,22 @@ ApplicationWindow {
     RowLayout {
         anchors.fill: parent; anchors.margins: 24; spacing: 24
         Rectangle {
-            Layout.fillWidth: true; Layout.fillHeight: true; color: "#323235"; radius: 10
+            objectName: "canvasPanel"
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.minimumWidth: 600
+            color: "#323235"
+            radius: 10
             NativeCanvas { objectName: "nativeCanvas"; anchors.fill: parent; anchors.margins: 24; visible: studio.hasDocument; bridge: studio }
             Label { anchors.centerIn: parent; visible: !studio.hasDocument; text: qsTr("Create a document to begin"); color: "#bcbcc4"; font.pixelSize: 18 }
         }
         ColumnLayout {
-            Layout.preferredWidth: 280; Layout.alignment: Qt.AlignTop; spacing: 18
+            Layout.minimumWidth: 280
+            Layout.preferredWidth: 280
+            Layout.maximumWidth: 280
+            Layout.fillWidth: false
+            Layout.alignment: Qt.AlignTop
+            spacing: 18
             Label { text: qsTr("Document"); color: "#f5f5f7"; font.pixelSize: 23 }
             Label { text: studio.dimensions; color: "#b5b5bd"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Label { text: qsTr("This build includes the native tiled canvas, mouse/tablet stroke input, replay core, DPI coordinates and cache recovery foundation."); color: "#a5a5ae"; wrapMode: Text.Wrap; Layout.fillWidth: true; lineHeight: 1.45 }
