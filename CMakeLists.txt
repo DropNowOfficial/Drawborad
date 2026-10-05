@@ -39,6 +39,26 @@ if(DRAWBORAD_LCMS2_INCLUDE AND DRAWBORAD_LCMS2_LIBRARY)
   target_compile_definitions(drawborad_color PRIVATE DRAWBORAD_HAS_LCMS2=1)
 endif()
 
+add_library(drawborad_codecs STATIC
+  src/codecs/ImageReader.cpp
+  src/codecs/psd/PsdReader.cpp
+  src/codecs/psd/PsdWriter.cpp
+  src/codecs/ExportService.cpp
+  src/codecs/AtomicExport.cpp)
+target_include_directories(drawborad_codecs PUBLIC ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(drawborad_codecs PUBLIC drawborad_core drawborad_color)
+
+add_library(drawborad_models STATIC
+  src/models/PackageVerifier.cpp
+  src/models/ModelRegistry.cpp
+  src/models/OrtSession.cpp
+  src/models/AdapterRegistry.cpp
+  src/segmentation/ProposalEngine.cpp
+  src/review/ReviewSession.cpp
+  src/jobs/ImageQueue.cpp)
+target_include_directories(drawborad_models PUBLIC ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(drawborad_models PUBLIC drawborad_core drawborad_color)
+
 add_library(drawborad_render STATIC
   src/render/ReferenceRenderer.cpp src/render/CoverageRasterizer.cpp src/render/PixelBlend.cpp
   src/render/TileCache.cpp src/render/DisplayCache.cpp src/render/CacheEvictor.cpp
