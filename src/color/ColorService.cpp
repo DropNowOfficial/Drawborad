@@ -28,7 +28,9 @@ Result<TileData> ColorService::convert(const TileData&in,const ColorTransform&t)
  auto d=profiles_.get(t.dst);
  if(!d)return d.error();
  ColorMode sm=s.value().colorSpace==IccColorSpace::CMYK?ColorMode::CMYK:ColorMode::RGB;
- if(sm!=in.format.mode)return error(ErrorCode::InvalidProfile,"icc.input-space-mismatch");if(!in.format.alpha)return error(ErrorCode::UnsupportedFeature,"icc.alpha-required");if(t.src==t.dst){auto o=in;o.profileId=t.dst;return o;}
+ if(sm!=in.format.mode)return error(ErrorCode::InvalidProfile,"icc.input-space-mismatch");
+ if(!in.format.alpha)return error(ErrorCode::UnsupportedFeature,"icc.alpha-required");
+ if(t.src==t.dst){auto o=in;o.profileId=t.dst;return o;}
 #ifndef DRAWBORAD_HAS_LCMS2
  return error(ErrorCode::UnsupportedFeature,"icc.lcms2-unavailable");
 #else
