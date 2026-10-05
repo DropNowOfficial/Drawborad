@@ -1,0 +1,37 @@
+name: Windows color model developer SDK
+on:
+  push:
+    branches: [impl/color-formats-models-c01-c07-m01-m06]
+    paths: [.github/workflows/cm-windows-sdk.yml]
+permissions:
+  contents: read
+jobs:
+  sdk:
+    runs-on: windows-2022
+    timeout-minutes: 40
+    steps:
+      - name: Build native dependencies with recorded source versions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git clone --depth 1 https://github.com/microsoft/vcpkg.git vcpkg
+          if ($LASTEXITCODE) { throw 'vcpkg checkout failed' }
+          .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+          if ($LASTEXITCODE) { throw 'vcpkg bootstrap failed' }
+          $env:VCPKG_DISABLE_METRICS='1'
+          .\vcpkg\vcpkg.exe install lcms libpng libjpeg-turbo 'tiff[core,jpeg,lzma,zip]' 'libwebp[core]' nlohmann-json --triplet x64-windows --x-install-root="$PWD\sdk\vcpkg"
+          if ($LASTEXITCODE) { throw 'native SDK build failed' }
+          git -C vcpkg rev-parse HEAD | Set-Content sdk\vcpkg-commit.txt
+          New-Item -ItemType Directory -Force sdk\ort | Out-Null
+          Invoke-WebRequest https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-win-x64-1.23.2.zip -OutFile ort.zip
+          Expand-Archive ort.zip sdk\ort
+          Get-ChildItem sdk -Recurse -File | ForEach-Object { $hash=(Get-FileHash $_.FullName -Algorithm SHA256).Hash; "$hash  $($_.FullName.Substring($PWD.Path.Length+1))" } | Set-Content sdk-SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: windows-cm-private-sdk
+          path: |
+            sdk
+            sdk-SHA256SUMS
+            vcpkg/buildtrees/*/*.log
+          retention-days: 7
