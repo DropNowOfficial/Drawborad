@@ -119,6 +119,13 @@ Result<PhotoshopInfo> readPhotoshopHeader(std::span<const std::uint8_t> bytes,
             return error(ErrorCode::CorruptData, "psd.layer-blend");
         if (std::memcmp(bytes.data() + reader.position, "8BIM", 4) != 0)
             return error(ErrorCode::CorruptData, "psd.blend-signature");
+        const auto* key = bytes.data() + reader.position + 4;
+        if (std::memcmp(key, "norm", 4) == 0) layer.blend = BlendMode::Normal;
+        else if (std::memcmp(key, "mul ", 4) == 0) layer.blend = BlendMode::Multiply;
+        else if (std::memcmp(key, "scrn", 4) == 0) layer.blend = BlendMode::Screen;
+        else if (std::memcmp(key, "dark", 4) == 0) layer.blend = BlendMode::Darken;
+        else if (std::memcmp(key, "lite", 4) == 0) layer.blend = BlendMode::Lighten;
+        else return error(ErrorCode::UnsupportedFeature, "psd.blend-mode");
 
         reader.position += 8;
         layer.opacity = bytes[reader.position];
