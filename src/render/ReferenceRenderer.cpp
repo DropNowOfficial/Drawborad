@@ -7,12 +7,15 @@ namespace {
 bool intersects(Rect a,Rect b){return a.x<std::int64_t(b.x+std::int64_t(b.width))&&b.x<a.x+std::int64_t(a.width)&&a.y<std::int64_t(b.y+std::int64_t(b.height))&&b.y<a.y+std::int64_t(a.height);}
 std::int64_t tileAt(std::int64_t p){return p>=0?p/TileSide:-((-p+TileSide-1)/TileSide);}
 Result<Rect> tileRect(const DocumentSnapshot&s,TileKey k){
- if(k.mip)return error(ErrorCode::UnsupportedFeature,"render.pigment-mip");if(k.tileX<0||k.tileY<0)return error(ErrorCode::InvalidInput,"render.tile-outside");
+ if(k.mip)return error(ErrorCode::UnsupportedFeature,"render.pigment-mip");
+ if(k.tileX<0||k.tileY<0)return error(ErrorCode::InvalidInput,"render.tile-outside");
  auto x=std::uint64_t(k.tileX)*TileSide,y=std::uint64_t(k.tileY)*TileSide;if(x>=s.spec.pixelSize.width||y>=s.spec.pixelSize.height)return error(ErrorCode::InvalidInput,"render.tile-outside");
  return Rect{std::int64_t(x),std::int64_t(y),std::min<std::uint64_t>(TileSide,s.spec.pixelSize.width-x),std::min<std::uint64_t>(TileSide,s.spec.pixelSize.height-y)};
 }}
 Result<void> ReferenceRenderer::prepare(const DocumentSnapshot&s){
- if(prepared_&&prepared_->events==s.eventIndex&&prepared_->color==s.spec.colorSpec)return{};auto valid=validateSnapshot(s);if(!valid)return valid.error();
+ if(prepared_&&prepared_->events==s.eventIndex&&prepared_->color==s.spec.colorSpec)return{};
+ auto valid=validateSnapshot(s);
+ if(!valid)return valid.error();
  auto p=std::make_shared<PreparedEvents>();p->events=s.eventIndex;p->color=s.spec.colorSpec;p->bounds.reserve(s.eventIndex->size());
  for(std::size_t i=0;i<s.eventIndex->size();i++){auto b=strokeBounds(s.eventIndex->at(i));if(!b)return b.error();p->bounds.push_back(b.value());auto x0=tileAt(b.value().x),y0=tileAt(b.value().y),x1=tileAt(b.value().x+std::int64_t(b.value().width)-1),y1=tileAt(b.value().y+std::int64_t(b.value().height)-1);if((x1-x0+1)*(y1-y0+1)>4096)return error(ErrorCode::BudgetExceeded,"render.bounds");for(auto y=y0;y<=y1;y++)for(auto x=x0;x<=x1;x++)p->tiles[{s.eventIndex->at(i).layerId,x,y,0}].push_back(i);stats_.indexedEvents++;}
  prepared_=std::move(p);return{};
@@ -21,7 +24,8 @@ Result<std::vector<std::size_t>> ReferenceRenderer::candidates(const DocumentSna
 Result<TileData> ReferenceRenderer::render(const DocumentSnapshot&s,TileKey k,EventLimit l,std::stop_token stop){if(stop.stop_requested())return error(ErrorCode::Cancelled,"render.cancelled");auto r=tileRect(s,k);if(!r)return r.error();return renderRegion(s,k.nodeId,r.value(),l,stop);}
 Result<TileData> ReferenceRenderer::renderRegion(const DocumentSnapshot&s,NodeId id,Rect rect,EventLimit l,std::stop_token stop){TileData empty;return continueRegion(s,id,rect,l,0,empty,stop);}
 Result<TileData> ReferenceRenderer::continueRegion(const DocumentSnapshot&s,NodeId id,Rect rect,EventLimit l,std::uint64_t first,const TileData& checkpoint,std::stop_token stop){
- if(stop.stop_requested())return error(ErrorCode::Cancelled,"render.cancelled");if(l.revision!=s.revision)return error(ErrorCode::StaleRevision,"render.revision");
+ if(stop.stop_requested())return error(ErrorCode::Cancelled,"render.cancelled");
+ if(l.revision!=s.revision)return error(ErrorCode::StaleRevision,"render.revision");
  if(!rect.width||!rect.height||rect.width>TileSide||rect.height>TileSide||rect.x<0||rect.y<0||std::uint64_t(rect.x)+rect.width>s.spec.pixelSize.width||std::uint64_t(rect.y)+rect.height>s.spec.pixelSize.height)return error(ErrorCode::InvalidInput,"render.region");
  auto nit=s.nodes->find(id);if(nit==s.nodes->end()||nit->second.kind!=NodeKind::Layer)return error(ErrorCode::InvalidInput,"render.layer");if(nit->second.sourceKind!=SourceKind::Reconstructed||!nit->second.content.empty())return error(ErrorCode::UnsupportedFeature,"render.imported-content-needs-codec");if(!s.spec.colorSpec.format.alpha)return error(ErrorCode::UnsupportedFeature,"render.layer-requires-alpha");
  auto ok=prepare(s);if(!ok)return ok.error();TileData t;t.width=std::uint32_t(rect.width);t.height=std::uint32_t(rect.height);t.format=s.spec.colorSpec.format;t.profileId=s.spec.colorSpec.profileId;t.rowStride=rect.width*t.format.channelCount()*(t.format.depth==Depth::U16?2:1);try{t.bytes.resize(std::size_t(t.rowStride*t.height));}catch(const std::bad_alloc&){return error(ErrorCode::BudgetExceeded,"render.tile-allocation");}
