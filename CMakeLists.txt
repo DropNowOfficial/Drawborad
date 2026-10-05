@@ -27,6 +27,14 @@ else()
 endif()
 add_library(drawborad_core STATIC src/core/DocumentSpec.cpp src/core/Document.cpp src/core/CommandBus.cpp src/core/Digest.cpp src/storage/FileIO.cpp src/storage/TileStore.cpp src/storage/ProjectCodec.cpp src/storage/ProjectStore.cpp src/storage/Journal.cpp src/jobs/Protocol.cpp src/jobs/ResourceGovernor.cpp src/jobs/JobBroker.cpp src/jobs/WinWorkerHost.cpp src/platform/WinDiagnostics.cpp apps/studio/ApplicationController.cpp)
 target_include_directories(drawborad_core PUBLIC ${PROJECT_SOURCE_DIR}/src)
+add_library(drawborad_render STATIC
+  src/render/ReferenceRenderer.cpp src/render/CoverageRasterizer.cpp src/render/PixelBlend.cpp
+  src/render/TileCache.cpp src/render/DisplayCache.cpp src/render/CacheEvictor.cpp
+  src/brush/BrushEngine.cpp src/brush/SampleResampler.cpp src/platform/TabletInput.cpp
+  src/history/EventIndex.cpp src/history/ReplayEngine.cpp
+  src/view/Viewport.cpp src/view/HitTest.cpp src/platform/DeviceRecovery.cpp)
+target_include_directories(drawborad_render PUBLIC ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(drawborad_render PUBLIC drawborad_core)
 if(WIN32)
   target_compile_definitions(drawborad_core PUBLIC _WIN32_WINNT=0x0A00)
   target_link_libraries(drawborad_core PUBLIC advapi32 bcrypt dxgi shell32)
@@ -35,9 +43,9 @@ add_executable(DrawboradWorker apps/worker/Main.cpp)
 target_link_libraries(DrawboradWorker PRIVATE drawborad_core)
 if(DRAWBORAD_DESKTOP)
   qt_standard_project_setup(REQUIRES 6.12)
-  qt_add_executable(Drawborad apps/studio/Main.cpp apps/studio/QtBridge.cpp apps/studio/QtBridge.h)
+  qt_add_executable(Drawborad apps/studio/Main.cpp apps/studio/QtBridge.cpp apps/studio/QtBridge.h src/platform/CanvasItem.cpp src/platform/CanvasItem.h src/platform/CanvasRenderer.cpp)
   target_compile_definitions(Drawborad PRIVATE DRAWBORAD_HAS_QT)
-  target_link_libraries(Drawborad PRIVATE drawborad_core Qt6::Quick Qt6::QuickControls2 d3d11 dxgi)
+  target_link_libraries(Drawborad PRIVATE drawborad_core drawborad_render Qt6::Quick Qt6::QuickControls2 d3d11 dxgi)
   set_source_files_properties(ui/Main.qml PROPERTIES QT_RESOURCE_ALIAS Main.qml)
   qt_add_qml_module(Drawborad URI Drawborad VERSION 1.0 QML_FILES ui/Main.qml)
 else()

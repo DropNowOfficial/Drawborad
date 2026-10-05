@@ -8,11 +8,8 @@ function(native_task id source)
 endfunction()
 
 native_task(F02 tests/core/DocumentSpecTests.cpp)
-
 native_task(F03 tests/core/CommandTests.cpp)
-
 native_task(F04 tests/storage/RecoveryTests.cpp)
-
 native_task(F05 tests/jobs/BrokerTests.cpp)
 
 add_executable(worker_smoke ${PROJECT_SOURCE_DIR}/tests/jobs/WorkerSmoke.cpp)
@@ -30,14 +27,24 @@ else()
 endif()
 set_tests_properties(F06 PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
 if(WIN32 AND DRAWBORAD_DESKTOP)
-  # CTest must run against the same Qt runtime selected by find_package().
-  # This avoids PATH collisions with unrelated products that ship Qt DLLs
-  # (for example P4V) without changing the user's global environment.
   get_filename_component(_drawborad_qt_prefix "${Qt6_DIR}/../../.." ABSOLUTE)
-  set_tests_properties(
-    F06
-    PROPERTIES ENVIRONMENT_MODIFICATION
-               "PATH=path_list_prepend:${_drawborad_qt_prefix}/bin")
+  set_tests_properties(F06 PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_drawborad_qt_prefix}/bin")
 endif()
 
 add_test(NAME F01.Runner COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/build/test_task_runner.py)
+
+function(render_task id source)
+  add_executable(test_${id} ${PROJECT_SOURCE_DIR}/tests/support/TestMain.cpp ${PROJECT_SOURCE_DIR}/${source})
+  target_include_directories(test_${id} PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/tests/support ${PROJECT_SOURCE_DIR})
+  target_link_libraries(test_${id} PRIVATE drawborad_render)
+  add_test(NAME ${id} COMMAND test_${id})
+  set_tests_properties(${id} PROPERTIES TIMEOUT 60)
+endfunction()
+render_task(R01 tests/render/ReferenceTests.cpp)
+render_task(R02 tests/render/DirtyTileTests.cpp)
+render_task(R03 tests/brush/InputTests.cpp)
+render_task(R04 tests/history/ReplayTests.cpp)
+render_task(R05 tests/view/CoordinateTests.cpp)
+render_task(R06 tests/render/ResourceTests.cpp)
+add_executable(render_bench ${PROJECT_SOURCE_DIR}/tools/bench/render_bench.cpp)
+target_link_libraries(render_bench PRIVATE drawborad_render)
