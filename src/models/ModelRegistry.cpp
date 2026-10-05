@@ -1,4 +1,5 @@
 #include "ModelManifest.h"
+#include <algorithm>
 namespace drawborad {
 Result<ModelId> ModelRegistry::install(const PackagePath&p,TrustDecision trust){auto m=validatePackage(p);if(!m)return m.error();if(!m.value().signedPackage&&trust!=TrustDecision::UserAcceptedUntrusted)return error(ErrorCode::LicenseBlocked,"model.untrusted-consent");ModelId id;std::copy_n(m.value().sha256.bytes.begin(),16,id.bytes.begin());if(installed_.contains(id))return id;installed_[id]=m.value();roots_[id]=p;return id;}
 Result<void> ModelRegistry::remove(ModelId id){if(active_[id])return error(ErrorCode::Locked,"model.active");if(!installed_.erase(id))return error(ErrorCode::InvalidInput,"model.not-installed");roots_.erase(id);active_.erase(id);return{};}
