@@ -1,5 +1,6 @@
 #include "ImageReader.h"
 #include "storage/FileIO.h"
+#include "RasterReaders.h"
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -47,5 +48,21 @@ Result<InputInfo> inspect(std::span<const std::uint8_t>b){
 }
 }
 Result<InputInfo> preflightInput(const InputPath& p,const ResourceBudget& budget){NativeFileIO io;auto b=io.read(p,std::min<std::uint64_t>(budget.scratchBytes,64*1024*1024));if(!b)return b.error();auto i=inspect(b.value());if(!i)return i.error();if(i.value().estimatedBytes>budget.ramReclaimBytes)return error(ErrorCode::BudgetExceeded,"codec.preflight-budget");return i;}
-Result<ImportedImage> decodeImage(const InputPath& p,const DecodeOptions& o,std::stop_token st){if(st.stop_requested())return error(ErrorCode::Cancelled,"codec.cancelled");NativeFileIO io;auto b=io.read(p,o.limits.encodedBytes);if(!b)return b.error();auto i=inspect(b.value());if(!i)return i.error();if(i.value().estimatedBytes>o.limits.decodedBytes)return error(ErrorCode::BudgetExceeded,"codec.decode-budget");if(st.stop_requested())return error(ErrorCode::Cancelled,"codec.cancelled");return ImportedImage{i.value(),std::move(b.value())};}
+Result<ImportedImage> decodeImage(const InputPath& p,const DecodeOptions& o,std::stop_token st){
+ if(st.stop_requested())return error(ErrorCode::Cancelled,"codec.cancelled");
+ NativeFileIO io;
+ auto b=io.read(p,o.limits.encodedBytes);if(!b)return b.error();
+ auto i=inspect(b.value());if(!i)return i.error();
+ if(i.value().estimatedBytes>o.limits.decodedBytes)return error(ErrorCode::BudgetExceeded,"codec.decode-budget");
+ if(st.stop_requested())return error(ErrorCode::Cancelled,"codec.cancelled");
+ ImportedImage out{i.value(),b.value(),std::nullopt};
+ if(out.info.format==ImageFormat::Png||out.info.format==ImageFormat::Jpeg||
+    out.info.format==ImageFormat::Webp||out.info.format==ImageFormat::Tiff||
+    out.info.format==ImageFormat::Bmp){
+   auto decoded=decodeRasterBytes(out.encodedSource,out.info,o);
+   if(!decoded)return decoded.error();
+   out.decodedPixels=std::move(decoded.value());
+ }
+ return out;
+}
 }
