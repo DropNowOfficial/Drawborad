@@ -114,8 +114,10 @@ Result<InferenceOutput> OrtSession::run(const InferenceRequest& q, std::stop_tok
                 return error(ErrorCode::InvalidInput, "model.input-byte-alignment");
             const auto elements = q.tensorRefs[i].size() / sizeof(float);
             auto type = session.GetInputTypeInfo(i).GetTensorTypeAndShapeInfo();
-            if (type.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
-                return error(ErrorCode::UnsupportedFeature, "model.runtime-input-dtype");
+            const auto runtimeInputType = type.GetElementType();
+            if (runtimeInputType != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
+                return Error{ErrorCode::UnsupportedFeature, "model.runtime-input-dtype",
+                             inputNamesStorage.back() + ":" + std::to_string(int(runtimeInputType))};
             auto shape = type.GetShape();
             if (!manifest_.inputs.empty() && !manifest_.inputs[i].shape.empty())
                 shape = manifest_.inputs[i].shape;
@@ -170,8 +172,10 @@ Result<InferenceOutput> OrtSession::run(const InferenceRequest& q, std::stop_tok
             if (!outputs[i].IsTensor())
                 return error(ErrorCode::UnsupportedFeature, "model.non-tensor-output");
             auto info = outputs[i].GetTensorTypeAndShapeInfo();
-            if (info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
-                return error(ErrorCode::UnsupportedFeature, "model.runtime-output-dtype");
+            const auto runtimeOutputType = info.GetElementType();
+            if (runtimeOutputType != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
+                return Error{ErrorCode::UnsupportedFeature, "model.runtime-output-dtype",
+                             outputNamesStorage[i] + ":" + std::to_string(int(runtimeOutputType))};
             const auto count = info.GetElementCount();
             auto bytesResult = checkedMultiply(count, sizeof(float));
             if (!bytesResult)
