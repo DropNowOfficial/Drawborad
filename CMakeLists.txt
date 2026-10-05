@@ -45,6 +45,7 @@ add_library(drawborad_codecs STATIC
   src/codecs/psd/PsdWriter.cpp
   src/codecs/ExportService.cpp
   src/codecs/RasterWriters.cpp
+  src/codecs/LayerArchive.cpp
   src/codecs/AtomicExport.cpp)
 target_include_directories(drawborad_codecs PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(drawborad_codecs PUBLIC drawborad_core drawborad_color)
