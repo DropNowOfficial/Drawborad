@@ -13,6 +13,7 @@ struct ModelManifest {
     std::uint32_t schema{1};
     std::string taskId;
     std::filesystem::path weights;
+    std::filesystem::path resolvedWeights;
     Hash sha256{};
     std::vector<TensorSpec> inputs, outputs;
     std::string provider;
