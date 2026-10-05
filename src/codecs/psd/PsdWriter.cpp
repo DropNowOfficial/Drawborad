@@ -1,14 +1,172 @@
 #include "PsdWriter.h"
 #include "storage/FileIO.h"
-namespace drawborad { namespace {
-void p16(Bytes&b,std::uint16_t v){b.push_back(std::uint8_t(v>>8));b.push_back(std::uint8_t(v));}
-void p32(Bytes&b,std::uint32_t v){b.push_back(std::uint8_t(v>>24));b.push_back(std::uint8_t(v>>16));b.push_back(std::uint8_t(v>>8));b.push_back(std::uint8_t(v));}
-void p32s(Bytes&b,std::int32_t v){p32(b,std::uint32_t(v));}
+#include <algorithm>
+
+namespace drawborad {
+namespace {
+
+void put16(Bytes& bytes, std::uint16_t value) {
+    bytes.push_back(std::uint8_t(value >> 8));
+    bytes.push_back(std::uint8_t(value));
 }
-Result<Bytes> encodePsd(const PsdWriteRequest&q){if(!q.size.width||!q.size.height||q.size.width>30000||q.size.height>30000)return error(ErrorCode::UnsupportedFeature,"psd.dimension-limit");if(q.format.depth!=Depth::U8&&q.format.depth!=Depth::U16)return error(ErrorCode::UnsupportedFeature,"psd.depth");auto base=q.format.mode==ColorMode::RGB?3u:4u;Bytes b;auto add=[&](const char*s,std::size_t n){b.insert(b.end(),s,s+n);};add("8BPS",4);p16(b,1);b.insert(b.end(),6,0);p16(b,std::uint16_t(base+(q.format.alpha?1:0)));p32(b,std::uint32_t(q.size.height));p32(b,std::uint32_t(q.size.width));p16(b,std::uint16_t(q.format.depth));p16(b,q.format.mode==ColorMode::RGB?3:4);p32(b,0);p32(b,0);
- Bytes layer;Bytes records;p16(records,std::uint16_t(q.layers.size()));for(const auto& l:q.layers){if(l.pixels.width!=q.size.width||l.pixels.height!=q.size.height||l.pixels.format!=q.format)return error(ErrorCode::InvalidInput,"psd.layer-layout");p32s(records,0);p32s(records,0);p32(records,std::uint32_t(q.size.height));p32(records,std::uint32_t(q.size.width));auto cc=base+(q.format.alpha?1u:0u);p16(records,std::uint16_t(cc));for(unsigned c=0;c<cc;c++){p16(records,c<base?std::uint16_t(c):std::uint16_t(0xffff));auto channelBytes=2ull+q.size.width*q.size.height*(q.format.depth==Depth::U16?2ull:1ull);if(channelBytes>UINT32_MAX)return error(ErrorCode::BudgetExceeded,"psd.channel-size");p32(records,std::uint32_t(channelBytes));}records.insert(records.end(),{'8','B','I','M'});records.insert(records.end(),{'n','o','r','m'});records.push_back(l.opacity);records.push_back(0);records.push_back(0);records.push_back(0);Bytes extra;p32(extra,0);p32(extra,0);auto n=std::min<std::size_t>(255,l.name.size());extra.push_back(std::uint8_t(n));extra.insert(extra.end(),l.name.begin(),l.name.begin()+n);while(extra.size()%4)extra.push_back(0);p32(records,std::uint32_t(extra.size()));records.insert(records.end(),extra.begin(),extra.end());}
- Bytes channels;auto sample=q.format.depth==Depth::U16?2u:1u;for(const auto& l:q.layers){auto cc=base+(q.format.alpha?1u:0u);for(unsigned c=0;c<cc;c++){p16(channels,0);for(std::uint32_t y=0;y<l.pixels.height;y++)for(std::uint32_t x=0;x<l.pixels.width;x++){auto off=std::size_t(y*l.pixels.rowStride+x*cc*sample+c*sample);channels.insert(channels.end(),l.pixels.bytes.begin()+off,l.pixels.bytes.begin()+off+sample);}}}
- Bytes li;li.insert(li.end(),records.begin(),records.end());li.insert(li.end(),channels.begin(),channels.end());if(li.size()%2)li.push_back(0);p32(layer,std::uint32_t(li.size()));layer.insert(layer.end(),li.begin(),li.end());p32(layer,0);p32(b,std::uint32_t(layer.size()));b.insert(b.end(),layer.begin(),layer.end());
- p16(b,0);auto pixels=checkedMultiply(q.size.width,q.size.height);if(!pixels)return pixels.error();auto bytesPer=sample;for(unsigned c=0;c<base;c++)for(std::uint64_t i=0;i<pixels.value()*bytesPer;i++)b.push_back(0);return b;}
-Result<void> writePsd(const PsdWriteRequest&q,std::stop_token st){if(st.stop_requested())return error(ErrorCode::Cancelled,"psd.cancelled");auto b=encodePsd(q);if(!b)return b.error();NativeFileIO io;return atomicWrite(io,q.path,b.value());}
+
+void put32(Bytes& bytes, std::uint32_t value) {
+    bytes.push_back(std::uint8_t(value >> 24));
+    bytes.push_back(std::uint8_t(value >> 16));
+    bytes.push_back(std::uint8_t(value >> 8));
+    bytes.push_back(std::uint8_t(value));
 }
+
+void put32s(Bytes& bytes, std::int32_t value) {
+    put32(bytes, std::uint32_t(value));
+}
+
+} // namespace
+
+Result<Bytes> encodePsd(const PsdWriteRequest& request) {
+    if (!request.size.width || !request.size.height || request.size.width > 30000 ||
+        request.size.height > 30000)
+        return error(ErrorCode::UnsupportedFeature, "psd.dimension-limit");
+    if (request.format.depth != Depth::U8 && request.format.depth != Depth::U16)
+        return error(ErrorCode::UnsupportedFeature, "psd.depth");
+    if (request.layers.size() > std::size_t(INT16_MAX))
+        return error(ErrorCode::BudgetExceeded, "psd.layer-count");
+
+    const unsigned baseChannels = request.format.mode == ColorMode::RGB ? 3u : 4u;
+    const unsigned channelCount = baseChannels + (request.format.alpha ? 1u : 0u);
+    const unsigned sampleBytes = request.format.depth == Depth::U16 ? 2u : 1u;
+
+    Bytes output;
+    auto appendText = [&](const char* text, std::size_t length) {
+        output.insert(output.end(), text, text + length);
+    };
+
+    appendText("8BPS", 4);
+    put16(output, 1);
+    output.insert(output.end(), 6, 0);
+    put16(output, std::uint16_t(channelCount));
+    put32(output, std::uint32_t(request.size.height));
+    put32(output, std::uint32_t(request.size.width));
+    put16(output, std::uint16_t(request.format.depth));
+    put16(output, request.format.mode == ColorMode::RGB ? 3 : 4);
+    put32(output, 0);
+    put32(output, 0);
+
+    Bytes records;
+    put16(records, std::uint16_t(request.layers.size()));
+
+    for (const auto& layer : request.layers) {
+        if (layer.pixels.width != request.size.width || layer.pixels.height != request.size.height ||
+            layer.pixels.format != request.format)
+            return error(ErrorCode::InvalidInput, "psd.layer-layout");
+
+        const auto expectedRow =
+            request.size.width * std::uint64_t(channelCount) * std::uint64_t(sampleBytes);
+        if (layer.pixels.rowStride < expectedRow)
+            return error(ErrorCode::CorruptData, "psd.layer-stride");
+
+        put32s(records, 0);
+        put32s(records, 0);
+        put32(records, std::uint32_t(request.size.height));
+        put32(records, std::uint32_t(request.size.width));
+        put16(records, std::uint16_t(channelCount));
+
+        const auto pixelCount = checkedMultiply(request.size.width, request.size.height);
+        if (!pixelCount)
+            return pixelCount.error();
+        const auto channelPayload = checkedMultiply(pixelCount.value(), sampleBytes);
+        if (!channelPayload)
+            return channelPayload.error();
+        const auto channelBytes = checkedAdd(channelPayload.value(), 2);
+        if (!channelBytes || channelBytes.value() > UINT32_MAX)
+            return error(ErrorCode::BudgetExceeded, "psd.channel-size");
+
+        for (unsigned channel = 0; channel < channelCount; ++channel) {
+            put16(records, channel < baseChannels ? std::uint16_t(channel) : std::uint16_t(0xffff));
+            put32(records, std::uint32_t(channelBytes.value()));
+        }
+
+        records.insert(records.end(), {'8', 'B', 'I', 'M'});
+        const char* blendKey = "norm";
+        records.insert(records.end(), blendKey, blendKey + 4);
+        records.push_back(layer.opacity);
+        records.push_back(0);
+        records.push_back(0);
+        records.push_back(0);
+
+        Bytes extra;
+        put32(extra, 0);
+        put32(extra, 0);
+        const auto nameLength = std::min<std::size_t>(255, layer.name.size());
+        extra.push_back(std::uint8_t(nameLength));
+        extra.insert(extra.end(), layer.name.begin(), layer.name.begin() + std::ptrdiff_t(nameLength));
+        while (extra.size() % 4)
+            extra.push_back(0);
+
+        put32(records, std::uint32_t(extra.size()));
+        records.insert(records.end(), extra.begin(), extra.end());
+    }
+
+    Bytes channelData;
+    for (const auto& layer : request.layers) {
+        for (unsigned channel = 0; channel < channelCount; ++channel) {
+            put16(channelData, 0);
+            for (std::uint32_t y = 0; y < layer.pixels.height; ++y) {
+                for (std::uint32_t x = 0; x < layer.pixels.width; ++x) {
+                    const auto offset = std::size_t(
+                        std::uint64_t(y) * layer.pixels.rowStride +
+                        std::uint64_t(x) * channelCount * sampleBytes +
+                        std::uint64_t(channel) * sampleBytes);
+                    if (offset + sampleBytes > layer.pixels.bytes.size())
+                        return error(ErrorCode::CorruptData, "psd.layer-bytes");
+                    channelData.insert(channelData.end(),
+                                       layer.pixels.bytes.begin() + std::ptrdiff_t(offset),
+                                       layer.pixels.bytes.begin() +
+                                           std::ptrdiff_t(offset + sampleBytes));
+                }
+            }
+        }
+    }
+
+    Bytes layerInfo;
+    layerInfo.insert(layerInfo.end(), records.begin(), records.end());
+    layerInfo.insert(layerInfo.end(), channelData.begin(), channelData.end());
+    if (layerInfo.size() % 2)
+        layerInfo.push_back(0);
+
+    Bytes layerMask;
+    put32(layerMask, std::uint32_t(layerInfo.size()));
+    layerMask.insert(layerMask.end(), layerInfo.begin(), layerInfo.end());
+    put32(layerMask, 0);
+
+    if (layerMask.size() > UINT32_MAX)
+        return error(ErrorCode::BudgetExceeded, "psd.layer-mask-size");
+    put32(output, std::uint32_t(layerMask.size()));
+    output.insert(output.end(), layerMask.begin(), layerMask.end());
+
+    put16(output, 0);
+    const auto pixelCount = checkedMultiply(request.size.width, request.size.height);
+    if (!pixelCount)
+        return pixelCount.error();
+    const auto compositeBytes = checkedMultiply(pixelCount.value(), sampleBytes);
+    if (!compositeBytes)
+        return compositeBytes.error();
+    const auto allComposite = checkedMultiply(compositeBytes.value(), baseChannels);
+    if (!allComposite || allComposite.value() > SIZE_MAX)
+        return error(ErrorCode::BudgetExceeded, "psd.composite-size");
+    output.insert(output.end(), std::size_t(allComposite.value()), 0);
+
+    return output;
+}
+
+Result<void> writePsd(const PsdWriteRequest& request, std::stop_token stop) {
+    if (stop.stop_requested())
+        return error(ErrorCode::Cancelled, "psd.cancelled");
+    auto encoded = encodePsd(request);
+    if (!encoded)
+        return encoded.error();
+    NativeFileIO io;
+    return atomicWrite(io, request.path, encoded.value());
+}
+
+} // namespace drawborad
