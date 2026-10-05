@@ -32,7 +32,7 @@ TEST("C03 native PNG WebP and TIFF decode to pixels under resource limits"){
         auto path=writeEncoded("drawborad-c03-roundtrip"+ext,bytes.value());
         DecodeOptions options; options.limits.decodedBytes=1024*1024; options.limits.encodedBytes=1024*1024;
         auto decoded=decodeImage(path,options); CHECK(decoded); CHECK(decoded.value().decodedPixels.has_value());
-        CHECK(decoded.value().info.originalSize==PixelSize{2,2});
+        CHECK((decoded.value().info.originalSize==PixelSize{2,2}));
         CHECK(decoded.value().decodedPixels->width==2); CHECK(decoded.value().decodedPixels->height==2);
         CHECK(decoded.value().decodedPixels->format.mode==ColorMode::RGB);
         std::filesystem::remove(path);
@@ -45,6 +45,6 @@ TEST("C03 JPEG decode returns RGB pixels and strips alpha through explicit encod
     auto path=writeEncoded("drawborad-c03-roundtrip.jpg",bytes.value());
     DecodeOptions options; options.limits.decodedBytes=1024*1024; options.limits.encodedBytes=1024*1024;
     auto decoded=decodeImage(path,options); CHECK(decoded); CHECK(decoded.value().decodedPixels);
-    CHECK(decoded.value().decodedPixels->format==PixelFormat{ColorMode::RGB,Depth::U8,false});
+    CHECK((decoded.value().decodedPixels->format==PixelFormat{ColorMode::RGB,Depth::U8,false}));
     std::filesystem::remove(path);
 }
