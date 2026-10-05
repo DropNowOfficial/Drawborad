@@ -1,0 +1,32 @@
+name: Color and model native verification
+on:
+  push:
+    branches: [impl/color-formats-models-c01-c07-m01-m06]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source-and-core:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Archive exact tested source
+        run: git archive --format=zip --output=drawborad-source.zip HEAD
+      - name: Configure portable core
+        run: cmake --preset lab-debug
+      - name: Build portable core
+        run: cmake --build --preset lab-debug
+      - name: Run portable tests
+        run: ctest --preset lab-debug --output-on-failure --output-junit test-results.xml
+      - name: Retain source and test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: color-model-source-and-core
+          path: |
+            drawborad-source.zip
+            out/build/lab-debug/test-results.xml
+          retention-days: 7
