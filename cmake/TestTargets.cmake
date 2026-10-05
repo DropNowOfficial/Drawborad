@@ -32,6 +32,14 @@ if(WIN32 AND DRAWBORAD_DESKTOP)
 endif()
 
 add_test(NAME F01.Runner COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/build/test_task_runner.py)
+if(DRAWBORAD_DESKTOP)
+  add_test(
+    NAME R00.BuildFreshness
+    COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/tests/platform/test_build_freshness.py
+            ${CMAKE_BINARY_DIR}/drawborad_expected_build_token.txt
+            $<TARGET_FILE_DIR:Drawborad>/drawborad_build_token.txt)
+endif()
 
 function(render_task id source)
   add_executable(test_${id} ${PROJECT_SOURCE_DIR}/tests/support/TestMain.cpp ${PROJECT_SOURCE_DIR}/${source})
