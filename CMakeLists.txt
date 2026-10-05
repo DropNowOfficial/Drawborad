@@ -58,6 +58,20 @@ add_library(drawborad_models STATIC
   src/jobs/ImageQueue.cpp)
 target_include_directories(drawborad_models PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(drawborad_models PUBLIC drawborad_core drawborad_color)
+set(DRAWBORAD_ONNXRUNTIME_ROOT "" CACHE PATH "Offline ONNX Runtime SDK root")
+if(DRAWBORAD_ONNXRUNTIME_ROOT)
+  find_path(DRAWBORAD_ORT_INCLUDE onnxruntime_cxx_api.h
+    PATHS "${DRAWBORAD_ONNXRUNTIME_ROOT}/include" NO_DEFAULT_PATH)
+  find_library(DRAWBORAD_ORT_LIBRARY NAMES onnxruntime
+    PATHS "${DRAWBORAD_ONNXRUNTIME_ROOT}/lib" NO_DEFAULT_PATH)
+  if(NOT DRAWBORAD_ORT_INCLUDE OR NOT DRAWBORAD_ORT_LIBRARY)
+    message(FATAL_ERROR "DRAWBORAD_ONNXRUNTIME_ROOT does not contain include/onnxruntime_cxx_api.h and lib/onnxruntime")
+  endif()
+  target_include_directories(drawborad_models PRIVATE "${DRAWBORAD_ORT_INCLUDE}")
+  target_link_libraries(drawborad_models PRIVATE "${DRAWBORAD_ORT_LIBRARY}")
+  target_compile_definitions(drawborad_models PRIVATE DRAWBORAD_HAS_ONNXRUNTIME=1)
+  set(DRAWBORAD_HAS_ONNXRUNTIME TRUE)
+endif()
 
 add_library(drawborad_render STATIC
   src/render/ReferenceRenderer.cpp src/render/CoverageRasterizer.cpp src/render/PixelBlend.cpp
