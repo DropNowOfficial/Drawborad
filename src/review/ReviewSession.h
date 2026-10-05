@@ -8,7 +8,8 @@ class ReviewSession {
     ProposalSet proposals_;
     MaskSet masks_;
     Revision revision_{};
-    std::vector<MaskSet> undo_;
+    struct UndoState { MaskSet masks; std::vector<bool> locked; };
+    std::vector<UndoState> undo_;
     std::vector<bool> locked_;
   public:
     static Result<ReviewSession> create(const ProposalSet&,const MaskSet&,Revision);
