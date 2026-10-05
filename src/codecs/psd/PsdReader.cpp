@@ -1,17 +1,138 @@
 #include "PsdReader.h"
-#include "core/Document.h"
 #include <cstring>
-namespace drawborad { namespace {
-std::uint16_t u16(const std::uint8_t*p){return std::uint16_t((p[0]<<8)|p[1]);}
-std::uint32_t u32(const std::uint8_t*p){return (std::uint32_t(p[0])<<24)|(std::uint32_t(p[1])<<16)|(std::uint32_t(p[2])<<8)|p[3];}
-std::uint64_t u64(const std::uint8_t*p){return (std::uint64_t(u32(p))<<32)|u32(p+4);}
-struct R{std::span<const std::uint8_t>b;std::size_t p{};bool take(std::size_t n){if(n>b.size()-p)return false;p+=n;return true;}};
+
+namespace drawborad {
+namespace {
+
+std::uint16_t u16(const std::uint8_t* p) {
+    return std::uint16_t((p[0] << 8) | p[1]);
 }
-Result<PhotoshopInfo> readPhotoshopHeader(std::span<const std::uint8_t>b,const CodecLimits& lim){
- if(b.size()<26||std::memcmp(b.data(),"8BPS",4)!=0)return error(ErrorCode::CorruptData,"psd.signature");auto v=u16(b.data()+4);if(v!=1&&v!=2)return error(ErrorCode::UnsupportedFeature,"psd.version");PhotoshopInfo o;o.format=v==1?ImageFormat::Psd:ImageFormat::Psb;o.channels=u16(b.data()+12);o.size={u32(b.data()+18),u32(b.data()+14)};o.depth=u16(b.data()+22);o.colorMode=u16(b.data()+24);if(!o.size.width||!o.size.height||o.channels<1||o.channels>56||(o.depth!=8&&o.depth!=16))return error(ErrorCode::CorruptData,"psd.header-values");
- R r{b,26};for(int section=0;section<2;section++){if(!r.take(4))return error(ErrorCode::CorruptData,"psd.section-length");auto n=u32(b.data()+r.p-4);if(n>b.size()-r.p||!r.take(n))return error(ErrorCode::CorruptData,"psd.section-bounds");}
- auto lenBytes=v==1?4u:8u;if(!r.take(lenBytes))return error(ErrorCode::CorruptData,"psd.layer-mask-length");auto total=v==1?u32(b.data()+r.p-lenBytes):u64(b.data()+r.p-lenBytes);if(total>b.size()-r.p)return error(ErrorCode::CorruptData,"psd.layer-mask-bounds");if(total==0)return o;auto end=r.p+std::size_t(total);if(!r.take(lenBytes))return error(ErrorCode::CorruptData,"psd.layer-info-length");auto layerLen=v==1?u32(b.data()+r.p-lenBytes):u64(b.data()+r.p-lenBytes);if(layerLen>end-r.p)return error(ErrorCode::CorruptData,"psd.layer-info-bounds");if(layerLen==0)return o;if(!r.take(2))return error(ErrorCode::CorruptData,"psd.layer-count");auto count=std::int16_t(u16(b.data()+r.p-2));auto n=count<0?-count:count;if(std::uint64_t(n)>lim.nodes)return error(ErrorCode::BudgetExceeded,"psd.layer-count-limit");
- for(int k=0;k<n;k++){if(r.p+18>end)return error(ErrorCode::CorruptData,"psd.layer-record");PhotoshopLayerInfo li;li.top=std::int32_t(u32(b.data()+r.p));li.left=std::int32_t(u32(b.data()+r.p+4));li.bottom=std::int32_t(u32(b.data()+r.p+8));li.right=std::int32_t(u32(b.data()+r.p+12));r.p+=16;li.channels=u16(b.data()+r.p);r.p+=2;if(li.channels>56)return error(ErrorCode::CorruptData,"psd.channel-count");auto descriptor=v==1?6u:10u;if(std::uint64_t(li.channels)*descriptor>end-r.p)return error(ErrorCode::CorruptData,"psd.channel-records");r.p+=std::size_t(li.channels)*descriptor;if(r.p+16>end)return error(ErrorCode::CorruptData,"psd.layer-blend");if(std::memcmp(b.data()+r.p,"8BIM",4)!=0)return error(ErrorCode::CorruptData,"psd.blend-signature");r.p+=8;li.opacity=b[r.p];r.p+=4;auto extra=u32(b.data()+r.p);r.p+=4;if(extra>end-r.p)return error(ErrorCode::CorruptData,"psd.extra");r.p+=extra;o.layers.push_back(li);}
- return o;
+
+std::uint32_t u32(const std::uint8_t* p) {
+    return (std::uint32_t(p[0]) << 24) | (std::uint32_t(p[1]) << 16) |
+           (std::uint32_t(p[2]) << 8) | p[3];
 }
+
+std::uint64_t u64(const std::uint8_t* p) {
+    return (std::uint64_t(u32(p)) << 32) | u32(p + 4);
 }
+
+struct Reader {
+    std::span<const std::uint8_t> bytes;
+    std::size_t position{};
+
+    bool take(std::size_t count) {
+        if (position > bytes.size() || count > bytes.size() - position)
+            return false;
+        position += count;
+        return true;
+    }
+};
+
+} // namespace
+
+Result<PhotoshopInfo> readPhotoshopHeader(std::span<const std::uint8_t> bytes,
+                                          const CodecLimits& limits) {
+    if (bytes.size() < 26 || std::memcmp(bytes.data(), "8BPS", 4) != 0)
+        return error(ErrorCode::CorruptData, "psd.signature");
+
+    const auto version = u16(bytes.data() + 4);
+    if (version != 1 && version != 2)
+        return error(ErrorCode::UnsupportedFeature, "psd.version");
+
+    PhotoshopInfo out;
+    out.format = version == 1 ? ImageFormat::Psd : ImageFormat::Psb;
+    out.channels = u16(bytes.data() + 12);
+    out.size = {u32(bytes.data() + 18), u32(bytes.data() + 14)};
+    out.depth = u16(bytes.data() + 22);
+    out.colorMode = u16(bytes.data() + 24);
+
+    if (!out.size.width || !out.size.height || out.channels < 1 || out.channels > 56 ||
+        (out.depth != 8 && out.depth != 16))
+        return error(ErrorCode::CorruptData, "psd.header-values");
+
+    Reader reader{bytes, 26};
+
+    for (int section = 0; section < 2; ++section) {
+        if (!reader.take(4))
+            return error(ErrorCode::CorruptData, "psd.section-length");
+        const auto length = u32(bytes.data() + reader.position - 4);
+        if (length > bytes.size() - reader.position || !reader.take(length))
+            return error(ErrorCode::CorruptData, "psd.section-bounds");
+    }
+
+    const std::size_t lengthBytes = version == 1 ? 4u : 8u;
+    if (!reader.take(lengthBytes))
+        return error(ErrorCode::CorruptData, "psd.layer-mask-length");
+
+    const auto total = version == 1 ? std::uint64_t(u32(bytes.data() + reader.position - lengthBytes))
+                                    : u64(bytes.data() + reader.position - lengthBytes);
+    if (total > bytes.size() - reader.position)
+        return error(ErrorCode::CorruptData, "psd.layer-mask-bounds");
+    if (total == 0)
+        return out;
+
+    const auto sectionEnd = reader.position + std::size_t(total);
+
+    if (!reader.take(lengthBytes))
+        return error(ErrorCode::CorruptData, "psd.layer-info-length");
+
+    const auto layerLength =
+        version == 1 ? std::uint64_t(u32(bytes.data() + reader.position - lengthBytes))
+                     : u64(bytes.data() + reader.position - lengthBytes);
+    if (layerLength > sectionEnd - reader.position)
+        return error(ErrorCode::CorruptData, "psd.layer-info-bounds");
+    if (layerLength == 0)
+        return out;
+
+    if (!reader.take(2))
+        return error(ErrorCode::CorruptData, "psd.layer-count");
+
+    const auto signedCount = std::int16_t(u16(bytes.data() + reader.position - 2));
+    const int layerCount = signedCount < 0 ? -signedCount : signedCount;
+    if (std::uint64_t(layerCount) > limits.nodes)
+        return error(ErrorCode::BudgetExceeded, "psd.layer-count-limit");
+
+    for (int index = 0; index < layerCount; ++index) {
+        if (reader.position + 18 > sectionEnd)
+            return error(ErrorCode::CorruptData, "psd.layer-record");
+
+        PhotoshopLayerInfo layer;
+        layer.top = std::int32_t(u32(bytes.data() + reader.position));
+        layer.left = std::int32_t(u32(bytes.data() + reader.position + 4));
+        layer.bottom = std::int32_t(u32(bytes.data() + reader.position + 8));
+        layer.right = std::int32_t(u32(bytes.data() + reader.position + 12));
+        reader.position += 16;
+
+        layer.channels = u16(bytes.data() + reader.position);
+        reader.position += 2;
+        if (layer.channels > 56)
+            return error(ErrorCode::CorruptData, "psd.channel-count");
+
+        const std::size_t descriptorSize = version == 1 ? 6u : 10u;
+        const auto channelRecords = std::uint64_t(layer.channels) * descriptorSize;
+        if (channelRecords > sectionEnd - reader.position)
+            return error(ErrorCode::CorruptData, "psd.channel-records");
+        reader.position += std::size_t(channelRecords);
+
+        if (reader.position + 16 > sectionEnd)
+            return error(ErrorCode::CorruptData, "psd.layer-blend");
+        if (std::memcmp(bytes.data() + reader.position, "8BIM", 4) != 0)
+            return error(ErrorCode::CorruptData, "psd.blend-signature");
+
+        reader.position += 8;
+        layer.opacity = bytes[reader.position];
+        reader.position += 4;
+
+        const auto extra = u32(bytes.data() + reader.position);
+        reader.position += 4;
+        if (extra > sectionEnd - reader.position)
+            return error(ErrorCode::CorruptData, "psd.extra");
+        reader.position += extra;
+        out.layers.push_back(layer);
+    }
+
+    return out;
+}
+
+} // namespace drawborad
