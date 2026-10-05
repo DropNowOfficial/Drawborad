@@ -7,6 +7,7 @@
 #endif
 
 namespace drawborad {
+#ifdef DRAWBORAD_HAS_ONNXRUNTIME
 namespace {
 Result<std::vector<std::int64_t>> resolveShape(std::vector<std::int64_t> shape,
                                                std::size_t elements) {
@@ -40,6 +41,7 @@ Result<std::vector<std::int64_t>> resolveShape(std::vector<std::int64_t> shape,
     return shape;
 }
 }
+#endif
 
 bool OrtSession::runtimeAvailable() const {
 #ifdef DRAWBORAD_HAS_ONNXRUNTIME
