@@ -4,6 +4,7 @@
 #include "render/ReferenceRenderer.h"
 #include "view/Viewport.h"
 #include <QQuickItem>
+#include <QPointF>
 #include <QPointer>
 #include <mutex>
 namespace drawborad {
