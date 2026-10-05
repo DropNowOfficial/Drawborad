@@ -1,0 +1,90 @@
+{
+  "scope": [
+    "F01",
+    "F02",
+    "F03",
+    "F04",
+    "F05",
+    "F06"
+  ],
+  "date_utc": "2026-10-05T01:26:39.795134+00:00",
+  "review": "Author self-review; no independent agent available",
+  "environment": {
+    "schema": 1,
+    "osBuild": "Linux 6.18.44",
+    "cpu": "AMD EPYC 9V74 80-Core Processor",
+    "ramBytes": 6236880896,
+    "logicalThreads": 5,
+    "dpi": 96,
+    "powerMode": "NotMeasured",
+    "sceneGraph": "NotInitialized",
+    "activeRenderLuid": null,
+    "driver": "",
+    "gpuAdapters": [],
+    "cudaDevices": [],
+    "moduleScanCompleted": true,
+    "webviewModules": [],
+    "warnings": [
+      "Windows/D3D11/CUDA validation not run on this host"
+    ]
+  },
+  "runs": [
+    {
+      "preset": "lab-debug",
+      "passed": 8,
+      "failed": 0,
+      "skipped": [
+        "F05.NativeTransport",
+        "F06"
+      ],
+      "time_seconds": "2",
+      "cases": 10
+    },
+    {
+      "preset": "lab-release",
+      "passed": 8,
+      "failed": 0,
+      "skipped": [
+        "F05.NativeTransport",
+        "F06"
+      ],
+      "time_seconds": "2",
+      "cases": 10
+    },
+    {
+      "preset": "lab-asan",
+      "passed": 8,
+      "failed": 0,
+      "skipped": [
+        "F05.NativeTransport",
+        "F06"
+      ],
+      "time_seconds": "4",
+      "cases": 10
+    }
+  ],
+  "native_cpp_cases": 50,
+  "python_unit_cases": 16,
+  "process_probe_cases": [
+    "hello",
+    "cancel",
+    "oversized frame",
+    "truncated frame",
+    "empty frame"
+  ],
+  "windows_qualification": "Blocked: Windows SDK/Qt/PowerShell/NVIDIA host unavailable",
+  "dependency_manifest": "Fail-closed; no vendor checksums or qualification invented",
+  "application_complete": false,
+  "source_contains_windows_implementations": true,
+  "platform_tests_skipped": [
+    "F05.NativeTransport",
+    "F06"
+  ],
+  "release_blockers": [
+    "F01 real Windows dependency qualification",
+    "F04 Windows durability/locking/power-loss verification",
+    "F05 real named-pipe/mapping/Job Object smoke",
+    "F06 Qt/MSVC build and D3D11 WARP/hardware smoke"
+  ],
+  "target_machine_tested": false
+}

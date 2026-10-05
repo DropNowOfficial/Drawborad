@@ -1,0 +1,12 @@
+Test project /mnt/data/drawborad_native/repo/.worktrees/foundation/out/build/lab-debug
+    Start 9: F06
+1/1 Test #9: F06 ..............................***Skipped   0.57 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =   0.57 sec
+
+The following tests did not run:
+	  9 - F06 (Skipped)
+
+BLOCKED: task did not finish its behavior assertions

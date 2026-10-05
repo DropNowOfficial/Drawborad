@@ -1,0 +1,18 @@
+# No FetchContent, package downloads, pip or network access during configure/build.
+find_package(Python3 3.9 REQUIRED COMPONENTS Interpreter)
+if(DRAWBORAD_QUALIFY)
+  execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/dependency_gate.py"
+    --mode Verify --cache "${CMAKE_SOURCE_DIR}/.deps" --profile windows-x64 RESULT_VARIABLE gate)
+  if(NOT gate EQUAL 0)
+    message(FATAL_ERROR "BLOCKED: Windows dependency qualification incomplete; see reports/foundation")
+  endif()
+endif()
+if(DRAWBORAD_DESKTOP)
+  if(NOT WIN32)
+    message(FATAL_ERROR "Desktop qualification target is Windows 11 x64")
+  endif()
+  if(NOT DRAWBORAD_QUALIFY)
+    message(FATAL_ERROR "Desktop requires DRAWBORAD_QUALIFY; no unqualified release bypass")
+  endif()
+  find_package(Qt6 6.11.2 EXACT REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 ShaderTools Test)
+endif()

@@ -1,0 +1,95 @@
+FFFFFFFFFF..
+======================================================================
+FAIL: test_absolute_path (__main__.DependencyGate.test_absolute_path)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/mnt/data/drawborad_native/repo/.worktrees/foundation/tests/build/test_dependency_gate.py", line 20, in test_absolute_path
+    def test_absolute_path(self):self.entry['path']=str(self.root/'lib.dll');self.assertIn('PathEscape',self.code())
+                                                                             ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'PathEscape' not found in []
+
+======================================================================
+FAIL: test_changed_archive (__main__.DependencyGate.test_changed_archive)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/mnt/data/drawborad_native/repo/.worktrees/foundation/tests/build/test_dependency_gate.py", line 15, in test_changed_archive
+    def test_changed_archive(self):(self.root/'lib.dll').write_bytes(b'tampered!');self.assertIn('DigestMismatch',self.code())
+                                                                                   ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'DigestMismatch' not found in []
+
+======================================================================
+FAIL: test_duplicate_role (__main__.DependencyGate.test_duplicate_role)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/mnt/data/drawborad_native/repo/.worktrees/foundation/tests/build/test_dependency_gate.py", line 21, in test_duplicate_role
+    def test_duplicate_role(self):self.lock['profiles']['fixture']['artifacts'].append(self.entry.copy());self.assertIn('DuplicateArtifact',self.code())
+                                                                                                          ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'DuplicateArtifact' not found in []
+
+======================================================================
+FAIL: test_gate_fails_closed_for_unqualified_windows (__main__.DependencyGate.test_gate_fails_closed_for_unqualified_windows)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/mnt/data/drawborad_native/repo/.worktrees/foundation/tests/build/test_dependency_gate.py", line 27, in test_gate_fails_closed_for_unqualified_windows
+    lock=json.loads((ROOT/'dependencies/lock.json').read_text());self.assertIn('Unqualified',g.verify(lock,self.root,'windows-x64'))
+                                                                 ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'Unqualified' not found in []
+
+======================================================================
+FAIL: test_missing_digest (__main__.DependencyGate.test_missing_digest)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/mnt/data/drawborad_native/repo/.worktrees/foundation/tests/build/test_dependency_gate.py", line 14, in test_missing_digest
+    def test_missing_digest(self):self.entry.pop('sha256');self.assertIn('MissingDigest',self.code())
+                                                           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'MissingDigest' not found in []
+
+======================================================================
+FAIL: test_missing_dll (__main__.DependencyGate.test_missing_dll)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/mnt/data/drawborad_native/repo/.worktrees/foundation/tests/build/test_dependency_gate.py", line 16, in test_missing_dll
+    def test_missing_dll(self):(self.root/'lib.dll').unlink();self.assertIn('MissingArtifact',self.code())
+                                                              ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'MissingArtifact' not found in []
+
+======================================================================
+FAIL: test_missing_license (__main__.DependencyGate.test_missing_license)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/mnt/data/drawborad_native/repo/.worktrees/foundation/tests/build/test_dependency_gate.py", line 17, in test_missing_license
+    def test_missing_license(self):self.entry['license']='';self.assertIn('LicenseBlocked',self.code())
+                                                            ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'LicenseBlocked' not found in []
+
+======================================================================
+FAIL: test_path_escape (__main__.DependencyGate.test_path_escape)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/mnt/data/drawborad_native/repo/.worktrees/foundation/tests/build/test_dependency_gate.py", line 19, in test_path_escape
+    def test_path_escape(self):self.entry['path']='../outside.dll';self.assertIn('PathEscape',self.code())
+                                                                   ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'PathEscape' not found in []
+
+======================================================================
+FAIL: test_required_role (__main__.DependencyGate.test_required_role)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/mnt/data/drawborad_native/repo/.worktrees/foundation/tests/build/test_dependency_gate.py", line 22, in test_required_role
+    def test_required_role(self):self.lock['profiles']['fixture']['required'].append('qt');self.assertIn('MissingArtifact',self.code())
+                                                                                           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'MissingArtifact' not found in []
+
+======================================================================
+FAIL: test_unqualified (__main__.DependencyGate.test_unqualified)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/mnt/data/drawborad_native/repo/.worktrees/foundation/tests/build/test_dependency_gate.py", line 18, in test_unqualified
+    def test_unqualified(self):self.entry['qualification']['status']='candidate';self.assertIn('Unqualified',self.code())
+                                                                                 ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'Unqualified' not found in []
+
+----------------------------------------------------------------------
+Ran 12 tests in 0.014s
+
+FAILED (failures=10)

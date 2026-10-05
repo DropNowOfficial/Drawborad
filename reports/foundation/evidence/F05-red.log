@@ -1,0 +1,22 @@
+Test project /mnt/data/drawborad_native/repo/.worktrees/foundation/out/build/lab-debug
+    Start 5: F05
+1/1 Test #5: F05 ..............................***Failed    0.00 sec
+ASSERT_FAIL control messages bounded versioned and checksummed: /mnt/data/drawborad_native/repo/.worktrees/foundation/tests/jobs/BrokerTests.cpp:11 CHECK(bytes)
+ASSERT_FAIL only one heavy GPU task and shared resource budgets: /mnt/data/drawborad_native/repo/.worktrees/foundation/tests/jobs/BrokerTests.cpp:14 CHECK(g.concurrentHeavyGpuJobs()==1)
+ASSERT_FAIL successful output commits exactly once: /mnt/data/drawborad_native/repo/.worktrees/foundation/tests/jobs/BrokerTests.cpp:17 CHECK(b.accept(r,d))
+ASSERT_FAIL stale or undo-late output cannot overwrite current revision: /mnt/data/drawborad_native/repo/.worktrees/foundation/tests/jobs/BrokerTests.cpp:20 CHECK(a.error().code==ErrorCode::StaleRevision)
+ASSERT_FAIL cancel acknowledges immediately then kills at five seconds: /mnt/data/drawborad_native/repo/.worktrees/foundation/tests/jobs/BrokerTests.cpp:23 CHECK(h.cancels==1)
+ASSERT_FAIL wrong nonce wrong job and output tamper do not commit: /mnt/data/drawborad_native/repo/.worktrees/foundation/tests/jobs/BrokerTests.cpp:26 CHECK(b.accept(bad,d).error().code==ErrorCode::DigestMismatch)
+ASSERT_FAIL launch failure crash and cancel acknowledgment release reservations: /mnt/data/drawborad_native/repo/.worktrees/foundation/tests/jobs/BrokerTests.cpp:29 CHECK(!b.submit(q))
+7 cases, 7 failures
+
+
+0% tests passed, 1 tests failed out of 1
+
+Total Test time (real) =   0.00 sec
+
+The following tests FAILED:
+	  5 - F05 (Failed)
+Errors while running CTest
+
+RED_VERIFIED

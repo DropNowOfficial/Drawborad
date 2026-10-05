@@ -1,0 +1,60 @@
+Test project /mnt/data/drawborad_native/repo/.worktrees/foundation/out/build/lab-debug
+    Start 3: F03
+1/3 Test #3: F03 ..............................***Failed    0.40 sec
+PASS immutable snapshots and reversible metadata
+PASS stale revision and batch rollback
+PASS ownership cycles duplicate IDs and locked ancestors
+PASS visibility transform and change regions leave other object unchanged
+PASS reorder duplicate delete merge split retain identity
+PASS mask resources dependency DAG and source provenance
+PASS stroke event IDs survive layer reordering zero pressure preserved
+PASS ten thousand reversible commands with stable state
+ASSERT_FAIL imported snapshots detach all mutable aliases: /mnt/data/drawborad_native/repo/.worktrees/foundation/tests/core/CommandTests.cpp:43 CHECK(imported.value().snapshot().nodes->at(Id::fromNumber(3)).name=="node")
+ASSERT_FAIL serialized document descriptors reject overflow and inconsistent estimates: /mnt/data/drawborad_native/repo/.worktrees/foundation/tests/core/CommandTests.cpp:46 CHECK(!Document::fromSnapshot(s))
+ASSERT_FAIL split refuses to discard composite visual properties: Result has no error
+ASSERT_FAIL transforming a group cannot mutate a locked descendant: Result has no error
+12 cases, 4 failures
+
+    Start 4: F04
+2/3 Test #4: F04 ..............................***Failed    0.07 sec
+PASS SHA256 known vectors
+PASS tile roundtrip CMYKA16 padded layout dedup tamper
+PASS project preserves resources events and unicode without source or model
+PASS atomic save failures preserve exact original bytes
+PASS incremental journal torn tails keep last committed state
+PASS backup fallback and bounded parser
+PASS path escape and interprocess lease fail closed
+PASS autosave only after thirty seconds and committed changes
+PASS history budget never evicts current or protected versions
+PASS truncation at every payload byte never becomes success
+ASSERT_FAIL repair failure never overwrites the only valid backup with corrupt bytes: /mnt/data/drawborad_native/repo/.worktrees/foundation/tests/storage/RecoveryTests.cpp:44 CHECK(r)
+ASSERT_FAIL save rejects conflicting content at an identical revision: Result has no error
+ASSERT_FAIL autosaver saves a brand new revision zero document: /mnt/data/drawborad_native/repo/.worktrees/foundation/tests/storage/RecoveryTests.cpp:50 CHECK(timer.tick(30,st,p,d.snapshot()).value())
+PASS binary project retains pressure zero tilted strokes and ICC bytes
+14 cases, 3 failures
+
+    Start 5: F05
+3/3 Test #5: F05 ..............................***Failed    0.01 sec
+PASS control messages bounded versioned and checksummed
+PASS only one heavy GPU task and shared resource budgets
+PASS successful output commits exactly once
+PASS stale or undo-late output cannot overwrite current revision
+PASS cancel acknowledges immediately then kills at five seconds
+PASS wrong nonce wrong job and output tamper do not commit
+PASS launch failure crash and cancel acknowledgment release reservations
+PASS terminal stale results release heavy resource reservation
+ASSERT_FAIL worker cannot remove existing immutable event history: /mnt/data/drawborad_native/repo/.worktrees/foundation/tests/jobs/BrokerTests.cpp:35 CHECK(!b.accept(out,d))
+ASSERT_FAIL authenticated corrupt result is terminal and releases resources: /mnt/data/drawborad_native/repo/.worktrees/foundation/tests/jobs/BrokerTests.cpp:38 CHECK(g.concurrentHeavyGpuJobs()==0)
+ASSERT_FAIL external event cannot paint a locked layer without changing metadata: Result has no error
+11 cases, 3 failures
+
+
+0% tests passed, 3 tests failed out of 3
+
+Total Test time (real) =   0.48 sec
+
+The following tests FAILED:
+	  3 - F03 (Failed)
+	  4 - F04 (Failed)
+	  5 - F05 (Failed)
+Errors while running CTest

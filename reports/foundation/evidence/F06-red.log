@@ -1,0 +1,19 @@
+Test project /mnt/data/drawborad_native/repo/.worktrees/foundation/out/build/lab-debug
+    Start 8: F06.Controller
+1/1 Test #8: F06.Controller ...................***Failed    0.00 sec
+ASSERT_FAIL controller empty state is genuinely empty: /mnt/data/drawborad_native/repo/.worktrees/foundation/tests/platform/NativeSmokeTests.cpp:9 CHECK(c.newDocument(r))
+ASSERT_FAIL open failure retains the existing document and exposes error state: /mnt/data/drawborad_native/repo/.worktrees/foundation/tests/platform/NativeSmokeTests.cpp:12 CHECK(c.newDocument(r))
+ASSERT_FAIL controller new save reopen and revision commands: /mnt/data/drawborad_native/repo/.worktrees/foundation/tests/platform/NativeSmokeTests.cpp:17 CHECK(c.newDocument(r))
+ASSERT_FAIL diagnostics are measured and do not invent an active render GPU: /mnt/data/drawborad_native/repo/.worktrees/foundation/tests/platform/NativeSmokeTests.cpp:20 CHECK(!report.osBuild.empty())
+4 cases, 4 failures
+
+
+0% tests passed, 1 tests failed out of 1
+
+Total Test time (real) =   0.00 sec
+
+The following tests FAILED:
+	  8 - F06.Controller (Failed)
+Errors while running CTest
+
+RED_VERIFIED

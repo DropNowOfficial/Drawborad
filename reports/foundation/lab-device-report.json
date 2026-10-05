@@ -1,0 +1,1 @@
+{"schema":1,"osBuild":"Linux 6.18.44","cpu":"AMD EPYC 9V74 80-Core Processor","ramBytes":6236880896,"logicalThreads":5,"dpi":96,"powerMode":"NotMeasured","sceneGraph":"NotInitialized","activeRenderLuid":null,"driver":"","gpuAdapters":[],"cudaDevices":[],"moduleScanCompleted":true,"webviewModules":[],"warnings":["Windows/D3D11/CUDA validation not run on this host"]}

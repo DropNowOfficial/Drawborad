@@ -1,0 +1,29 @@
+Test project /mnt/data/drawborad_native/repo/.worktrees/foundation/out/build/lab-release
+      Start  1: F01
+ 1/10 Test  #1: F01 ..............................   Passed    0.57 sec
+      Start  2: F02
+ 2/10 Test  #2: F02 ..............................   Passed    0.00 sec
+      Start  3: F03
+ 3/10 Test  #3: F03 ..............................   Passed    0.06 sec
+      Start  4: F04
+ 4/10 Test  #4: F04 ..............................   Passed    0.01 sec
+      Start  5: F05
+ 5/10 Test  #5: F05 ..............................   Passed    0.00 sec
+      Start  6: F05.NativeTransport
+ 6/10 Test  #6: F05.NativeTransport ..............***Skipped   0.00 sec
+      Start  7: F05.ProcessProtocol
+ 7/10 Test  #7: F05.ProcessProtocol ..............   Passed    0.58 sec
+      Start  8: F06.Controller
+ 8/10 Test  #8: F06.Controller ...................   Passed    0.00 sec
+      Start  9: F06
+ 9/10 Test  #9: F06 ..............................***Skipped   0.55 sec
+      Start 10: F01.Runner
+10/10 Test #10: F01.Runner .......................   Passed    0.60 sec
+
+100% tests passed, 0 tests failed out of 10
+
+Total Test time (real) =   2.38 sec
+
+The following tests did not run:
+	  6 - F05.NativeTransport (Skipped)
+	  9 - F06 (Skipped)

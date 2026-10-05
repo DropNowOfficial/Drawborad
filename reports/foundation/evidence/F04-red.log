@@ -1,0 +1,25 @@
+Test project /mnt/data/drawborad_native/repo/.worktrees/foundation/out/build/lab-debug
+    Start 4: F04
+1/1 Test #4: F04 ..............................***Failed    0.00 sec
+ASSERT_FAIL SHA256 known vectors: /mnt/data/drawborad_native/repo/.worktrees/foundation/tests/storage/RecoveryTests.cpp:13 CHECK(sha256({}).hex()=="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+ASSERT_FAIL tile roundtrip CMYKA16 padded layout dedup tamper: /mnt/data/drawborad_native/repo/.worktrees/foundation/tests/storage/RecoveryTests.cpp:16 CHECK(a)
+ASSERT_FAIL project preserves resources events and unicode without source or model: /mnt/data/drawborad_native/repo/.worktrees/foundation/tests/storage/RecoveryTests.cpp:19 CHECK(d.apply(Command{InstallResource{Resource{id,ResourceKind::Profile,std::make_shared<const Bytes>(data),{}}}},d.snapshot().revision))
+ASSERT_FAIL atomic save failures preserve exact original bytes: /mnt/data/drawborad_native/repo/.worktrees/foundation/tests/storage/RecoveryTests.cpp:22 CHECK(store.save(p,d.snapshot()))
+ASSERT_FAIL incremental journal torn tails keep last committed state: /mnt/data/drawborad_native/repo/.worktrees/foundation/tests/storage/RecoveryTests.cpp:25 CHECK(store.save(p,d.snapshot()))
+ASSERT_FAIL backup fallback and bounded parser: /mnt/data/drawborad_native/repo/.worktrees/foundation/tests/storage/RecoveryTests.cpp:28 CHECK(st.save(p,d.snapshot()))
+ASSERT_FAIL path escape and interprocess lease fail closed: /mnt/data/drawborad_native/repo/.worktrees/foundation/tests/storage/RecoveryTests.cpp:31 CHECK(!confinedPath(tmp.p,"../outside"))
+ASSERT_FAIL autosave only after thirty seconds and committed changes: /mnt/data/drawborad_native/repo/.worktrees/foundation/tests/storage/RecoveryTests.cpp:34 CHECK(timer.tick(30,st,p,d.snapshot()).value())
+ASSERT_FAIL history budget never evicts current or protected versions: /mnt/data/drawborad_native/repo/.worktrees/foundation/tests/storage/RecoveryTests.cpp:37 CHECK(x.value()==std::vector<fs::path>{"old"})
+ASSERT_FAIL truncation at every payload byte never becomes success: /mnt/data/drawborad_native/repo/.worktrees/foundation/tests/storage/RecoveryTests.cpp:40 CHECK(b)
+10 cases, 10 failures
+
+
+0% tests passed, 1 tests failed out of 1
+
+Total Test time (real) =   0.00 sec
+
+The following tests FAILED:
+	  4 - F04 (Failed)
+Errors while running CTest
+
+RED_VERIFIED

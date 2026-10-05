@@ -1,0 +1,147 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "lab-debug",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/lab-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "DRAWBORAD_DESKTOP": "OFF",
+        "DRAWBORAD_QUALIFY": "OFF",
+        "DRAWBORAD_SANITIZE": "OFF"
+      }
+    },
+    {
+      "name": "lab-asan",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/lab-asan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "DRAWBORAD_DESKTOP": "OFF",
+        "DRAWBORAD_QUALIFY": "OFF",
+        "DRAWBORAD_SANITIZE": "ON"
+      }
+    },
+    {
+      "name": "lab-release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/lab-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "DRAWBORAD_DESKTOP": "OFF",
+        "DRAWBORAD_QUALIFY": "OFF",
+        "DRAWBORAD_SANITIZE": "OFF"
+      }
+    },
+    {
+      "name": "win-debug",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/win-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "DRAWBORAD_DESKTOP": "ON",
+        "DRAWBORAD_QUALIFY": "ON",
+        "DRAWBORAD_SANITIZE": "OFF"
+      }
+    },
+    {
+      "name": "win-release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/win-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "DRAWBORAD_DESKTOP": "ON",
+        "DRAWBORAD_QUALIFY": "ON",
+        "DRAWBORAD_SANITIZE": "OFF"
+      }
+    },
+    {
+      "name": "win-asan",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/win-asan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "DRAWBORAD_DESKTOP": "ON",
+        "DRAWBORAD_QUALIFY": "ON",
+        "DRAWBORAD_SANITIZE": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "lab-debug",
+      "configurePreset": "lab-debug",
+      "jobs": 2
+    },
+    {
+      "name": "lab-asan",
+      "configurePreset": "lab-asan",
+      "jobs": 2
+    },
+    {
+      "name": "lab-release",
+      "configurePreset": "lab-release",
+      "jobs": 2
+    },
+    {
+      "name": "win-debug",
+      "configurePreset": "win-debug",
+      "jobs": 2
+    },
+    {
+      "name": "win-release",
+      "configurePreset": "win-release",
+      "jobs": 2
+    },
+    {
+      "name": "win-asan",
+      "configurePreset": "win-asan",
+      "jobs": 2
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "lab-debug",
+      "configurePreset": "lab-debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "lab-asan",
+      "configurePreset": "lab-asan",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "lab-release",
+      "configurePreset": "lab-release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "win-debug",
+      "configurePreset": "win-debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "win-release",
+      "configurePreset": "win-release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "win-asan",
+      "configurePreset": "win-asan",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

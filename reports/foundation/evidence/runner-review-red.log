@@ -1,0 +1,23 @@
+F..F
+======================================================================
+FAIL: test_green_skipped_task_is_blocked (__main__.TaskRunnerResults.test_green_skipped_task_is_blocked)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/mnt/data/drawborad_native/repo/.worktrees/foundation/tests/build/test_task_runner.py", line 13, in test_green_skipped_task_is_blocked
+    def test_green_skipped_task_is_blocked(self):self.assertEqual(self.execute('Green',0,'1/1 F06 ***Skipped\n100% tests passed'),2)
+                                                 ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 2
+
+======================================================================
+FAIL: test_red_crash_is_not_behavior_red (__main__.TaskRunnerResults.test_red_crash_is_not_behavior_red)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/mnt/data/drawborad_native/repo/.worktrees/foundation/tests/build/test_task_runner.py", line 14, in test_red_crash_is_not_behavior_red
+    def test_red_crash_is_not_behavior_red(self):self.assertEqual(self.execute('Red',8,'ASSERT_FAIL x\n***Exception: SegFault'),2)
+                                                 ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 2
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.004s
+
+FAILED (failures=2)

@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "profiles": {
+    "windows-x64": {
+      "status": "blocked",
+      "reason": "Actual Windows artifacts and qualification evidence not available on this Linux host. No fabricated hashes.",
+      "required": [
+        "cmake",
+        "ninja",
+        "msvc",
+        "windows-sdk",
+        "qt",
+        "catch2",
+        "lcms2",
+        "onnxruntime",
+        "cuda-runtime",
+        "cudnn",
+        "libpng",
+        "libjpeg-turbo",
+        "libtiff",
+        "libwebp",
+        "zstd",
+        "zlib",
+        "libzip",
+        "nlohmann-json",
+        "nsis"
+      ],
+      "artifacts": []
+    }
+  }
+}

@@ -1,0 +1,8 @@
+.worktrees/
+.superpowers/
+out/
+.deps/
+*.user
+
+__pycache__/
+*.pyc

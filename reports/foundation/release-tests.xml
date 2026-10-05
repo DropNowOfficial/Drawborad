@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="(empty)"
+	tests="10"
+	failures="0"
+	disabled="0"
+	skipped="2"
+	hostname=""
+	time="2"
+	timestamp="2026-10-05T01:24:49"
+	>
+	<testcase name="F01" classname="F01" time="0.567441" status="run">
+		<properties/>
+		<system-out>............
+----------------------------------------------------------------------
+Ran 12 tests in 0.013s
+
+OK
+</system-out>
+	</testcase>
+	<testcase name="F02" classname="F02" time="0.00218867" status="run">
+		<properties/>
+		<system-out>PASS physical units have exact expected dimensions
+PASS free aspect ratios and supported sizes
+PASS invalid dimensions rejected before allocation
+PASS checked arithmetic and extreme sizes
+PASS real channel descriptors including CMYKA
+PASS budget enforced and PPI metadata separated from sampling
+6 cases, 0 failures
+</system-out>
+	</testcase>
+	<testcase name="F03" classname="F03" time="0.0630946" status="run">
+		<properties/>
+		<system-out>PASS immutable snapshots and reversible metadata
+PASS stale revision and batch rollback
+PASS ownership cycles duplicate IDs and locked ancestors
+PASS visibility transform and change regions leave other object unchanged
+PASS reorder duplicate delete merge split retain identity
+PASS mask resources dependency DAG and source provenance
+PASS stroke event IDs survive layer reordering zero pressure preserved
+PASS ten thousand reversible commands with stable state
+PASS imported snapshots detach all mutable aliases
+PASS serialized document descriptors reject overflow and inconsistent estimates
+PASS split refuses to discard composite visual properties
+PASS transforming a group cannot mutate a locked descendant
+PASS explicit color conversion changes format estimates reversibly
+PASS undo reports IDs of nodes removed by the inverse transaction
+14 cases, 0 failures
+</system-out>
+	</testcase>
+	<testcase name="F04" classname="F04" time="0.0108603" status="run">
+		<properties/>
+		<system-out>PASS SHA256 known vectors
+PASS tile roundtrip CMYKA16 padded layout dedup tamper
+PASS project preserves resources events and unicode without source or model
+PASS atomic save failures preserve exact original bytes
+PASS incremental journal torn tails keep last committed state
+PASS backup fallback and bounded parser
+PASS path escape and interprocess lease fail closed
+PASS autosave only after thirty seconds and committed changes
+PASS history budget never evicts current or protected versions
+PASS truncation at every payload byte never becomes success
+PASS repair failure never overwrites the only valid backup with corrupt bytes
+PASS save rejects conflicting content at an identical revision
+PASS autosaver saves a brand new revision zero document
+PASS binary project retains pressure zero tilted strokes and ICC bytes
+14 cases, 0 failures
+</system-out>
+	</testcase>
+	<testcase name="F05" classname="F05" time="0.00262991" status="run">
+		<properties/>
+		<system-out>PASS control messages bounded versioned and checksummed
+PASS only one heavy GPU task and shared resource budgets
+PASS successful output commits exactly once
+PASS stale or undo-late output cannot overwrite current revision
+PASS cancel acknowledges immediately then kills at five seconds
+PASS wrong nonce wrong job and output tamper do not commit
+PASS launch failure crash and cancel acknowledgment release reservations
+PASS terminal stale results release heavy resource reservation
+PASS worker cannot remove existing immutable event history
+PASS authenticated corrupt result is terminal and releases resources
+PASS external event cannot paint a locked layer without changing metadata
+PASS accepted event-only result invalidates its destination layer
+12 cases, 0 failures
+</system-out>
+	</testcase>
+	<testcase name="F05.NativeTransport" classname="F05.NativeTransport" time="0.00211202" status="notrun">
+		<skipped message="SKIP_RETURN_CODE=77"/>
+		<properties/>
+		<system-out>BLOCKED: Win32 named pipe, read-only mapping and Job Object require Windows
+</system-out>
+	</testcase>
+	<testcase name="F05.ProcessProtocol" classname="F05.ProcessProtocol" time="0.578847" status="run">
+		<properties/>
+		<system-out>PASS real worker process: hello/cancel/oversize/truncated/empty
+</system-out>
+	</testcase>
+	<testcase name="F06.Controller" classname="F06.Controller" time="0.00271667" status="run">
+		<properties/>
+		<system-out>PASS controller empty state is genuinely empty
+PASS open failure retains the existing document and exposes error state
+PASS controller new save reopen and revision commands
+PASS diagnostics are measured and do not invent an active render GPU
+4 cases, 0 failures
+</system-out>
+	</testcase>
+	<testcase name="F06" classname="F06" time="0.553446" status="notrun">
+		<skipped message="SKIP_RETURN_CODE=77"/>
+		<properties/>
+		<system-out>BLOCKED: Windows 11 + qualified Qt/D3D11 are required
+</system-out>
+	</testcase>
+	<testcase name="F01.Runner" classname="F01.Runner" time="0.595603" status="run">
+		<properties/>
+		<system-out>....
+----------------------------------------------------------------------
+Ran 4 tests in 0.003s
+
+OK
+</system-out>
+	</testcase>
+</testsuite>
