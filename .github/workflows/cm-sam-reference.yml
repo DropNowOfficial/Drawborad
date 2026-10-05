@@ -1,0 +1,31 @@
+name: SAM 2.1 development reference
+on:
+  push:
+    branches: [impl/color-formats-models-c01-c07-m01-m06]
+    paths: [.github/workflows/cm-sam-reference.yml]
+permissions:
+  contents: read
+jobs:
+  reference:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Collect official source and checkpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reference/checkpoints
+          git clone --depth 1 https://github.com/facebookresearch/sam2.git upstream
+          git -C upstream rev-parse HEAD > reference/upstream-commit.txt
+          git -C upstream archive --format=tar HEAD sam2 LICENSE LICENSE_cctorch README.md pyproject.toml setup.py | tar -x -C reference
+          for size in tiny small; do
+            curl --fail --location --retry 2 "https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_${size}.pt" -o "reference/checkpoints/sam2.1_hiera_${size}.pt"
+          done
+          find reference -type f -print0 | sort -z | xargs -0 sha256sum > reference-SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: sam21-development-reference
+          path: |
+            reference
+            reference-SHA256SUMS
+          retention-days: 7
