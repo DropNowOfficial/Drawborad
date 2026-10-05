@@ -87,3 +87,20 @@ feature_task(M05 tests/models/CustomAdapterTests.cpp)
 feature_task(M06 tests/jobs/QueueTests.cpp)
 
 feature_task(X13.Stress tests/stress/ColorModelStressTests.cpp)
+
+if(DRAWBORAD_HAS_ONNXRUNTIME AND DRAWBORAD_TEST_ONNX_MODEL)
+  add_executable(test_M02.Runtime
+    ${PROJECT_SOURCE_DIR}/tests/support/TestMain.cpp
+    ${PROJECT_SOURCE_DIR}/tests/models/OrtRuntimeTests.cpp)
+  target_include_directories(test_M02.Runtime PRIVATE
+    ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/tests/support ${PROJECT_SOURCE_DIR})
+  target_link_libraries(test_M02.Runtime PRIVATE drawborad_models drawborad_core)
+  add_test(NAME M02.Runtime COMMAND test_M02.Runtime)
+  set_tests_properties(M02.Runtime PROPERTIES
+    TIMEOUT 30
+    ENVIRONMENT "DRAWBORAD_TEST_ONNX_MODEL=${DRAWBORAD_TEST_ONNX_MODEL}")
+  if(UNIX)
+    set_tests_properties(M02.Runtime PROPERTIES
+      ENVIRONMENT_MODIFICATION "LD_LIBRARY_PATH=path_list_prepend:${DRAWBORAD_ONNXRUNTIME_ROOT}/lib")
+  endif()
+endif()
