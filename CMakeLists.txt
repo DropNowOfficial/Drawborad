@@ -27,6 +27,18 @@ else()
 endif()
 add_library(drawborad_core STATIC src/core/DocumentSpec.cpp src/core/Document.cpp src/core/CommandBus.cpp src/core/Digest.cpp src/storage/FileIO.cpp src/storage/TileStore.cpp src/storage/ProjectCodec.cpp src/storage/ProjectStore.cpp src/storage/Journal.cpp src/jobs/Protocol.cpp src/jobs/ResourceGovernor.cpp src/jobs/JobBroker.cpp src/jobs/WinWorkerHost.cpp src/platform/WinDiagnostics.cpp apps/studio/ApplicationController.cpp)
 target_include_directories(drawborad_core PUBLIC ${PROJECT_SOURCE_DIR}/src)
+add_library(drawborad_color STATIC
+  src/color/ProfileStore.cpp src/color/ColorService.cpp src/color/BlendPolicy.cpp src/color/ProofTransform.cpp)
+target_include_directories(drawborad_color PUBLIC ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(drawborad_color PUBLIC drawborad_core)
+find_path(DRAWBORAD_LCMS2_INCLUDE lcms2.h)
+find_library(DRAWBORAD_LCMS2_LIBRARY NAMES lcms2)
+if(DRAWBORAD_LCMS2_INCLUDE AND DRAWBORAD_LCMS2_LIBRARY)
+  target_include_directories(drawborad_color PRIVATE ${DRAWBORAD_LCMS2_INCLUDE})
+  target_link_libraries(drawborad_color PRIVATE ${DRAWBORAD_LCMS2_LIBRARY})
+  target_compile_definitions(drawborad_color PRIVATE DRAWBORAD_HAS_LCMS2=1)
+endif()
+
 add_library(drawborad_render STATIC
   src/render/ReferenceRenderer.cpp src/render/CoverageRasterizer.cpp src/render/PixelBlend.cpp
   src/render/TileCache.cpp src/render/DisplayCache.cpp src/render/CacheEvictor.cpp
