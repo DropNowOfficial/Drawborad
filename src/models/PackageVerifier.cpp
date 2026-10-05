@@ -1,6 +1,6 @@
 #include "ModelManifest.h"
 #include "storage/FileIO.h"
-#include <fstream>
+#include <fstream>\n#include <cctype>
 #include <regex>
 namespace drawborad { namespace {
 std::optional<std::string> field(const std::string&s,const std::string&k){std::regex r("\""+k+"\"\\s*:\\s*\"([^\"]*)\"");std::smatch m;if(std::regex_search(s,m,r))return m[1].str();return std::nullopt;}
