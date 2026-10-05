@@ -55,7 +55,8 @@ add_library(drawborad_models STATIC
   src/models/AdapterRegistry.cpp
   src/segmentation/ProposalEngine.cpp
   src/review/ReviewSession.cpp
-  src/jobs/ImageQueue.cpp)
+  src/jobs/ImageQueue.cpp
+  src/jobs/QueueStore.cpp)
 target_include_directories(drawborad_models PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(drawborad_models PUBLIC drawborad_core drawborad_color)
 set(DRAWBORAD_ONNXRUNTIME_ROOT "" CACHE PATH "Offline ONNX Runtime SDK root")
