@@ -5,7 +5,9 @@ namespace drawborad {
 enum class QueueState { Queued, Analyzing, WaitingForReview, Reconstructing, Paused, Cancelled, Failed, Done };
 struct QueuePolicy { bool autoAcceptReview{false}; bool stopOnFailure{false}; };
 struct QueueItem { Id id{}; std::filesystem::path input; QueueState state{QueueState::Queued}; Revision inputRevision{}; std::string error; };
+class QueueStore;
 class ImageQueue {
+    friend class QueueStore;
     QueueId id_{};
     QueuePolicy policy_{};
     std::vector<QueueItem> items_;
