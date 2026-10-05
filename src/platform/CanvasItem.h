@@ -9,7 +9,7 @@
 #include <mutex>
 namespace drawborad {
 class QtBridge;
-class CanvasItem final : public QQuickItem {
+class CanvasItem : public QQuickItem {
     Q_OBJECT
     Q_PROPERTY(QObject* bridge READ studio WRITE setStudio NOTIFY studioChanged)
     QPointer<QtBridge> bridge_;
