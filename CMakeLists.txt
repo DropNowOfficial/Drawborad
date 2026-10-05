@@ -49,6 +49,13 @@ if(DRAWBORAD_DESKTOP)
   target_link_libraries(Drawborad PRIVATE drawborad_core drawborad_render Qt6::Quick Qt6::QuickControls2 d3d11 dxgi)
   set_source_files_properties(ui/Main.qml PROPERTIES QT_RESOURCE_ALIAS Main.qml)
   qt_add_qml_module(Drawborad URI Drawborad VERSION 1.0 QML_FILES ui/Main.qml)
+  string(RANDOM LENGTH 32 ALPHABET 0123456789abcdef DRAWBORAD_BUILD_TOKEN)
+  file(WRITE "${CMAKE_BINARY_DIR}/drawborad_expected_build_token.txt" "${DRAWBORAD_BUILD_TOKEN}\n")
+  add_custom_command(
+    TARGET Drawborad POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_BINARY_DIR}/drawborad_expected_build_token.txt"
+            "$<TARGET_FILE_DIR:Drawborad>/drawborad_build_token.txt")
 else()
   add_executable(DrawboradDiagnostics apps/studio/Main.cpp)
   target_link_libraries(DrawboradDiagnostics PRIVATE drawborad_core)
