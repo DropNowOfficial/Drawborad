@@ -1,0 +1,43 @@
+name: Color model developer dependencies
+on:
+  push:
+    branches: [impl/color-formats-models-c01-c07-m01-m06]
+    paths: [.github/workflows/cm-dev-dependencies.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  collect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Collect development headers and tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p sdk/include sdk/licenses sdk/wheels sdk/ort sdk/profiles
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq liblcms2-dev nlohmann-json3-dev
+          cp /usr/include/lcms2.h /usr/include/lcms2_plugin.h sdk/include/
+          cp -r /usr/include/nlohmann sdk/include/
+          cp /usr/share/doc/liblcms2-dev/copyright sdk/licenses/lcms2.txt
+          cp /usr/share/doc/nlohmann-json3-dev/copyright sdk/licenses/nlohmann.txt
+          python -m pip wheel --wheel-dir sdk/wheels onnxruntime==1.23.2 onnx==1.19.1 psd-tools==1.10.9 onnxscript hydra-core==1.3.2 iopath==0.1.10
+          curl --fail --location --retry 2 https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-linux-x64-1.23.2.tgz -o sdk/ort/onnxruntime-linux-x64-1.23.2.tgz
+          git clone --depth 1 https://github.com/saucecontrol/Compact-ICC-Profiles.git profiles
+          git -C profiles rev-parse HEAD > sdk/profiles/upstream-commit.txt
+          cp -r profiles/profiles sdk/profiles/files
+          cp profiles/license sdk/licenses/compact-icc.txt
+          dpkg-query -W liblcms2-dev nlohmann-json3-dev > sdk/debian-versions.txt
+          find sdk -type f -print0 | sort -z | xargs -0 sha256sum > sdk-SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: cm-developer-sdk
+          path: |
+            sdk
+            sdk-SHA256SUMS
+          retention-days: 7
