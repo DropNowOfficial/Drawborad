@@ -1,0 +1,69 @@
+name: ONNX Runtime native smoke
+on:
+  push:
+    branches: [impl/color-formats-models-c01-c07-m01-m06]
+    paths:
+      - CMakeLists.txt
+      - cmake/TestTargets.cmake
+      - src/models/**
+      - tests/models/**
+      - .github/workflows/cm-ort-runtime.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  cpu-runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Acquire pinned ONNX Runtime SDK and developer fixture tool
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 2             https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-linux-x64-1.23.2.tgz             -o ort.tgz
+          echo "a0b4bb6857742ded4141fb3d60d7e79af35236ef11fa33a40880f24f22b9aa89  ort.tgz" > expected.sha256
+          sha256sum -c expected.sha256
+          tar -xzf ort.tgz
+          python -m pip install --disable-pip-version-check onnx==1.19.1
+      - name: Generate deterministic identity ONNX fixture
+        shell: bash
+        run: |
+          python - <<'PY'
+          import onnx
+          from onnx import helper, TensorProto
+          x=helper.make_tensor_value_info('image',TensorProto.FLOAT,[1,4])
+          y=helper.make_tensor_value_info('output',TensorProto.FLOAT,[1,4])
+          node=helper.make_node('Identity',['image'],['output'])
+          graph=helper.make_graph([node],'drawborad-ort-smoke',[x],[y])
+          model=helper.make_model(graph,opset_imports=[helper.make_opsetid('',17)])
+          model.ir_version=8
+          onnx.checker.check_model(model)
+          onnx.save(model,'identity.onnx')
+          PY
+      - name: Configure with offline ONNX Runtime SDK
+        shell: bash
+        run: |
+          cmake --preset lab-debug             -DDRAWBORAD_ONNXRUNTIME_ROOT="$PWD/onnxruntime-linux-x64-1.23.2"             -DDRAWBORAD_TEST_ONNX_MODEL="$PWD/identity.onnx"
+      - name: Build runtime smoke
+        run: cmake --build --preset lab-debug --target test_M02.Runtime
+      - name: Execute runtime smoke
+        shell: bash
+        run: |
+          export LD_LIBRARY_PATH="$PWD/onnxruntime-linux-x64-1.23.2/lib:${LD_LIBRARY_PATH:-}"
+          ctest --test-dir out/build/lab-debug -R '^M02.Runtime$' --output-on-failure
+      - name: Preserve evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ort-runtime-smoke
+          path: |
+            identity.onnx
+            expected.sha256
+            out/build/lab-debug/Testing/Temporary/LastTest.log
+          retention-days: 7
