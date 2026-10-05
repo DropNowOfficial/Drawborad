@@ -107,7 +107,7 @@ Result<Bytes> encodeLayerZip(PixelSize size,std::span<const ArchiveLayer> layers
         const auto& layer=layers[i];auto png=pngLayer(layer,options);if(!png)return png.error();
         auto path="layers/"+std::to_string(i)+".png";
         if(i)manifest<<",";
-        manifest<<"{\"name\":\""<<xml(layer.name)<<"\",\"file\":\""<<path<<"\",\"x\":"<<layer.x<<",\"y\":"<<layer.y
+        manifest<<"{\"name\":\""<<json(layer.name)<<"\",\"file\":\""<<path<<"\",\"x\":"<<layer.x<<",\"y\":"<<layer.y
                 <<",\"opacity\":"<<std::clamp(layer.opacity,0.0,1.0)<<",\"visible\":"<<(layer.visible?"true":"false")<<"}";
         entries.push_back({path,std::move(png.value())});
     }
