@@ -1,0 +1,18 @@
+name: color-models-ci
+on:
+  push:
+    branches:
+      - impl/color-models-c01-c07-m01-m06
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Archive source
+        run: |
+          git archive --format=zip --output=drawborad-source.zip HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: drawborad-source
+          path: drawborad-source.zip
+          if-no-files-found: error
