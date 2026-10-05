@@ -1,0 +1,14 @@
+#include "Test.h"
+#include "color/BlendPolicy.h"
+using namespace drawborad;
+namespace {
+TileData tile(ColorMode m,Depth d,std::initializer_list<std::uint8_t> v){TileData t;t.width=1;t.height=1;t.format={m,d,true};t.rowStride=std::uint64_t(v.size());t.bytes=v;return t;}
+}
+TEST("C02 CMYKA8 normal blend preserves five-channel layout"){
+ auto a=tile(ColorMode::CMYK,Depth::U8,{255,0,0,0,255});auto b=tile(ColorMode::CMYK,Depth::U8,{0,0,0,255,255});
+ auto r=blendPixels({a,b,BlendMode::Normal,1});CHECK(r);CHECK(r.value().bytes.size()==5);CHECK(r.value().bytes[0]==255);CHECK(r.value().bytes[4]==255);
+}
+TEST("C02 unsupported layout returns error instead of RGB fallback"){
+ auto a=tile(ColorMode::RGB,Depth::U8,{255,0,0,255});auto b=tile(ColorMode::CMYK,Depth::U8,{0,0,0,0,255});
+ CHECK(!blendPixels({a,b,BlendMode::Multiply,1}));
+}
