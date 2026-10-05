@@ -29,5 +29,15 @@ else()
   add_test(NAME F06 COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/platform/test_native_smoke.py -)
 endif()
 set_tests_properties(F06 PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
+if(WIN32 AND DRAWBORAD_DESKTOP)
+  # CTest must run against the same Qt runtime selected by find_package().
+  # This avoids PATH collisions with unrelated products that ship Qt DLLs
+  # (for example P4V) without changing the user's global environment.
+  get_filename_component(_drawborad_qt_prefix "${Qt6_DIR}/../../.." ABSOLUTE)
+  set_tests_properties(
+    F06
+    PROPERTIES ENVIRONMENT_MODIFICATION
+               "PATH=path_list_prepend:${_drawborad_qt_prefix}/bin")
+endif()
 
 add_test(NAME F01.Runner COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/build/test_task_runner.py)
