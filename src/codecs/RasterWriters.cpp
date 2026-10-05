@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <cstdlib>
+#include <limits>
 #include <setjmp.h>
 
 #ifdef DRAWBORAD_HAS_PNG
@@ -28,7 +30,7 @@ namespace {
 unsigned colorChannels(ColorMode mode) { return mode==ColorMode::RGB ? 3u : 4u; }
 unsigned sampleBytes(Depth depth) { return depth==Depth::U16 ? 2u : 1u; }
 
-Result<void> validateRaster(const TileData& p) {
+[[maybe_unused]] Result<void> validateRaster(const TileData& p) {
     if(!p.width||!p.height)
         return error(ErrorCode::InvalidInput,"export.empty-raster");
     const auto colors=colorChannels(p.format.mode);
@@ -176,7 +178,10 @@ tmsize_t tiffRead(thandle_t h,void* data,tmsize_t n){
     auto* m=static_cast<TiffMemory*>(h);if(n<0)return -1;
     auto remain=m->pos<m->data.size()?m->data.size()-std::size_t(m->pos):0;
     auto take=std::min<std::size_t>(remain,std::size_t(n));
-    if(take)std::memcpy(data,m->data.data()+m->pos,take);m->pos+=take;return tmsize_t(take);
+    if(take)
+        std::memcpy(data,m->data.data()+m->pos,take);
+    m->pos+=take;
+    return tmsize_t(take);
 }
 tmsize_t tiffWrite(thandle_t h,void* data,tmsize_t n){
     auto* m=static_cast<TiffMemory*>(h);if(n<0)return -1;
