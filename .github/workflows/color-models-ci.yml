@@ -1,18 +1,39 @@
-name: color-models-ci
+name: apply-color-models-payload
 on:
   push:
     branches:
       - impl/color-models-c01-c07-m01-m06
+    paths:
+      - .github/payloads/READY
+permissions:
+  contents: write
 jobs:
-  source:
+  apply-test-publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Archive source
-        run: |
-          git archive --format=zip --output=drawborad-source.zip HEAD
-      - uses: actions/upload-artifact@v4
         with:
-          name: drawborad-source
-          path: drawborad-source.zip
-          if-no-files-found: error
+          fetch-depth: 0
+      - name: Install native codec dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libpng-dev libjpeg-dev libtiff-dev libwebp-dev zlib1g-dev liblcms2-dev
+      - name: Apply reviewed payload
+        run: |
+          cat .github/payloads/part-* | base64 --decode > /tmp/color-models.tar.gz
+          tar -xzf /tmp/color-models.tar.gz
+          rm -rf .github/payloads
+      - name: Configure and build
+        run: |
+          cmake --preset lab-debug
+          cmake --build --preset lab-debug
+      - name: Run C01-C07 and M01-M06
+        run: |
+          ctest --test-dir out/build/lab-debug -R '^(C0[1-7]|C07.Fuzz|M0[1-6])$' --output-on-failure
+      - name: Publish verified source
+        run: |
+          git config user.name "drawborad-ci"
+          git config user.email "drawborad-ci@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: implement C01-C07 and M01-M06"
+          git push origin HEAD:impl/color-models-c01-c07-m01-m06
