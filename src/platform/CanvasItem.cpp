@@ -42,9 +42,9 @@ std::optional<DocumentPoint> CanvasItem::itemToDocument(const QPointF& p,const D
     if (!(scale > 0)) return std::nullopt;
     const double ox=(width()-double(s.spec.pixelSize.width)*scale)*.5;
     const double oy=(height()-double(s.spec.pixelSize.height)*scale)*.5;
-    DocumentPoint d{(p.x()-ox)/scale,(p.y()-oy)/scale};
-    if(d.x<0||d.y<0||d.x>=double(s.spec.pixelSize.width)||d.y>=double(s.spec.pixelSize.height))return std::nullopt;
-    return d;
+    DocumentPoint docPoint{(p.x()-ox)/scale,(p.y()-oy)/scale};
+    if(docPoint.x<0||docPoint.y<0||docPoint.x>=double(s.spec.pixelSize.width)||docPoint.y>=double(s.spec.pixelSize.height))return std::nullopt;
+    return docPoint;
 }
 InputSample CanvasItem::mouseSample(QMouseEvent* e) const {
     InputSample s; std::optional<DocumentSnapshot> snap; {std::lock_guard lock(snapshotMutex_);snap=snapshot_;}
@@ -53,13 +53,13 @@ InputSample CanvasItem::mouseSample(QMouseEvent* e) const {
 }
 InputSample CanvasItem::tabletSample(QTabletEvent* e) const {
     TabletPacket p;std::optional<DocumentSnapshot> snap;{std::lock_guard lock(snapshotMutex_);snap=snapshot_;}
-    if(snap)if(auto d=itemToDocument(e->position(),*snap)){p.x=d->x;p.y=d->y;}
+    if(snap)if(auto docPoint=itemToDocument(e->position(),*snap)){p.x=docPoint->x;p.y=docPoint->y;}
     p.timestampUs=std::uint64_t(e->timestamp())*1000;p.deviceKind=std::uint32_t(e->device()->type());
     const auto dev=e->device();
     if(dev&&dev->hasCapability(QInputDevice::Capability::Pressure)){p.capabilities|=PressureCap;p.pressure=e->pressure();}
     if(dev&&(dev->hasCapability(QInputDevice::Capability::XTilt)||dev->hasCapability(QInputDevice::Capability::YTilt))){p.capabilities|=TiltCap;p.tiltX=e->xTilt();p.tiltY=e->yTilt();}
     if(e->pointingDevice()&&e->pointingDevice()->pointerType()==QPointingDevice::PointerType::Eraser){p.capabilities|=EraserCap;p.eraser=true;}
-    eraser_=p.eraser;return normalizeTabletSample(p);
+    return normalizeTabletSample(p);
 }
 void CanvasItem::beginSample(InputSample s,bool tablet,bool eraser){stroke_.clear();stroke_.push_back(s);tabletStroke_=tablet;eraser_=eraser;}
 void CanvasItem::appendSample(InputSample s){if(!stroke_.empty())stroke_.push_back(s);}
@@ -67,7 +67,7 @@ void CanvasItem::finishStroke(){
     if(!bridge_||stroke_.empty()){stroke_.clear();return;}std::optional<DocumentSnapshot> snap;{std::lock_guard lock(snapshotMutex_);snap=snapshot_;}
     if(!snap){stroke_.clear();return;}auto target=paintTarget(*snap);if(!target){stroke_.clear();return;}
     BrushSettings b;b.objectId=target->first;b.layerId=target->second;b.parentRevision=snap->revision;b.toolId="pencil";b.width=12;b.opacity=1;b.hardness=.8;b.spacing=.2;b.seed=stroke_.front().timestampUs^(std::uint64_t(stroke_.size())<<32);b.color.profileId=snap->spec.colorSpec.profileId;b.color.activeChannels=snap->spec.colorSpec.format.mode==ColorMode::CMYK?4:3;b.color.channels={0.08,0.08,0.08,0.08};b.color.alpha=1;
-    auto event=brush_.compile(stroke_,b,eraser_);stroke_.clear();if(event)bridge_->commitStroke(event.value());
+    auto event=brush_.compile(stroke_,b,eraser_);stroke_.clear();if(event)(void)bridge_->commitStroke(event.value());
 }
 void CanvasItem::mousePressEvent(QMouseEvent* e){if(tabletStroke_){e->ignore();return;}beginSample(mouseSample(e),false,false);e->accept();}
 void CanvasItem::mouseMoveEvent(QMouseEvent* e){if(!tabletStroke_&&!stroke_.empty())appendSample(mouseSample(e));e->accept();}
