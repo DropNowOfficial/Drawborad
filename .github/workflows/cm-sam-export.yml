@@ -1,0 +1,87 @@
+name: SAM 2.1 export parity
+on:
+  push:
+    branches: [impl/color-formats-models-c01-c07-m01-m06]
+    paths: [.github/workflows/cm-sam-export.yml]
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        size: [tiny, small]
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Prepare explicit developer environment
+        run: |
+          python -m pip install torch==2.10.0 torchvision==0.25.0 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install numpy==2.2.6 pillow==11.3.0 onnx==1.19.1 onnxruntime==1.23.2 onnxscript==0.5.4 hydra-core==1.3.2 iopath==0.1.10 tqdm==4.67.1
+          git clone --depth 1 https://github.com/facebookresearch/sam2.git upstream
+          git -C upstream rev-parse HEAD > upstream/upstream-commit.txt
+          curl --fail --location --retry 2 https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_${{ matrix.size }}.pt -o checkpoint.pt
+      - name: Export image encoder and prompt decoder
+        env:
+          SIZE: ${{ matrix.size }}
+        run: |
+          cat > export.py <<'PY'
+          import torch, numpy as np, onnx, onnxruntime as ort, os, sys, pathlib, hashlib, json, time, resource
+          from PIL import Image, ImageDraw
+          sys.path.insert(0, str(pathlib.Path('upstream').resolve()))
+          from sam2.build_sam import build_sam2
+          from sam2.sam2_image_predictor import SAM2ImagePredictor
+          torch.set_num_threads(2);torch.manual_seed(20261005)
+          size=os.environ['SIZE'];out=pathlib.Path('export');out.mkdir(exist_ok=True)
+          config='configs/sam2.1/sam2.1_hiera_'+('t.yaml' if size=='tiny' else 's.yaml')
+          model=build_sam2(config,'checkpoint.pt',device='cpu',apply_postprocessing=False).eval()
+          class Encoder(torch.nn.Module):
+            def __init__(self,m):super().__init__();self.m=m
+            def forward(self,image):
+              backbone=self.m.forward_image(image);_,features,_,_=self.m._prepare_backbone_features(backbone)
+              if self.m.directly_add_no_mem_embed:features[-1]=features[-1]+self.m.no_mem_embed
+              maps=[f.permute(1,2,0).reshape(1,-1,*s) for f,s in zip(features,[(256,256),(128,128),(64,64)])]
+              return maps[-1],maps[0],maps[1]
+          class Decoder(torch.nn.Module):
+            def __init__(self,m):super().__init__();self.prompt=m.sam_prompt_encoder;self.mask=m.sam_mask_decoder
+            def forward(self,image_embed,high_res_0,high_res_1,point_coords,point_labels,mask_input,has_mask_input):
+              sparse=self.prompt._embed_points(point_coords,point_labels,pad=True)
+              dense=self.prompt._embed_masks(mask_input)*has_mask_input.reshape(1,1,1,1)+self.prompt.no_mask_embed.weight.reshape(1,-1,1,1).expand(1,-1,64,64)*(1-has_mask_input.reshape(1,1,1,1))
+              masks,scores,_,_=self.mask(image_embeddings=image_embed,image_pe=self.prompt.get_dense_pe(),sparse_prompt_embeddings=sparse,dense_prompt_embeddings=dense,multimask_output=True,repeat_image=False,high_res_features=[high_res_0,high_res_1])
+              return masks,scores
+          start=time.time();enc=Encoder(model).eval();dec=Decoder(model).eval();image=torch.zeros(1,3,1024,1024)
+          with torch.no_grad():features=enc(image)
+          names=['image_embed','high_res_0','high_res_1'];inputs=(*features,torch.tensor([[[512.,512.]]]),torch.tensor([[1]],dtype=torch.int64),torch.zeros(1,1,256,256),torch.zeros(1))
+          torch.onnx.export(enc,(image,),str(out/'encoder.onnx'),input_names=['image'],output_names=names,opset_version=17,dynamo=False,external_data=False)
+          torch.onnx.export(dec,inputs,str(out/'decoder.onnx'),input_names=names+['point_coords','point_labels','mask_input','has_mask_input'],output_names=['low_res_masks','iou_scores'],dynamic_axes={'point_coords':{1:'N'},'point_labels':{1:'N'}},opset_version=17,dynamo=False,external_data=False)
+          for name in ['encoder','decoder']:onnx.checker.check_model(str(out/(name+'.onnx')))
+          del enc,dec,features,inputs
+          import gc;gc.collect()
+          opts=ort.SessionOptions();opts.intra_op_num_threads=2;opts.inter_op_num_threads=1
+          enc=ort.InferenceSession(str(out/'encoder.onnx'),opts,providers=['CPUExecutionProvider']);dec=ort.InferenceSession(str(out/'decoder.onnx'),opts,providers=['CPUExecutionProvider'])
+          predictor=SAM2ImagePredictor(model,max_hole_area=0,max_sprinkle_area=0);cases=[]
+          for k in range(20):
+            w=160+(k%5)*32;h=128+(k%4)*24;im=Image.new('RGB',(w,h),(220,225,230));d=ImageDraw.Draw(im);d.ellipse((w*.2,h*.2,w*.8,h*.8),fill=(30+k*5,60,130));d.rectangle((0,h*.8,w*.2,h),fill=(160,20,20));arr=np.array(im)
+            predictor.set_image(arr);prepared=predictor._transforms(arr)[None];ef=enc.run(None,{'image':prepared.numpy()})
+            pts=np.array([[[w*.5,h*.5],[w*.1,h*.1]]],dtype=np.float32);labels=np.array([[1,0]],dtype=np.int64);coords=pts.copy();coords[:,:,0]*=1024/w;coords[:,:,1]*=1024/h
+            feeds=dict(zip(names,ef));feeds.update(point_coords=coords,point_labels=labels,mask_input=np.zeros((1,1,256,256),np.float32),has_mask_input=np.zeros(1,np.float32));om,oscores=dec.run(None,feeds)
+            with torch.no_grad():_,scores,golden=predictor.predict(point_coords=pts[0],point_labels=labels[0],multimask_output=True,return_logits=True)
+            gm=golden[None]>0;pm=om>0;intersection=np.logical_and(gm,pm).sum(axis=(2,3));union=np.logical_or(gm,pm).sum(axis=(2,3));iou=np.where(union,intersection/np.maximum(union,1),1.)
+            case={'case':k,'source':[w,h],'min_mask_iou':float(iou.min()),'max_score_error':float(np.max(np.abs(scores-oscores[0]))),'max_logit_error':float(np.max(np.abs(golden-om[0])))};cases.append(case);print(case,flush=True)
+            if k==0:np.savez_compressed(out/'reference_case.npz',image=prepared.numpy(),**feeds,expected_masks=om,expected_scores=oscores)
+          report={'model':size,'source_commit':pathlib.Path('upstream/upstream-commit.txt').read_text().strip(),'checkpoint_sha256':hashlib.sha256(pathlib.Path('checkpoint.pt').read_bytes()).hexdigest(),'torch':torch.__version__,'onnxruntime':ort.__version__,'device':'CPU','cases':cases,'pass':all(c['min_mask_iou']>=.995 for c in cases),'elapsed_seconds':time.time()-start,'peak_process_rss_kib':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,'cuda_qualification':'Blocked: no CUDA device','native_preprocessing':'NotRun','exports':{n:hashlib.sha256((out/n).read_bytes()).hexdigest() for n in ['encoder.onnx','decoder.onnx']}}
+          (out/'qualification-cpu.json').write_text(json.dumps(report,indent=2));(out/'LICENSE').write_text(pathlib.Path('upstream/LICENSE').read_text());print(json.dumps(report,indent=2));assert report['pass']
+          PY
+          python export.py
+      - name: Preserve exact outputs and failure evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: sam21-${{ matrix.size }}-onnx
+          path: |
+            export
+            export.py
+          retention-days: 7
