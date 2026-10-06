@@ -236,3 +236,38 @@ TEST("C06 CMYKA16 TIFF roundtrip preserves five native channels"){
     CHECK(image.value().decodedPixels->bytes==pixels.bytes);
     std::filesystem::remove(path);
 }
+
+
+TEST("C06 metadata is private by default and XMP preservation is explicit") {
+    auto pixels=rgba8();
+    RasterEncodingOptions options;
+    const std::string marker="DRAWBORAD-XMP-SENTINEL";
+    options.metadata.xmp.assign(marker.begin(),marker.end());
+    auto stripped=encodeRaster(ExportFormat::Jpeg,pixels,options);
+    CHECK(stripped);
+    std::string strippedText(stripped.value().begin(),stripped.value().end());
+    CHECK(strippedText.find(marker)==std::string::npos);
+
+    options.metadata.preserveXmp=true;
+    for(auto format:{ExportFormat::Png,ExportFormat::Jpeg,ExportFormat::Webp}) {
+        auto encoded=encodeRaster(format,pixels,options);
+        CHECK(encoded);
+        std::string bytes(encoded.value().begin(),encoded.value().end());
+        CHECK(bytes.find(marker)!=std::string::npos);
+    }
+}
+
+TEST("C06 GPS-bearing EXIF requires separate explicit consent") {
+    auto pixels=rgba8();
+    RasterEncodingOptions options;
+    const char exifPrefix[]={'E','x','i','f',0,0};
+    options.metadata.exif.assign(exifPrefix,exifPrefix+sizeof(exifPrefix));
+    options.metadata.exifContainsGps=true;
+    options.metadata.preserveExif=true;
+    auto blocked=encodeRaster(ExportFormat::Jpeg,pixels,options);
+    CHECK(!blocked);
+    CHECK(blocked.error().code==ErrorCode::ConversionConsentRequired);
+    options.metadata.allowGps=true;
+    auto allowed=encodeRaster(ExportFormat::Jpeg,pixels,options);
+    CHECK(allowed);
+}
