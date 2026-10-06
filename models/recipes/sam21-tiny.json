@@ -1,1 +1,17 @@
-{"taskId":"sam21.image.v1","variant":"tiny","input":[1,3,1024,1024],"maxPoints":256,"maxMasks":4,"qualification":"requires official-reference parity and target-machine report"}
+{
+  "taskId": "sam21.image.v1",
+  "input": [
+    1,
+    3,
+    1024,
+    1024
+  ],
+  "maxPoints": 256,
+  "maxMasks": 4,
+  "minMaskIou": 0.995,
+  "maxPeakGpuBytes": 6442450944,
+  "sourceCommit": "2b90b9f5ceec907a1c18123530e92e794ad901a4",
+  "qualification": "requires official-reference parity and target-machine report",
+  "variant": "tiny",
+  "checkpointSha256": "7402e0d864fa82708a20fbd15bc84245c2f26dff0eb43a4b5b93452deb34be69"
+}
