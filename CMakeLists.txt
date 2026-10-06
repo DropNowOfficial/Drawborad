@@ -41,6 +41,7 @@ endif()
 
 add_library(drawborad_codecs STATIC
   src/codecs/ImageReader.cpp
+  src/codecs/CodecProcessProtocol.cpp
   src/codecs/HeicAdapter.cpp
   src/codecs/RasterReaders.cpp
   src/codecs/psd/PsdReader.cpp
