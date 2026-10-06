@@ -40,3 +40,21 @@ TEST("M06 corrupt queue store is rejected"){
     CHECK(restored.error().code==ErrorCode::CorruptData);
     std::filesystem::remove(file);
 }
+
+TEST("M06 stopOnFailure pauses later heavy work until explicit resume"){
+    ImageQueue q;
+    std::array<std::filesystem::path,2> p{"fail.png","next.png"};
+    QueuePolicy policy;
+    policy.stopOnFailure=true;
+    auto id=q.enqueue(p,policy);
+    CHECK(id);
+    CHECK(q.startAnalysis(0));
+    CHECK(q.finish(0,false,"decode failed"));
+    CHECK(q.items()[0].state==QueueState::Failed);
+    auto blocked=q.startAnalysis(1);
+    CHECK(!blocked);
+    CHECK(blocked.error().code==ErrorCode::Locked);
+    CHECK(q.resume(id.value()));
+    CHECK(q.startAnalysis(1));
+    CHECK(q.concurrentHeavyJobs()==1);
+}
