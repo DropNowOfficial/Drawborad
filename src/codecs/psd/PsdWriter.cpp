@@ -317,17 +317,41 @@ Result<Bytes> encodePsd(const PsdWriteRequest& request) {
     put32(output, std::uint32_t(layerMask.size()));
     output.insert(output.end(), layerMask.begin(), layerMask.end());
 
+    const TileData* merged = request.merged ? &*request.merged
+                                            : request.layers.size() == 1 ? &request.layers.front().pixels
+                                                                         : nullptr;
+    if (!merged)
+        return error(ErrorCode::InvalidInput, "psd.merged-required");
+    if (merged->width != request.size.width || merged->height != request.size.height ||
+        merged->format != request.format)
+        return error(ErrorCode::InvalidInput, "psd.merged-layout");
+    const auto mergedRowBytes =
+        request.size.width * std::uint64_t(channelCount) * std::uint64_t(sampleBytes);
+    if (merged->rowStride < mergedRowBytes)
+        return error(ErrorCode::CorruptData, "psd.merged-stride");
+    auto mergedTotal = checkedMultiply(merged->rowStride, merged->height);
+    if (!mergedTotal || mergedTotal.value() > merged->bytes.size())
+        return error(ErrorCode::CorruptData, "psd.merged-bytes");
+
     put16(output, 0);
-    const auto pixelCount = checkedMultiply(request.size.width, request.size.height);
-    if (!pixelCount)
-        return pixelCount.error();
-    const auto compositeBytes = checkedMultiply(pixelCount.value(), sampleBytes);
-    if (!compositeBytes)
-        return compositeBytes.error();
-    const auto allComposite = checkedMultiply(compositeBytes.value(), baseChannels);
-    if (!allComposite || allComposite.value() > SIZE_MAX)
-        return error(ErrorCode::BudgetExceeded, "psd.composite-size");
-    output.insert(output.end(), std::size_t(allComposite.value()), 0);
+    for (unsigned channel = 0; channel < channelCount; ++channel) {
+        for (std::uint32_t y = 0; y < merged->height; ++y) {
+            for (std::uint32_t x = 0; x < merged->width; ++x) {
+                const auto offset = std::size_t(
+                    std::uint64_t(y) * merged->rowStride +
+                    std::uint64_t(x) * channelCount * sampleBytes +
+                    std::uint64_t(channel) * sampleBytes);
+                if (offset + sampleBytes > merged->bytes.size())
+                    return error(ErrorCode::CorruptData, "psd.merged-pixel");
+                if (sampleBytes == 1) {
+                    output.push_back(merged->bytes[offset]);
+                } else {
+                    output.push_back(merged->bytes[offset + 1]);
+                    output.push_back(merged->bytes[offset]);
+                }
+            }
+        }
+    }
 
     return output;
 }
