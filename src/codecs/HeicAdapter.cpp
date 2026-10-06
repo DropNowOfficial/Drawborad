@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <utility>
 #ifdef DRAWBORAD_HAS_HEIF
 #include <libheif/heif.h>
 #endif
@@ -30,6 +31,14 @@ struct Context {
 };
 struct Handle {
     heif_image_handle* value{};
+    Handle()=default;
+    Handle(const Handle&)=delete;
+    Handle& operator=(const Handle&)=delete;
+    Handle(Handle&& other) noexcept : value(std::exchange(other.value,nullptr)) {}
+    Handle& operator=(Handle&& other) noexcept {
+        if(this!=&other){if(value)heif_image_handle_release(value);value=std::exchange(other.value,nullptr);}
+        return *this;
+    }
     ~Handle(){ if(value) heif_image_handle_release(value); }
 };
 struct Image {
