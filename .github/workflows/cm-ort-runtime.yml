@@ -160,7 +160,30 @@ jobs:
           export DRAWBORAD_TEST_PROBE_ENCODER="$PWD/sam-probe-encoder.onnx"
           export DRAWBORAD_TEST_PROBE_DECODER="$PWD/sam-probe-decoder.onnx"
           set +e
-          ctest --test-dir out/build/lab-debug -R '^(M02\.(Runtime|SamRuntime)|M05\.Runtime)          status=$?
+          ctest --test-dir out/build/lab-debug -R '^(M02\.(Runtime|SamRuntime)|M05\.Runtime)
+          if [ "$status" -ne 0 ]; then
+            for exe in test_M02.Runtime test_M02.SamRuntime test_M05.Runtime; do
+              echo "=== GDB THROW TRACE: $exe ==="
+              gdb -q -batch -ex 'catch throw' -ex run -ex bt --args "out/build/lab-debug/tests/$exe" || true
+            done
+            exit "$status"
+          fi
+      - name: Preserve evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ort-runtime-smoke
+          path: |
+            identity.onnx
+            sam-encoder.onnx
+            sam-decoder.onnx
+            sam-probe-encoder.onnx
+            sam-probe-decoder.onnx
+            expected.sha256
+            out/build/lab-debug/Testing/Temporary/LastTest.log
+          retention-days: 7
+ --output-on-failure
+          status=$?
           set -e
           if [ "$status" -ne 0 ]; then
             for exe in test_M02.Runtime test_M02.SamRuntime test_M05.Runtime; do
