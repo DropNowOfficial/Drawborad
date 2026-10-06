@@ -50,3 +50,34 @@ TEST("M04 merge split transform are reversible and isolated"){
     CHECK(s.value().undo());
     CHECK(s.value().masks().fullResolutionMasks[0]==a);
 }
+
+TEST("M04 prompt refine is explicit and does not mutate accepted masks"){
+    ProposalSet p;
+    p.sourceSize={8,8};
+    p.candidates.push_back({Id::fromNumber(1),{0,0,8,8},Bytes(256*256,0),0});
+    MaskSet m;
+    m.dimensions={8,8};
+    m.fullResolutionMasks.push_back(Bytes(64,0));
+    m.unassigned.assign(64,255);
+    bool called=false;
+    auto session=ReviewSession::create(
+        p,m,5,
+        [&](const PromptSet& prompts,std::stop_token){
+            called=true;
+            CHECK(prompts.points.size()==1);
+            ProposalSet refined=p;
+            refined.candidates[0].score=.9;
+            refined.candidates[0].lowResMask.assign(256*256,255);
+            return Result<ProposalSet>{std::move(refined)};
+        });
+    CHECK(session);
+    auto before=session.value().masks();
+    PromptSet prompts;
+    prompts.points.push_back({4,4,true});
+    auto refined=session.value().refine(prompts);
+    CHECK(refined);
+    CHECK(called);
+    CHECK(refined.value().candidates[0].score>.89);
+    CHECK(session.value().masks().fullResolutionMasks==before.fullResolutionMasks);
+    CHECK(session.value().revision()==5);
+}
