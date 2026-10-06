@@ -82,3 +82,38 @@ TEST("M04 prompt refine is explicit and does not mutate accepted masks"){
     CHECK(session.value().masks().fullResolutionMasks==before.fullResolutionMasks);
     CHECK(session.value().revision()==5);
 }
+
+
+TEST("M04 subtract grow shrink feather lock and unlock obey revision contract") {
+    ProposalSet p; p.sourceSize={7,7};
+    p.candidates.push_back({Id::fromNumber(1),{0,0,7,7},{},1});
+    MaskSet m; m.dimensions={7,7};
+    Bytes mask(49,0); mask[3*7+3]=255;
+    m.fullResolutionMasks.push_back(mask); m.unassigned.assign(49,255);
+    auto s=ReviewSession::create(p,m,1); CHECK(s);
+
+    auto rev=s.value().revision();
+    CHECK(s.value().apply({MaskEditOp::Grow,0,{0,0,0,0},1,rev}));
+    CHECK(std::count(s.value().masks().fullResolutionMasks[0].begin(),s.value().masks().fullResolutionMasks[0].end(),255)>1);
+
+    rev=s.value().revision();
+    CHECK(s.value().apply({MaskEditOp::Shrink,0,{0,0,0,0},1,rev}));
+    CHECK(s.value().masks().fullResolutionMasks[0][3*7+3]==255);
+
+    rev=s.value().revision();
+    CHECK(s.value().apply({MaskEditOp::Feather,0,{0,0,0,0},1,rev}));
+    CHECK(std::any_of(s.value().masks().fullResolutionMasks[0].begin(),s.value().masks().fullResolutionMasks[0].end(),[](std::uint8_t v){return v>0&&v<255;}));
+
+    rev=s.value().revision();
+    CHECK(s.value().apply({MaskEditOp::SubtractBrush,0,{3,3,1,1},1,rev}));
+    CHECK(s.value().masks().fullResolutionMasks[0][3*7+3]==0);
+
+    rev=s.value().revision();
+    CHECK(s.value().apply({MaskEditOp::Lock,0,{0,0,0,0},0,rev}));
+    rev=s.value().revision();
+    auto blocked=s.value().apply({MaskEditOp::AddBrush,0,{0,0,1,1},1,rev});
+    CHECK(!blocked); CHECK(blocked.error().code==ErrorCode::Locked);
+    CHECK(s.value().apply({MaskEditOp::Unlock,0,{0,0,0,0},0,rev}));
+    rev=s.value().revision();
+    CHECK(s.value().apply({MaskEditOp::AddBrush,0,{0,0,1,1},1,rev}));
+}
