@@ -9,6 +9,7 @@ TEST("C07 codec limits scale from resource budget"){ResourceBudget b;b.ramSoftBy
 TEST("C07 confined path rejects traversal"){auto root=std::filesystem::temp_directory_path()/"drawborad-safe";CHECK(!confinedPath(root,"../escape.bin"));}
 
 #include "codecs/AtomicExport.h"
+#include "codecs/ExportService.h"
 
 namespace {
 class ReplaceFailIO final : public FileIO {
@@ -166,3 +167,64 @@ TEST("C07 native staged hash streams across multiple chunks") {
     CHECK(streamed.value()==sha256(bytes));
     std::filesystem::remove(path);
 }
+
+
+TEST("C07 cancelled staged export publishes no destination") {
+    auto path=std::filesystem::temp_directory_path()/"drawborad-c07-cancelled.bin";
+    std::filesystem::remove(path);
+    ExportRequest request;
+    request.format=ExportFormat::Png;
+    request.path=path;
+    request.size={1,1};
+    auto plan=preflightExport(ColorMode::RGB,request);
+    CHECK(plan);
+    std::stop_source source;
+    source.request_stop();
+    Bytes bytes{1,2,3};
+    auto result=writeRasterPlaceholder(plan.value(),bytes,source.get_token());
+    CHECK(!result);
+    CHECK(result.error().code==ErrorCode::Cancelled);
+    CHECK(!std::filesystem::exists(path));
+}
+
+#ifdef _WIN32
+TEST("C07 Windows Unicode emoji and long paths survive atomic write") {
+    auto root=std::filesystem::temp_directory_path()/L"drawborad-\x4e2d\x6587-\U0001f3a8";
+    std::error_code ec;
+    std::filesystem::remove_all(root,ec);
+    auto dir=root;
+    for(int i=0;i<9;++i) dir/=L"0123456789012345678901234567890123456789";
+    std::filesystem::create_directories(dir);
+    auto path=dir/L"\x7ed3\x679c-\U0001f3a8.bin";
+    NativeFileIO io;
+    Bytes expected{9,8,7,6,5};
+    CHECK(atomicWrite(io,path,expected));
+    auto read=io.read(path,1024);
+    CHECK(read);
+    CHECK(read.value()==expected);
+    std::filesystem::remove_all(root,ec);
+}
+
+TEST("C07 Windows locked destination cannot be replaced") {
+    auto root=std::filesystem::temp_directory_path()/"drawborad-c07-lock";
+    std::error_code ec;
+    std::filesystem::remove_all(root,ec);
+    std::filesystem::create_directories(root);
+    auto destination=root/"locked.bin";
+    auto stagedPath=root/"staged.bin";
+    NativeFileIO io;
+    Bytes oldBytes{1,2,3},newBytes{4,5,6};
+    CHECK(io.write(destination,oldBytes,true));
+    CHECK(io.write(stagedPath,newBytes,true));
+    FileLease lease;
+    CHECK(lease.acquire(destination));
+    StagedExport staged{stagedPath,sha256(newBytes)};
+    DestinationPolicy policy{destination,true,true};
+    auto result=commitExport(io,staged,policy,1024);
+    CHECK(!result);
+    auto existing=io.read(destination,1024);
+    CHECK(existing);
+    CHECK(existing.value()==oldBytes);
+    std::filesystem::remove_all(root,ec);
+}
+#endif
