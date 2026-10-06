@@ -1,0 +1,71 @@
+name: Windows color model core validation
+on:
+  push:
+    branches: [impl/color-formats-models-c01-c07-m01-m06]
+    paths:
+      - CMakeLists.txt
+      - cmake/**
+      - src/color/**
+      - src/codecs/**
+      - src/models/**
+      - src/segmentation/**
+      - src/review/**
+      - src/jobs/ImageQueue.*
+      - src/jobs/QueueStore.*
+      - tests/color/**
+      - tests/codecs/**
+      - tests/models/**
+      - tests/segmentation/**
+      - tests/review/**
+      - tests/jobs/QueueTests.cpp
+      - tests/stress/**
+      - .github/workflows/cm-windows-core.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  msvc-core:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Acquire pinned native dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          git clone --depth 1 https://github.com/microsoft/vcpkg.git vcpkg
+          .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+          if ($LASTEXITCODE) { throw 'vcpkg bootstrap failed' }
+          $env:VCPKG_DISABLE_METRICS='1'
+          .\vcpkg\vcpkg.exe install lcms libpng libjpeg-turbo 'tiff[core,jpeg,lzma,zip]' 'libwebp[core]' zlib --triplet x64-windows --x-install-root="$PWD\vcpkg-installed"
+          if ($LASTEXITCODE) { throw 'vcpkg dependency build failed' }
+          Invoke-WebRequest https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-win-x64-1.23.2.zip -OutFile ort.zip
+          $expected='6090b908901162b1e001878d7fbecba24b9ba71ddad6abf6498e150ee9b0f90'
+          $actual=(Get-FileHash ort.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "ORT digest mismatch: $actual" }
+          Expand-Archive ort.zip ort
+      - name: Configure MSVC core
+        shell: pwsh
+        run: |
+          $ort=(Resolve-Path 'ort\onnxruntime-win-x64-1.23.2').Path
+          cmake -S . -B out/build/win-core -G "Visual Studio 17 2022" -A x64 -DDRAWBORAD_DESKTOP=OFF -DDRAWBORAD_QUALIFY=OFF -DDRAWBORAD_ONNXRUNTIME_ROOT="$ort" -DCMAKE_TOOLCHAIN_FILE="$PWD\vcpkg\scripts\buildsystems\vcpkg.cmake" -DVCPKG_INSTALLED_DIR="$PWD\vcpkg-installed"
+          if ($LASTEXITCODE) { throw 'CMake configure failed' }
+      - name: Build MSVC core
+        run: cmake --build out/build/win-core --config Debug --parallel 2
+      - name: Run MSVC core tests
+        shell: pwsh
+        run: |
+          ctest --test-dir out/build/win-core -C Debug --output-on-failure --output-junit windows-core.xml
+          if ($LASTEXITCODE) { throw 'Windows core tests failed' }
+      - name: Preserve evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-color-model-core
+          path: |
+            out/build/win-core/windows-core.xml
+            out/build/win-core/Testing/Temporary/LastTest.log
+            ort.zip
+          retention-days: 7
