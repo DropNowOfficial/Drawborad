@@ -503,7 +503,7 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
     const auto total = version == 1 ? std::uint64_t(u32(bytes.data() + reader.position - 4))
                                     : u64(bytes.data() + reader.position - 8);
     if (total > bytes.size() - reader.position || total == 0)
-        return total == 0 ? PhotoshopDecoded{metadata.value(), {}}
+        return total == 0 ? PhotoshopDecoded{metadata.value(), {}, std::nullopt}
                           : Result<PhotoshopDecoded>{error(ErrorCode::CorruptData,
                                                           "psd.decode-layer-mask-bounds")};
     const auto sectionEnd = reader.position + std::size_t(total);
