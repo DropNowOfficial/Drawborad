@@ -93,6 +93,10 @@ std::uint16_t jpegOrientation(std::span<const std::uint8_t> b){
 }
 
 #ifdef DRAWBORAD_HAS_PNG
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4611)
+#endif
 struct PngRead { std::span<const std::uint8_t> data; std::size_t pos{}; };
 void pngRead(png_structp png,png_bytep out,png_size_t n){
     auto* r=static_cast<PngRead*>(png_get_io_ptr(png));
@@ -123,17 +127,27 @@ Result<TileData> decodePng(std::span<const std::uint8_t>b,InputInfo& info){
     if(png_get_iCCP(png,meta,&name,&comp,&profile,&profileLen)&&profile&&profileLen)info.icc=sha256(std::span<const std::uint8_t>(profile,profileLen));
     png_destroy_read_struct(&png,&meta,nullptr);out.profileId=info.icc;return out;
 }
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 #else
 Result<TileData> decodePng(std::span<const std::uint8_t>,InputInfo&){return error(ErrorCode::UnsupportedFeature,"png.codec-unavailable");}
 #endif
 
 #ifdef DRAWBORAD_HAS_JPEG
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4611 4324)
+#endif
 struct JpegErr { jpeg_error_mgr base; jmp_buf jump; };
 void jpegError(j_common_ptr p){auto* e=reinterpret_cast<JpegErr*>(p->err);longjmp(e->jump,1);}
 Result<TileData> decodeJpeg(std::span<const std::uint8_t>b,InputInfo& info){
     jpeg_decompress_struct d{};JpegErr e{};d.err=jpeg_std_error(&e.base);e.base.error_exit=jpegError;
     if(setjmp(e.jump)){jpeg_destroy_decompress(&d);return error(ErrorCode::CorruptData,"jpeg.decode");}
-    jpeg_create_decompress(&d);jpeg_mem_src(&d,const_cast<unsigned char*>(b.data()),b.size());
+    if(b.size()>std::numeric_limits<unsigned long>::max())
+        return error(ErrorCode::BudgetExceeded,"jpeg.input-size");
+    jpeg_create_decompress(&d);
+    jpeg_mem_src(&d,const_cast<unsigned char*>(b.data()),static_cast<unsigned long>(b.size()));
     jpeg_save_markers(&d,JPEG_APP0+2,0xffff);jpeg_read_header(&d,TRUE);d.out_color_space=JCS_RGB;jpeg_start_decompress(&d);
     TileData out;out.width=d.output_width;out.height=d.output_height;out.format={ColorMode::RGB,Depth::U8,false};out.rowStride=std::uint64_t(out.width)*3;out.bytes.resize(std::size_t(out.rowStride)*out.height);
     while(d.output_scanline<d.output_height){JSAMPROW row=out.bytes.data()+std::uint64_t(d.output_scanline)*out.rowStride;jpeg_read_scanlines(&d,&row,1);}
@@ -142,12 +156,18 @@ Result<TileData> decodeJpeg(std::span<const std::uint8_t>b,InputInfo& info){
     if(!parts.empty()){std::sort(parts.begin(),parts.end());Bytes icc;for(auto&part:parts)icc.insert(icc.end(),part.second.begin(),part.second.end());info.icc=sha256(icc);out.profileId=info.icc;}
     jpeg_finish_decompress(&d);jpeg_destroy_decompress(&d);return out;
 }
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 #else
 Result<TileData> decodeJpeg(std::span<const std::uint8_t>,InputInfo&){return error(ErrorCode::UnsupportedFeature,"jpeg.codec-unavailable");}
 #endif
 
 #ifdef DRAWBORAD_HAS_WEBP
 Result<TileData> decodeWebp(std::span<const std::uint8_t>b,InputInfo& info){
+#ifndef DRAWBORAD_HAS_WEBPMUX
+    (void)info;
+#endif
     WebPBitstreamFeatures f{};if(WebPGetFeatures(b.data(),b.size(),&f)!=VP8_STATUS_OK)return error(ErrorCode::CorruptData,"webp.decode");
     TileData out;out.width=f.width;out.height=f.height;out.format={ColorMode::RGB,Depth::U8,bool(f.has_alpha)};auto channels=f.has_alpha?4u:3u;out.rowStride=std::uint64_t(out.width)*channels;out.bytes.resize(std::size_t(out.rowStride)*out.height);
     auto* result=f.has_alpha?WebPDecodeRGBAInto(b.data(),b.size(),out.bytes.data(),out.bytes.size(),int(out.rowStride)):WebPDecodeRGBInto(b.data(),b.size(),out.bytes.data(),out.bytes.size(),int(out.rowStride));
