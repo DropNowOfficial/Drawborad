@@ -1,6 +1,7 @@
 #include "PsdReader.h"
 #include "storage/FileIO.h"
 #include <algorithm>
+#include <array>
 #include <cstring>
 #ifdef DRAWBORAD_HAS_ZLIB
 #include <zlib.h>
@@ -127,6 +128,93 @@ struct Reader {
         return true;
     }
 };
+
+struct LayerInfoLocation {
+    std::size_t begin{};
+    std::size_t end{};
+};
+
+std::uint64_t sizedLength(std::span<const std::uint8_t> bytes, std::size_t at,
+                          std::size_t count) {
+    return count == 4 ? std::uint64_t(u32(bytes.data() + at))
+                      : u64(bytes.data() + at);
+}
+
+bool psbEightByteAdditionalLength(std::span<const std::uint8_t> key) {
+    if (key.size() != 4)
+        return false;
+    static constexpr std::array<std::array<char, 4>, 13> keys{{
+        {{'L','M','s','k'}}, {{'L','r','1','6'}}, {{'L','r','3','2'}}, {{'L','a','y','r'}},
+        {{'M','t','1','6'}}, {{'M','t','3','2'}}, {{'M','t','r','n'}}, {{'A','l','p','h'}},
+        {{'F','M','s','k'}}, {{'l','n','k','2'}}, {{'F','E','i','d'}}, {{'F','X','i','d'}},
+        {{'P','x','S','D'}}
+    }};
+    for (const auto& candidate : keys)
+        if (std::memcmp(key.data(), candidate.data(), 4) == 0)
+            return true;
+    return false;
+}
+
+Result<std::optional<LayerInfoLocation>> locateLayerInfo(
+    std::span<const std::uint8_t> bytes, std::size_t sectionBegin,
+    std::size_t sectionEnd, std::uint16_t version, std::uint16_t depth) {
+    if (sectionBegin > sectionEnd || sectionEnd > bytes.size())
+        return error(ErrorCode::CorruptData, "psd.layer-mask-bounds");
+    const std::size_t mainLengthBytes = version == 1 ? 4u : 8u;
+    if (mainLengthBytes > sectionEnd - sectionBegin)
+        return error(ErrorCode::CorruptData, "psd.layer-info-length");
+
+    auto at = sectionBegin;
+    const auto mainLength = sizedLength(bytes, at, mainLengthBytes);
+    at += mainLengthBytes;
+    if (mainLength > sectionEnd - at)
+        return error(ErrorCode::CorruptData, "psd.layer-info-bounds");
+    if (mainLength != 0) {
+        if (mainLength < 2)
+            return error(ErrorCode::CorruptData, "psd.layer-info-bounds");
+        return std::optional<LayerInfoLocation>{
+            LayerInfoLocation{at, at + std::size_t(mainLength)}};
+    }
+
+    if (sectionEnd - at < 4)
+        return std::optional<LayerInfoLocation>{};
+    const auto globalMaskLength = std::uint64_t(u32(bytes.data() + at));
+    at += 4;
+    if (globalMaskLength > sectionEnd - at)
+        return error(ErrorCode::CorruptData, "psd.global-mask-bounds");
+    at += std::size_t(globalMaskLength);
+
+    while (at < sectionEnd) {
+        if (sectionEnd - at < 12)
+            return error(ErrorCode::CorruptData, "psd.additional-layer-info-header");
+        const auto* signature = bytes.data() + at;
+        if (std::memcmp(signature, "8BIM", 4) != 0 &&
+            std::memcmp(signature, "8B64", 4) != 0)
+            return error(ErrorCode::CorruptData, "psd.additional-layer-info-signature");
+        const auto key = bytes.subspan(at + 4, 4);
+        const bool longLength = version == 2 && psbEightByteAdditionalLength(key);
+        const std::size_t lengthBytes = longLength ? 8u : 4u;
+        if (sectionEnd - at < 8 + lengthBytes)
+            return error(ErrorCode::CorruptData, "psd.additional-layer-info-length");
+        const auto length = sizedLength(bytes, at + 8, lengthBytes);
+        const auto payload = at + 8 + lengthBytes;
+        if (length > sectionEnd - payload)
+            return error(ErrorCode::CorruptData, "psd.additional-layer-info-bounds");
+        if (depth == 16 && std::memcmp(key.data(), "Lr16", 4) == 0) {
+            if (length < 2)
+                return error(ErrorCode::CorruptData, "psd.lr16-length");
+            return std::optional<LayerInfoLocation>{
+                LayerInfoLocation{payload, payload + std::size_t(length)}};
+        }
+        at = payload + std::size_t(length);
+        if ((length & 1u) != 0) {
+            if (at >= sectionEnd)
+                return error(ErrorCode::CorruptData, "psd.additional-layer-info-padding");
+            ++at;
+        }
+    }
+    return std::optional<LayerInfoLocation>{};
+}
 
 Result<void> readLayerExtra(std::span<const std::uint8_t> bytes, std::size_t begin,
                             std::size_t end, PhotoshopLayerInfo& layer) {
@@ -280,18 +368,15 @@ Result<PhotoshopInfo> readPhotoshopHeader(std::span<const std::uint8_t> bytes,
 
     const auto sectionEnd = reader.position + std::size_t(total);
 
-    if (!reader.take(lengthBytes))
-        return error(ErrorCode::CorruptData, "psd.layer-info-length");
-
-    const auto layerLength =
-        version == 1 ? std::uint64_t(u32(bytes.data() + reader.position - lengthBytes))
-                     : u64(bytes.data() + reader.position - lengthBytes);
-    if (layerLength > sectionEnd - reader.position)
-        return error(ErrorCode::CorruptData, "psd.layer-info-bounds");
-    if (layerLength == 0)
+    const auto located = locateLayerInfo(bytes, reader.position, sectionEnd, version, out.depth);
+    if (!located)
+        return located.error();
+    if (!located.value())
         return out;
+    reader.position = located.value()->begin;
+    const auto layerInfoEnd = located.value()->end;
 
-    if (!reader.take(2))
+    if (!reader.take(2) || reader.position > layerInfoEnd)
         return error(ErrorCode::CorruptData, "psd.layer-count");
 
     const auto signedCount = std::int16_t(u16(bytes.data() + reader.position - 2));
@@ -300,7 +385,7 @@ Result<PhotoshopInfo> readPhotoshopHeader(std::span<const std::uint8_t> bytes,
         return error(ErrorCode::BudgetExceeded, "psd.layer-count-limit");
 
     for (int index = 0; index < layerCount; ++index) {
-        if (reader.position + 18 > sectionEnd)
+        if (reader.position + 18 > layerInfoEnd)
             return error(ErrorCode::CorruptData, "psd.layer-record");
 
         PhotoshopLayerInfo layer;
@@ -317,11 +402,11 @@ Result<PhotoshopInfo> readPhotoshopHeader(std::span<const std::uint8_t> bytes,
 
         const std::size_t descriptorSize = version == 1 ? 6u : 10u;
         const auto channelRecords = std::uint64_t(layer.channels) * descriptorSize;
-        if (channelRecords > sectionEnd - reader.position)
+        if (channelRecords > layerInfoEnd - reader.position)
             return error(ErrorCode::CorruptData, "psd.channel-records");
         reader.position += std::size_t(channelRecords);
 
-        if (reader.position + 16 > sectionEnd)
+        if (reader.position + 16 > layerInfoEnd)
             return error(ErrorCode::CorruptData, "psd.layer-blend");
         if (std::memcmp(bytes.data() + reader.position, "8BIM", 4) != 0)
             return error(ErrorCode::CorruptData, "psd.blend-signature");
@@ -339,7 +424,7 @@ Result<PhotoshopInfo> readPhotoshopHeader(std::span<const std::uint8_t> bytes,
 
         const auto extra = std::uint64_t(u32(bytes.data() + reader.position));
         reader.position += 4;
-        if (extra > sectionEnd - reader.position)
+        if (extra > layerInfoEnd - reader.position)
             return error(ErrorCode::CorruptData, "psd.extra");
         const auto extraBegin = reader.position;
         const auto extraEnd = extraBegin + std::size_t(extra);
@@ -518,16 +603,15 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
                                                           "psd.decode-layer-mask-bounds")};
     const auto sectionEnd = reader.position + std::size_t(total);
 
-    if (!reader.take(lengthBytes))
-        return error(ErrorCode::CorruptData, "psd.decode-layer-info-length");
-    const auto layerLength =
-        version == 1 ? std::uint64_t(u32(bytes.data() + reader.position - 4))
-                     : u64(bytes.data() + reader.position - 8);
-    if (layerLength > sectionEnd - reader.position || layerLength < 2)
-        return error(ErrorCode::CorruptData, "psd.decode-layer-info-bounds");
-    const auto layerInfoEnd = reader.position + std::size_t(layerLength);
+    const auto located = locateLayerInfo(bytes, reader.position, sectionEnd, version, metadata.value().depth);
+    if (!located)
+        return located.error();
+    if (!located.value())
+        return PhotoshopDecoded{metadata.value(), {}, std::nullopt};
+    reader.position = located.value()->begin;
+    const auto layerInfoEnd = located.value()->end;
 
-    if (!reader.take(2))
+    if (!reader.take(2) || reader.position > layerInfoEnd)
         return error(ErrorCode::CorruptData, "psd.decode-layer-count");
     const auto signedCount = std::int16_t(u16(bytes.data() + reader.position - 2));
     const int layerCount = signedCount < 0 ? -signedCount : signedCount;
