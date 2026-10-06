@@ -259,3 +259,27 @@ TEST("C05 writePsd never replaces an existing file without overwrite consent"){
     CHECK(actual==old);
     std::filesystem::remove(path);
 }
+
+
+TEST("C05 file writer keeps internal staging buffer bounded") {
+    PsdWriteRequest request;
+    request.path=std::filesystem::temp_directory_path()/"drawborad-c05-stream.psd";
+    request.size={1024,1024};
+    request.format={ColorMode::RGB,Depth::U8,true};
+    PsdLayerPixels layer;
+    layer.name="stream";
+    layer.pixels.width=1024;
+    layer.pixels.height=1024;
+    layer.pixels.format=request.format;
+    layer.pixels.rowStride=4096;
+    layer.pixels.bytes.assign(std::size_t(layer.pixels.rowStride)*layer.pixels.height,127);
+    request.layers.push_back(layer);
+    request.merged=layer.pixels;
+    request.overwrite=true;
+    PsdWriteStats stats;
+    auto written=writePsd(request,{},&stats);
+    CHECK(written);
+    CHECK(stats.stagedBytes>8*1024*1024);
+    CHECK(stats.peakWriterBufferBytes<=1024*1024);
+    std::filesystem::remove(request.path);
+}
