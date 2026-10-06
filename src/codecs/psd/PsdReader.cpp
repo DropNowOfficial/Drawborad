@@ -705,6 +705,65 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
         }
         decoded.layers.push_back({record.info, std::move(tile), std::move(userMask)});
     }
+
+    reader.position = sectionEnd;
+    if (reader.position + 2 > bytes.size())
+        return error(ErrorCode::CorruptData, "psd.composite-compression");
+    const auto compositeCompression = u16(bytes.data() + reader.position);
+    reader.position += 2;
+    if (compositeCompression != 0)
+        return error(ErrorCode::UnsupportedFeature, "psd.composite-compression");
+
+    const bool compositeAlpha = metadata.value().channels == baseChannels + 1u;
+    if (metadata.value().channels != baseChannels &&
+        metadata.value().channels != baseChannels + 1u)
+        return error(ErrorCode::UnsupportedFeature, "psd.composite-extra-channels");
+    PixelFormat compositeFormat{
+        baseChannels == 3 ? ColorMode::RGB : ColorMode::CMYK,
+        depth,
+        compositeAlpha
+    };
+    const auto compositeChannels = compositeFormat.channelCount();
+    auto compositePixels =
+        checkedMultiply(metadata.value().size.width, metadata.value().size.height);
+    if (!compositePixels)
+        return compositePixels.error();
+    auto compositeSamples = checkedMultiply(compositePixels.value(), compositeChannels);
+    if (!compositeSamples)
+        return compositeSamples.error();
+    auto compositeByteCount = checkedMultiply(compositeSamples.value(), sampleBytes);
+    if (!compositeByteCount || compositeByteCount.value() > limits.decodedBytes ||
+        compositeByteCount.value() > SIZE_MAX)
+        return error(ErrorCode::BudgetExceeded, "psd.composite-budget");
+    if (compositeByteCount.value() > bytes.size() - reader.position)
+        return error(ErrorCode::CorruptData, "psd.composite-bounds");
+
+    TileData composite;
+    composite.width = std::uint32_t(metadata.value().size.width);
+    composite.height = std::uint32_t(metadata.value().size.height);
+    composite.format = compositeFormat;
+    composite.profileId = profile;
+    composite.rowStride =
+        metadata.value().size.width * compositeChannels * sampleBytes;
+    composite.bytes.assign(std::size_t(compositeByteCount.value()), 0);
+
+    for (unsigned channel = 0; channel < compositeChannels; ++channel) {
+        for (std::uint64_t pixel = 0; pixel < compositePixels.value(); ++pixel) {
+            const auto src = reader.position +
+                             std::size_t((std::uint64_t(channel) * compositePixels.value() +
+                                          pixel) * sampleBytes);
+            const auto dst = std::size_t(pixel * compositeChannels * sampleBytes +
+                                         std::uint64_t(channel) * sampleBytes);
+            if (sampleBytes == 1) {
+                composite.bytes[dst] = bytes[src];
+            } else {
+                composite.bytes[dst] = bytes[src + 1];
+                composite.bytes[dst + 1] = bytes[src];
+            }
+        }
+    }
+    reader.position += std::size_t(compositeByteCount.value());
+    decoded.composite = std::move(composite);
     return decoded;
 }
 
