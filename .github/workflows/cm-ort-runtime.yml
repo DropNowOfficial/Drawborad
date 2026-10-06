@@ -6,7 +6,14 @@ on:
       - CMakeLists.txt
       - cmake/TestTargets.cmake
       - src/models/**
+      - src/segmentation/**
+      - src/review/**
+      - src/jobs/ImageQueue.*
+      - src/jobs/QueueStore.*
       - tests/models/**
+      - tests/segmentation/**
+      - tests/review/**
+      - tests/jobs/QueueTests.cpp
       - .github/workflows/cm-ort-runtime.yml
   workflow_dispatch:
 permissions:
