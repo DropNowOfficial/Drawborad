@@ -91,7 +91,27 @@ Result<void> readLayerExtra(std::span<const std::uint8_t> bytes, std::size_t beg
     at += 4;
     if (maskLength > end - at)
         return error(ErrorCode::CorruptData, "psd.mask-bounds");
-    at += std::size_t(maskLength);
+    if (maskLength != 0) {
+        if (maskLength < 18)
+            return error(ErrorCode::CorruptData, "psd.mask-record");
+        const auto maskEnd = at + std::size_t(maskLength);
+        layer.maskBounds = {
+            std::int32_t(u32(bytes.data() + at + 4)),
+            std::int32_t(u32(bytes.data() + at)),
+            std::uint64_t(std::int64_t(std::int32_t(u32(bytes.data() + at + 12))) -
+                          std::int64_t(std::int32_t(u32(bytes.data() + at + 4)))),
+            std::uint64_t(std::int64_t(std::int32_t(u32(bytes.data() + at + 8))) -
+                          std::int64_t(std::int32_t(u32(bytes.data() + at))))
+        };
+        const auto bottom = std::int32_t(u32(bytes.data() + at + 8));
+        const auto right = std::int32_t(u32(bytes.data() + at + 12));
+        if (bottom < std::int32_t(u32(bytes.data() + at)) ||
+            right < std::int32_t(u32(bytes.data() + at + 4)))
+            return error(ErrorCode::CorruptData, "psd.mask-rectangle");
+        layer.maskDefault = bytes[at + 16];
+        layer.hasUserMask = true;
+        at = maskEnd;
+    }
 
     if (end - at < 4)
         return error(ErrorCode::CorruptData, "psd.blend-range-length");
