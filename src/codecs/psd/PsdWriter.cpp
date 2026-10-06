@@ -121,12 +121,54 @@ Result<void> appendUnicodeName(Bytes& extra, std::string_view name) {
 
 } // namespace
 
+Result<void> preflightPsdOutputSize(const PsdWriteRequest& request) {
+    constexpr std::uint64_t maxPsdBytes = 2 * GiB;
+    const auto baseChannels = request.format.mode == ColorMode::RGB ? 3u : 4u;
+    const auto channelCount = baseChannels + (request.format.alpha ? 1u : 0u);
+    const auto sampleBytes = request.format.depth == Depth::U16 ? 2u : 1u;
+    auto pixels = checkedMultiply(request.size.width, request.size.height);
+    if (!pixels) return pixels.error();
+    auto plane = checkedMultiply(pixels.value(), sampleBytes);
+    if (!plane) return plane.error();
+    auto fullChannels = checkedMultiply(plane.value(), channelCount);
+    if (!fullChannels) return fullChannels.error();
+
+    // PSD stores every layer channel and the merged composite separately.
+    // Count the raw payload before validating backing buffers so impossible
+    // >2 GiB documents fail without traversing or allocating pixel data.
+    std::uint64_t minimum = 64;
+    for (const auto& layer : request.layers) {
+        auto next = checkedAdd(minimum, fullChannels.value());
+        if (!next) return next.error();
+        minimum = next.value();
+        if (!layer.mask.empty()) {
+            auto maskPixels = checkedMultiply(layer.maskBounds.width, layer.maskBounds.height);
+            if (!maskPixels) return maskPixels.error();
+            auto maskBytes = checkedMultiply(maskPixels.value(), sampleBytes);
+            if (!maskBytes) return maskBytes.error();
+            next = checkedAdd(minimum, maskBytes.value());
+            if (!next) return next.error();
+            minimum = next.value();
+        }
+        if (minimum > maxPsdBytes)
+            return error(ErrorCode::BudgetExceeded, "psd.output-size-limit");
+    }
+    auto merged = checkedAdd(minimum, fullChannels.value());
+    if (!merged) return merged.error();
+    if (merged.value() > maxPsdBytes)
+        return error(ErrorCode::BudgetExceeded, "psd.output-size-limit");
+    return {};
+}
+
 Result<Bytes> encodePsd(const PsdWriteRequest& request) {
     if (!request.size.width || !request.size.height || request.size.width > 30000 ||
         request.size.height > 30000)
         return error(ErrorCode::UnsupportedFeature, "psd.dimension-limit");
     if (request.format.depth != Depth::U8 && request.format.depth != Depth::U16)
         return error(ErrorCode::UnsupportedFeature, "psd.depth");
+    auto outputSize = preflightPsdOutputSize(request);
+    if (!outputSize)
+        return outputSize.error();
     if (request.layers.size() > std::size_t(INT16_MAX))
         return error(ErrorCode::BudgetExceeded, "psd.layer-count");
 
