@@ -141,3 +141,31 @@ TEST("M01 ONNX custom operator domains are rejected before runtime load"){
     CHECK(result.error().messageKey=="model.onnx-custom-domain");
     std::filesystem::remove_all(d);
 }
+
+
+TEST("M01 install owns verified package and blocks active removal"){
+    auto source=pkg(false);
+    auto root=std::filesystem::temp_directory_path()/"drawborad-owned-model-store";
+    std::filesystem::remove_all(root);
+    ModelRegistry registry(root);
+    auto id=registry.install(source,TrustDecision::UserAcceptedUntrusted);
+    CHECK(id);
+    auto installed=registry.manifest(id.value());
+    CHECK(installed);
+    auto ownedEncoder=installed.value().resolvedWeights;
+    auto ownedDecoder=installed.value().resolvedDecoderWeights;
+    CHECK(std::filesystem::exists(ownedEncoder));
+    CHECK(std::filesystem::exists(ownedDecoder));
+    auto canonicalRoot=std::filesystem::weakly_canonical(root).string();
+    CHECK(std::filesystem::weakly_canonical(ownedEncoder).string().rfind(canonicalRoot,0)==0);
+    std::filesystem::remove_all(source);
+    CHECK(std::filesystem::exists(ownedEncoder));
+    CHECK(registry.retain(id.value()));
+    auto blocked=registry.remove(id.value());
+    CHECK(!blocked);
+    CHECK(blocked.error().code==ErrorCode::Locked);
+    registry.release(id.value());
+    CHECK(registry.remove(id.value()));
+    CHECK(!std::filesystem::exists(ownedEncoder));
+    std::filesystem::remove_all(root);
+}
