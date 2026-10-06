@@ -1,5 +1,6 @@
 #include "AdapterRegistry.h"
 #include <cmath>
+#include <cstring>
 
 namespace drawborad {
 Result<AdapterInfo> AdapterRegistry::resolve(std::string_view task) const {
@@ -78,6 +79,45 @@ Result<CompatibilityReport> probeModel(const ModelManifest& m, DevicePreference 
         return CompatibilityReport{false,"cuda-runtime-qualification-required",
                                    m.ramBytes,m.gpuBytes,device};
     }
+    if(m.provider=="cuda" && (m.resolvedWeights.empty() || m.resolvedDecoderWeights.empty()))
+        return CompatibilityReport{true,"cpu-fallback-explicit",m.ramBytes,0,device};
+
+    if(!m.resolvedWeights.empty() && !m.resolvedDecoderWeights.empty()) {
+        auto floats=[](std::size_t count) {
+            Bytes bytes(count*sizeof(float),0);
+            return bytes;
+        };
+        auto int64s=[](std::initializer_list<std::int64_t> values) {
+            Bytes bytes(values.size()*sizeof(std::int64_t));
+            if(!bytes.empty())
+                std::memcpy(bytes.data(),values.begin(),bytes.size());
+            return bytes;
+        };
+
+        InferenceRequest request;
+        std::copy_n(m.sha256.bytes.begin(),16,request.modelId.bytes.begin());
+        if(request.modelId.empty())
+            request.modelId=Id::fromNumber(1);
+        request.device=DevicePreference::CPU;
+        request.tensorRefs={
+            floats(3*1024*1024),
+            floats(2),
+            int64s({1}),
+            floats(256*256),
+            floats(1)
+        };
+        if(stop.stop_requested())
+            return error(ErrorCode::Cancelled,"adapter.cancelled");
+        OrtSession session(m);
+        auto probe=session.run(request,stop);
+        if(!probe)
+            return CompatibilityReport{false,"runtime-probe-failed",0,0,device};
+        if(probe.value().tensorRefs.size()!=m.outputs.size())
+            return CompatibilityReport{false,"runtime-output-count",0,0,device};
+        return CompatibilityReport{true,"runtime-probe-passed",
+                                   probe.value().peakBytes,0,device};
+    }
+
     if(m.provider=="cuda")
         return CompatibilityReport{true,"cpu-fallback-explicit",m.ramBytes,0,device};
     return CompatibilityReport{true,"manifest-contract-valid",m.ramBytes,m.gpuBytes,device};
