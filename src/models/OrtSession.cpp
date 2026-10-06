@@ -170,14 +170,15 @@ Result<InferenceOutput> runSingle(Ort::Env& env, const ModelManifest& manifest,
     for (std::size_t i = 0; i < inputCount; ++i) {
         auto name = session.GetInputNameAllocated(i, allocator);
         inputNamesStorage.emplace_back(name.get());
+        auto typeInfo = session.GetInputTypeInfo(i);
+        auto info = typeInfo.GetTensorTypeAndShapeInfo();
         TensorSpec runtimeSpec;
         runtimeSpec.name = inputNamesStorage.back();
         runtimeSpec.dtype = "float32";
-        runtimeSpec.shape = session.GetInputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
+        runtimeSpec.shape = info.GetShape();
         const TensorSpec& spec = manifest.inputs.empty() ? runtimeSpec : manifest.inputs[i];
         if (!spec.name.empty() && spec.name != inputNamesStorage.back())
             return error(ErrorCode::InvalidInput, "model.input-name");
-        auto info = session.GetInputTypeInfo(i).GetTensorTypeAndShapeInfo();
         auto value = inputTensor(memoryInfo, request.tensorRefs[i], spec,
                                  info.GetElementType(), info.GetShape());
         if (!value)
@@ -260,7 +261,8 @@ Result<InferenceOutput> runSam21(Ort::Env& env, const ModelManifest& manifest,
             return ok.error();
     }
 
-    auto imageInfo = encoder.GetInputTypeInfo(0).GetTensorTypeAndShapeInfo();
+    auto imageTypeInfo = encoder.GetInputTypeInfo(0);
+    auto imageInfo = imageTypeInfo.GetTensorTypeAndShapeInfo();
     auto imageValue = inputTensor(memoryInfo, request.tensorRefs[0], manifest.inputs[0],
                                   imageInfo.GetElementType(), imageInfo.GetShape());
     if (!imageValue)
@@ -319,7 +321,8 @@ Result<InferenceOutput> runSam21(Ort::Env& env, const ModelManifest& manifest,
         decoderInputs.push_back(std::move(feature));
     for (std::size_t logical = 1; logical < 5; ++logical) {
         const auto decoderIndex = logical + 2;
-        auto info = decoder.GetInputTypeInfo(decoderIndex).GetTensorTypeAndShapeInfo();
+        auto typeInfo = decoder.GetInputTypeInfo(decoderIndex);
+        auto info = typeInfo.GetTensorTypeAndShapeInfo();
         auto value = inputTensor(memoryInfo, request.tensorRefs[logical],
                                  manifest.inputs[logical], info.GetElementType(),
                                  info.GetShape());
