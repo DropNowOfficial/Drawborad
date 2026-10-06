@@ -80,3 +80,16 @@ TEST("M01 ONNX external tensor data is rejected before runtime load"){
     CHECK(result.error().messageKey=="model.onnx-external-data");
     std::filesystem::remove_all(d);
 }
+
+TEST("M01 verified package carries canonical adapter tensor contract"){
+    auto d=pkg(false);
+    auto manifest=validatePackage(d);
+    CHECK(manifest);
+    CHECK(manifest.value().abi=="sam21.image.v1");
+    CHECK(manifest.value().inputs.size()==5);
+    CHECK(manifest.value().inputs[0].name=="image");
+    CHECK(manifest.value().inputs[2].dtype=="int64");
+    CHECK(manifest.value().outputs.size()==2);
+    CHECK(manifest.value().outputs[0].name=="low_res_masks");
+    std::filesystem::remove_all(d);
+}
