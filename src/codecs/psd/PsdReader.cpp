@@ -68,6 +68,53 @@ Result<std::string> decodeUnicodeName(std::span<const std::uint8_t> data) {
     return out;
 }
 
+Result<void> readImageResources(std::span<const std::uint8_t> bytes,
+                                std::size_t begin, std::size_t end,
+                                PhotoshopInfo& out) {
+    if (begin > end || end > bytes.size())
+        return error(ErrorCode::CorruptData, "psd.image-resources-bounds");
+    auto at = begin;
+    while (at < end) {
+        if (end - at < 12)
+            return error(ErrorCode::CorruptData, "psd.image-resource-header");
+        if (std::memcmp(bytes.data() + at, "8BIM", 4) != 0)
+            return error(ErrorCode::CorruptData, "psd.image-resource-signature");
+        const auto id = u16(bytes.data() + at + 4);
+        at += 6;
+        const auto nameLength = std::size_t(bytes[at]);
+        const auto nameBytes = std::size_t(1) + nameLength;
+        const auto paddedName = (nameBytes + 1u) & ~std::size_t(1u);
+        if (paddedName > end - at)
+            return error(ErrorCode::CorruptData, "psd.image-resource-name");
+        at += paddedName;
+        if (end - at < 4)
+            return error(ErrorCode::CorruptData, "psd.image-resource-length");
+        const auto length = std::uint64_t(u32(bytes.data() + at));
+        at += 4;
+        if (length > end - at)
+            return error(ErrorCode::CorruptData, "psd.image-resource-data");
+        auto data = bytes.subspan(at, std::size_t(length));
+        if (id == 1039) {
+            out.iccProfile.assign(data.begin(), data.end());
+        } else if (id == 1005) {
+            if (data.size() < 16)
+                return error(ErrorCode::CorruptData, "psd.resolution-info");
+            const auto horizontal = u32(data.data());
+            const auto vertical = u32(data.data() + 8);
+            if (horizontal == 0 || vertical == 0)
+                return error(ErrorCode::CorruptData, "psd.resolution-zero");
+            out.ppi = (double(horizontal) + double(vertical)) / (2.0 * 65536.0);
+        }
+        at += std::size_t(length);
+        if ((length & 1u) != 0) {
+            if (at >= end)
+                return error(ErrorCode::CorruptData, "psd.image-resource-padding");
+            ++at;
+        }
+    }
+    return {};
+}
+
 struct Reader {
     std::span<const std::uint8_t> bytes;
     std::size_t position{};
@@ -192,13 +239,23 @@ Result<PhotoshopInfo> readPhotoshopHeader(std::span<const std::uint8_t> bytes,
 
     Reader reader{bytes, 26};
 
-    for (int section = 0; section < 2; ++section) {
-        if (!reader.take(4))
-            return error(ErrorCode::CorruptData, "psd.section-length");
-        const auto length = u32(bytes.data() + reader.position - 4);
-        if (length > bytes.size() - reader.position || !reader.take(length))
-            return error(ErrorCode::CorruptData, "psd.section-bounds");
-    }
+    if (!reader.take(4))
+        return error(ErrorCode::CorruptData, "psd.color-mode-length");
+    const auto colorModeLength = u32(bytes.data() + reader.position - 4);
+    if (colorModeLength > bytes.size() - reader.position || !reader.take(colorModeLength))
+        return error(ErrorCode::CorruptData, "psd.color-mode-bounds");
+
+    if (!reader.take(4))
+        return error(ErrorCode::CorruptData, "psd.image-resources-length");
+    const auto resourcesLength = u32(bytes.data() + reader.position - 4);
+    if (resourcesLength > bytes.size() - reader.position)
+        return error(ErrorCode::CorruptData, "psd.image-resources-bounds");
+    const auto resourcesBegin = reader.position;
+    const auto resourcesEnd = resourcesBegin + std::size_t(resourcesLength);
+    auto imageResources = readImageResources(bytes, resourcesBegin, resourcesEnd, out);
+    if (!imageResources)
+        return imageResources.error();
+    reader.position = resourcesEnd;
 
     const std::size_t lengthBytes = version == 1 ? 4u : 8u;
     if (!reader.take(lengthBytes))
