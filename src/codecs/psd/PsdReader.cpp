@@ -694,10 +694,19 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
                     const auto dst = std::size_t(pixel * outputChannels * sampleBytes +
                                                  std::uint64_t(destination) * sampleBytes);
                     if (sampleBytes == 1) {
-                        tile.bytes[dst] = plane[src];
+                        auto value = plane[src];
+                        if (format.mode == ColorMode::CMYK &&
+                            destination < int(baseChannels))
+                            value = std::uint8_t(255u - value);
+                        tile.bytes[dst] = value;
                     } else {
-                        tile.bytes[dst] = plane[src + 1];
-                        tile.bytes[dst + 1] = plane[src];
+                        auto value = std::uint16_t(
+                            (std::uint16_t(plane[src]) << 8) | plane[src + 1]);
+                        if (format.mode == ColorMode::CMYK &&
+                            destination < int(baseChannels))
+                            value = std::uint16_t(65535u - value);
+                        tile.bytes[dst] = std::uint8_t(value);
+                        tile.bytes[dst + 1] = std::uint8_t(value >> 8);
                     }
                 }
             }
@@ -759,10 +768,17 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
             const auto dst = std::size_t(pixel * compositeChannels * sampleBytes +
                                          std::uint64_t(channel) * sampleBytes);
             if (sampleBytes == 1) {
-                composite.bytes[dst] = bytes[src];
+                auto value = bytes[src];
+                if (compositeFormat.mode == ColorMode::CMYK && channel < baseChannels)
+                    value = std::uint8_t(255u - value);
+                composite.bytes[dst] = value;
             } else {
-                composite.bytes[dst] = bytes[src + 1];
-                composite.bytes[dst + 1] = bytes[src];
+                auto value = std::uint16_t(
+                    (std::uint16_t(bytes[src]) << 8) | bytes[src + 1]);
+                if (compositeFormat.mode == ColorMode::CMYK && channel < baseChannels)
+                    value = std::uint16_t(65535u - value);
+                composite.bytes[dst] = std::uint8_t(value);
+                composite.bytes[dst + 1] = std::uint8_t(value >> 8);
             }
         }
     }

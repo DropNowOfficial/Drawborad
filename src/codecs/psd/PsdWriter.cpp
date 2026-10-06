@@ -280,10 +280,18 @@ Result<Bytes> encodePsd(const PsdWriteRequest& request) {
                     if (offset + sampleBytes > layer.pixels.bytes.size())
                         return error(ErrorCode::CorruptData, "psd.layer-bytes");
                     if (sampleBytes == 1) {
-                        channelData.push_back(layer.pixels.bytes[offset]);
+                        auto value = layer.pixels.bytes[offset];
+                        if (request.format.mode == ColorMode::CMYK && channel < baseChannels)
+                            value = std::uint8_t(255u - value);
+                        channelData.push_back(value);
                     } else {
-                        channelData.push_back(layer.pixels.bytes[offset + 1]);
-                        channelData.push_back(layer.pixels.bytes[offset]);
+                        auto value = std::uint16_t(
+                            layer.pixels.bytes[offset] |
+                            (std::uint16_t(layer.pixels.bytes[offset + 1]) << 8));
+                        if (request.format.mode == ColorMode::CMYK && channel < baseChannels)
+                            value = std::uint16_t(65535u - value);
+                        channelData.push_back(std::uint8_t(value >> 8));
+                        channelData.push_back(std::uint8_t(value));
                     }
                 }
             }
@@ -344,10 +352,18 @@ Result<Bytes> encodePsd(const PsdWriteRequest& request) {
                 if (offset + sampleBytes > merged->bytes.size())
                     return error(ErrorCode::CorruptData, "psd.merged-pixel");
                 if (sampleBytes == 1) {
-                    output.push_back(merged->bytes[offset]);
+                    auto value = merged->bytes[offset];
+                    if (request.format.mode == ColorMode::CMYK && channel < baseChannels)
+                        value = std::uint8_t(255u - value);
+                    output.push_back(value);
                 } else {
-                    output.push_back(merged->bytes[offset + 1]);
-                    output.push_back(merged->bytes[offset]);
+                    auto value = std::uint16_t(
+                        merged->bytes[offset] |
+                        (std::uint16_t(merged->bytes[offset + 1]) << 8));
+                    if (request.format.mode == ColorMode::CMYK && channel < baseChannels)
+                        value = std::uint16_t(65535u - value);
+                    output.push_back(std::uint8_t(value >> 8));
+                    output.push_back(std::uint8_t(value));
                 }
             }
         }
