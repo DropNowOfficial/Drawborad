@@ -267,6 +267,69 @@ struct LayerDecodeRecord {
     std::vector<ChannelRecord> channels;
 };
 
+Result<Bytes> decodePackBitsPlane(std::span<const std::uint8_t> payload,
+                                  std::uint32_t rows,
+                                  std::uint64_t rowBytes,
+                                  bool psb,
+                                  std::uint64_t byteLimit) {
+    auto planeBytes = checkedMultiply(rows, rowBytes);
+    if (!planeBytes)
+        return planeBytes.error();
+    if (planeBytes.value() > byteLimit || planeBytes.value() > SIZE_MAX)
+        return error(ErrorCode::BudgetExceeded, "psd.rle-plane-budget");
+
+    const std::size_t countBytes = psb ? 4u : 2u;
+    auto tableBytes = checkedMultiply(rows, countBytes);
+    if (!tableBytes || tableBytes.value() > payload.size())
+        return error(ErrorCode::CorruptData, "psd.rle-row-table");
+
+    std::vector<std::uint32_t> rowLengths;
+    rowLengths.reserve(rows);
+    std::size_t position = 0;
+    for (std::uint32_t row = 0; row < rows; ++row) {
+        const auto length = psb ? u32(payload.data() + position)
+                                : std::uint32_t(u16(payload.data() + position));
+        rowLengths.push_back(length);
+        position += countBytes;
+    }
+
+    Bytes plane(std::size_t(planeBytes.value()), 0);
+    std::size_t output = 0;
+    for (std::uint32_t row = 0; row < rows; ++row) {
+        if (rowLengths[row] > payload.size() - position)
+            return error(ErrorCode::CorruptData, "psd.rle-row-bounds");
+        const auto rowEnd = position + std::size_t(rowLengths[row]);
+        const auto outputEnd = output + std::size_t(rowBytes);
+        if (outputEnd > plane.size())
+            return error(ErrorCode::CorruptData, "psd.rle-output-bounds");
+
+        while (position < rowEnd && output < outputEnd) {
+            const auto control = static_cast<std::int8_t>(payload[position++]);
+            if (control >= 0) {
+                const auto count = std::size_t(std::uint8_t(control)) + 1u;
+                if (count > rowEnd - position || count > outputEnd - output)
+                    return error(ErrorCode::CorruptData, "psd.rle-literal");
+                std::copy_n(payload.begin() + std::ptrdiff_t(position),
+                            std::ptrdiff_t(count),
+                            plane.begin() + std::ptrdiff_t(output));
+                position += count;
+                output += count;
+            } else if (control >= -127) {
+                const auto count = std::size_t(1 - int(control));
+                if (position >= rowEnd || count > outputEnd - output)
+                    return error(ErrorCode::CorruptData, "psd.rle-repeat");
+                const auto value = payload[position++];
+                std::fill_n(plane.begin() + std::ptrdiff_t(output),
+                            std::ptrdiff_t(count), value);
+                output += count;
+            }
+        }
+        if (position != rowEnd || output != outputEnd)
+            return error(ErrorCode::CorruptData, "psd.rle-row-size");
+    }
+    return plane;
+}
+
 Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, ProfileId profile,
                                         const CodecLimits& limits) {
     auto metadata = readPhotoshopHeader(bytes, limits);
@@ -415,23 +478,40 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
             const int destination = channel.id >= 0 && channel.id < int(baseChannels)
                                         ? int(channel.id)
                                         : channel.id == -1 ? int(baseChannels) : -1;
-            if (compression != 0) {
+            auto planeBytes = checkedMultiply(pixels.value(), sampleBytes);
+            if (!planeBytes)
+                return planeBytes.error();
+
+            Bytes decodedPlane;
+            std::span<const std::uint8_t> plane;
+            if (compression == 0) {
+                if (planeBytes.value() > channelEnd - reader.position)
+                    return error(ErrorCode::CorruptData, "psd.decode-raw-size");
+                plane = bytes.subspan(reader.position, std::size_t(planeBytes.value()));
+            } else if (compression == 1) {
+                auto rle = decodePackBitsPlane(
+                    bytes.subspan(reader.position, channelEnd - reader.position),
+                    std::uint32_t(height), width * sampleBytes,
+                    version == 2, limits.decodedBytes);
+                if (!rle)
+                    return rle.error();
+                decodedPlane = std::move(rle.value());
+                plane = decodedPlane;
+            } else {
                 reader.position = channelEnd;
                 return error(ErrorCode::UnsupportedFeature, "psd.decode-compression");
             }
-            auto planeBytes = checkedMultiply(pixels.value(), sampleBytes);
-            if (!planeBytes || planeBytes.value() > channelEnd - reader.position)
-                return error(ErrorCode::CorruptData, "psd.decode-raw-size");
+
             if (destination >= 0) {
                 for (std::uint64_t pixel = 0; pixel < pixels.value(); ++pixel) {
-                    const auto src = reader.position + std::size_t(pixel * sampleBytes);
+                    const auto src = std::size_t(pixel * sampleBytes);
                     const auto dst = std::size_t(pixel * outputChannels * sampleBytes +
                                                  std::uint64_t(destination) * sampleBytes);
                     if (sampleBytes == 1) {
-                        tile.bytes[dst] = bytes[src];
+                        tile.bytes[dst] = plane[src];
                     } else {
-                        tile.bytes[dst] = bytes[src + 1];
-                        tile.bytes[dst + 1] = bytes[src];
+                        tile.bytes[dst] = plane[src + 1];
+                        tile.bytes[dst + 1] = plane[src];
                     }
                 }
             }
