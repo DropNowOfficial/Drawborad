@@ -39,6 +39,12 @@ Result<void> FileIO::publish(const fs::path& temporary, const fs::path& destinat
         return error(ErrorCode::UnsupportedFeature, "io.no-replace-unsupported");
     return replace(temporary, destination);
 }
+Result<Hash> FileIO::hash(const fs::path& p, std::uint64_t maxBytes) const {
+    auto bytes = read(p, maxBytes);
+    if (!bytes)
+        return bytes.error();
+    return sha256(bytes.value());
+}
 Result<Bytes> NativeFileIO::read(const fs::path& p, std::uint64_t max) const {
     std::error_code ec;
     const auto n = fs::file_size(p, ec);
@@ -55,6 +61,32 @@ Result<Bytes> NativeFileIO::read(const fs::path& p, std::uint64_t max) const {
     if (!f || f.peek() != std::char_traits<char>::eof())
         return ioerr("io.short-or-growing-file");
     return b;
+}
+Result<Hash> NativeFileIO::hash(const fs::path& p, std::uint64_t maxBytes) const {
+    std::error_code ec;
+    const auto expected = fs::file_size(p, ec);
+    if (ec)
+        return ioerr("io.stat");
+    if (expected > maxBytes)
+        return error(ErrorCode::BudgetExceeded, "io.hash-limit");
+    std::ifstream in(p, std::ios::binary);
+    if (!in)
+        return ioerr("io.open");
+    Sha256State state;
+    std::array<std::uint8_t, 1024 * 1024> buffer{};
+    std::uint64_t total = 0;
+    while (total < expected) {
+        const auto request = std::size_t(std::min<std::uint64_t>(buffer.size(), expected - total));
+        in.read(reinterpret_cast<char*>(buffer.data()), std::streamsize(request));
+        const auto got = std::size_t(in.gcount());
+        if (got != request)
+            return ioerr("io.short-or-growing-file");
+        state.update(std::span<const std::uint8_t>(buffer.data(), got));
+        total += got;
+    }
+    if (in.peek() != std::char_traits<char>::eof())
+        return ioerr("io.short-or-growing-file");
+    return state.finish();
 }
 Result<void> NativeFileIO::write(const fs::path& p, std::span<const std::uint8_t> bytes,
                                  bool exclusive) {
@@ -176,6 +208,79 @@ Result<void> NativeFileIO::publish(const fs::path& a, const fs::path& b, bool al
     return error(ErrorCode::UnsupportedFeature, "io.atomic-create-unavailable");
 #endif
 }
+NativeOutputFile::~NativeOutputFile() {
+    (void)close();
+}
+Result<void> NativeOutputFile::createExclusive(const fs::path& p) {
+    if (native_ || fd_ >= 0)
+        return error(ErrorCode::Locked, "io.output-already-open");
+    std::error_code ec;
+    if (fs::is_symlink(fs::symlink_status(p, ec)))
+        return error(ErrorCode::PathEscape, "io.symlink");
+#ifdef _WIN32
+    HANDLE h = CreateFileW(wp(p).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                           FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (h == INVALID_HANDLE_VALUE)
+        return ioerr("io.create");
+    BY_HANDLE_FILE_INFORMATION info{};
+    if (!GetFileInformationByHandle(h, &info) ||
+        (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
+        CloseHandle(h);
+        return error(ErrorCode::PathEscape, "io.output-reparse");
+    }
+    native_ = h;
+#else
+    int fd = ::open(p.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+    if (fd < 0)
+        return ioerr("io.create");
+    fd_ = fd;
+#endif
+    return {};
+}
+Result<void> NativeOutputFile::write(std::span<const std::uint8_t> bytes) {
+    if (!native_ && fd_ < 0)
+        return error(ErrorCode::InvalidInput, "io.output-not-open");
+    std::size_t pos = 0;
+#ifdef _WIN32
+    HANDLE h = static_cast<HANDLE>(native_);
+    while (pos < bytes.size()) {
+        DWORD written = 0;
+        const auto chunk = DWORD(std::min<std::size_t>(bytes.size() - pos, 1 << 20));
+        if (!WriteFile(h, bytes.data() + pos, chunk, &written, nullptr) || written == 0)
+            return ioerr("io.write");
+        pos += written;
+    }
+#else
+    while (pos < bytes.size()) {
+        const auto n = ::write(int(fd_), bytes.data() + pos, bytes.size() - pos);
+        if (n < 0 && errno == EINTR)
+            continue;
+        if (n <= 0)
+            return ioerr("io.write");
+        pos += std::size_t(n);
+    }
+#endif
+    return {};
+}
+Result<void> NativeOutputFile::close() {
+#ifdef _WIN32
+    if (native_) {
+        auto h = static_cast<HANDLE>(native_);
+        native_ = nullptr;
+        if (!CloseHandle(h))
+            return ioerr("io.close");
+    }
+#else
+    if (fd_ >= 0) {
+        auto fd = int(fd_);
+        fd_ = -1;
+        if (::close(fd) != 0)
+            return ioerr("io.close");
+    }
+#endif
+    return {};
+}
+
 Result<void> atomicWrite(FileIO& io, const fs::path& target, std::span<const std::uint8_t> data) {
     static std::atomic<std::uint64_t> n{};
     auto tmp = target;
