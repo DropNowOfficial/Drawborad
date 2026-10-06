@@ -96,3 +96,14 @@ TEST("M03 runtime path normalizes image prompts and decodes low resolution masks
     CHECK(proposals.value().sourceToAnalysis.affine[0]==512);
     CHECK(proposals.value().sourceToAnalysis.affine[3]==512);
 }
+
+TEST("M03 missing runtime and manual box cannot fake a full-image proposal"){
+    AnalysisRequest request;
+    request.sourceSize={16,16};
+    request.model.taskId="sam21.image.v1";
+    request.model.sha256.bytes[0]=1;
+    ProposalEngine engine;
+    auto result=engine.propose(request);
+    CHECK(!result);
+    CHECK(result.error().code==ErrorCode::UnsupportedFeature);
+}
