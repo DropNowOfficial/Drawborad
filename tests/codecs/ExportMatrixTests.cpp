@@ -119,3 +119,44 @@ TEST("C06 raster export never replaces existing file without overwrite consent")
     CHECK(actual.value()==old);
     std::filesystem::remove(path);
 }
+
+TEST("C06 OpenRaster includes required bounded thumbnail"){
+    RasterEncodingOptions options;
+    auto pixels=rgba8();
+    ArchiveLayer layer;
+    layer.name="thumb";
+    layer.pixels=pixels;
+    std::array<ArchiveLayer,1> layers{layer};
+    auto ora=encodeOra({2,2},layers,pixels,options);
+    CHECK(ora);
+    std::string all(ora.value().begin(),ora.value().end());
+    CHECK(all.find("Thumbnails/thumbnail.png")!=std::string::npos);
+}
+
+TEST("C06 OpenRaster thumbnail is 8 bit and bounded to 256 pixels"){
+    RasterEncodingOptions options;
+    TileData pixels;
+    pixels.width=300; pixels.height=100;
+    pixels.format={ColorMode::RGB,Depth::U16,true};
+    pixels.rowStride=300*8;
+    pixels.bytes.assign(std::size_t(pixels.rowStride)*pixels.height,0xff);
+    ArchiveLayer layer; layer.name="large"; layer.pixels=pixels;
+    std::array<ArchiveLayer,1> layers{layer};
+    auto ora=encodeOra({300,100},layers,pixels,options);
+    CHECK(ora);
+    const std::string name="Thumbnails/thumbnail.png";
+    std::string all(ora.value().begin(),ora.value().end());
+    auto nameAt=all.find(name);
+    CHECK(nameAt!=std::string::npos);
+    CHECK(nameAt>=30);
+    const auto header=nameAt-30;
+    const auto dataAt=nameAt+name.size();
+    CHECK(dataAt+25<=ora.value().size());
+    const auto& b=ora.value();
+    CHECK(b[header]=='P'&&b[header+1]=='K'&&b[header+2]==3&&b[header+3]==4);
+    CHECK(b[dataAt]==0x89&&b[dataAt+1]=='P'&&b[dataAt+2]=='N'&&b[dataAt+3]=='G');
+    auto be32=[&](std::size_t at){return (std::uint32_t(b[at])<<24)|(std::uint32_t(b[at+1])<<16)|(std::uint32_t(b[at+2])<<8)|b[at+3];};
+    CHECK(be32(dataAt+16)<=256);
+    CHECK(be32(dataAt+20)<=256);
+    CHECK(b[dataAt+24]==8);
+}
