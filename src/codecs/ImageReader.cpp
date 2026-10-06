@@ -1,4 +1,5 @@
 #include "ImageReader.h"
+#include "HeicAdapter.h"
 #include "storage/FileIO.h"
 #include "RasterReaders.h"
 #include <algorithm>
@@ -62,6 +63,11 @@ Result<InputInfo> inspect(std::span<const std::uint8_t>b){
   }
   i.originalSize={width,height};
  }
+ else if(looksLikeHeic(b)){
+  auto heic=inspectHeic(b,CodecLimits{});
+  if(!heic)return heic.error();
+  i=heic.value();
+ }
  else return error(ErrorCode::UnsupportedFeature,"codec.magic");
  if(!i.originalSize.width||!i.originalSize.height)return error(ErrorCode::CorruptData,"codec.zero-size");
  auto pixels=checkedMultiply(i.originalSize.width,i.originalSize.height);if(!pixels)return pixels.error();auto est=checkedMultiply(pixels.value(),8);if(!est)return est.error();i.estimatedBytes=est.value();i.orientedSize=i.originalSize;return i;
@@ -80,6 +86,10 @@ Result<ImportedImage> decodeImage(const InputPath& p,const DecodeOptions& o,std:
     out.info.format==ImageFormat::Webp||out.info.format==ImageFormat::Tiff||
     out.info.format==ImageFormat::Bmp){
    auto decoded=decodeRasterBytes(out.encodedSource,out.info,o);
+   if(!decoded)return decoded.error();
+   out.decodedPixels=std::move(decoded.value());
+ } else if(out.info.format==ImageFormat::Heic) {
+   auto decoded=decodeHeic(out.encodedSource,out.info,o,st);
    if(!decoded)return decoded.error();
    out.decodedPixels=std::move(decoded.value());
  }
