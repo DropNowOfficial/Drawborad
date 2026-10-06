@@ -1,6 +1,7 @@
 #pragma once
 #include "segmentation/ProposalEngine.h"
 #include <limits>
+#include <functional>
 namespace drawborad {
 enum class MaskEditOp { AddBrush, SubtractBrush, Feather, Grow, Shrink, Merge, Split, Transform, Lock, Unlock };
 struct MaskEdit {
@@ -13,6 +14,7 @@ struct MaskEdit {
     LayerTransform transform{};
 };
 struct ReviewedObjects { std::vector<Bytes> masks; Revision confirmedRevision{}; bool canReconstruct{}; };
+using RefineRunner = std::function<Result<ProposalSet>(const PromptSet&, std::stop_token)>;
 class ReviewSession {
     ProposalSet proposals_;
     MaskSet masks_;
@@ -20,10 +22,13 @@ class ReviewSession {
     struct UndoState { ProposalSet proposals; MaskSet masks; std::vector<bool> locked; };
     std::vector<UndoState> undo_;
     std::vector<bool> locked_;
+    RefineRunner refineRunner_;
   public:
-    static Result<ReviewSession> create(const ProposalSet&,const MaskSet&,Revision);
+    static Result<ReviewSession> create(const ProposalSet&,const MaskSet&,Revision,
+                                        RefineRunner = {});
     Result<void> apply(const MaskEdit&);
     Result<void> undo();
+    Result<ProposalSet> refine(const PromptSet&,std::stop_token={}) const;
     Result<ReviewedObjects> accept(Revision) const;
     const MaskSet& masks() const{return masks_;}
     Revision revision() const{return revision_;}
