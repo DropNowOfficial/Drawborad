@@ -1,6 +1,33 @@
 #include "ExportService.h"
 #include "storage/FileIO.h"
 namespace drawborad {
-Result<ExportPlan> preflightExport(ColorMode mode,const ExportRequest&r){if(r.path.empty()||!r.size.width||!r.size.height)return error(ErrorCode::InvalidInput,"export.request");ExportPlan p{r,false,{}};if(mode==ColorMode::CMYK&&(r.format==ExportFormat::Png||r.format==ExportFormat::Webp||r.format==ExportFormat::Ora)){if(!r.conversionConsent)return error(ErrorCode::ConversionConsentRequired,"export.cmyk-rgb-consent");p.requiresRgbConversion=true;p.conversionList.push_back("CMYK -> RGB");}if(r.format==ExportFormat::Jpeg&&r.alpha&&!r.matteChosen)return error(ErrorCode::ConversionConsentRequired,"export.jpeg-matte");return p;}
-Result<ExportReport> writeRasterPlaceholder(const ExportPlan&p,std::span<const std::uint8_t> payload,std::stop_token st){if(st.stop_requested())return error(ErrorCode::Cancelled,"export.cancelled");NativeFileIO io;auto w=atomicWrite(io,p.request.path,payload);if(!w)return w.error();ExportReport r;r.paths.push_back(p.request.path);r.hashes.push_back(sha256(payload));r.dimensions=p.request.size;r.channels=p.request.alpha?4:3;if(p.requiresRgbConversion)r.warnings.push_back("explicit-rgb-conversion");return r;}
+Result<ExportPlan> preflightExport(ColorMode mode,const ExportRequest&r){
+    if(r.path.empty()||!r.size.width||!r.size.height)
+        return error(ErrorCode::InvalidInput,"export.request");
+    ExportPlan p{r,false,{}};
+    if(mode==ColorMode::CMYK&&(r.format==ExportFormat::Png||r.format==ExportFormat::Webp||r.format==ExportFormat::Ora)){
+        if(!r.conversionConsent)
+            return error(ErrorCode::ConversionConsentRequired,"export.cmyk-rgb-consent");
+        if(r.profile.empty())
+            return error(ErrorCode::ConversionConsentRequired,"export.cmyk-rgb-profile");
+        p.requiresRgbConversion=true;
+        p.conversionList.push_back("CMYK -> RGB");
+    }
+    if(r.format==ExportFormat::Jpeg&&r.alpha&&!r.matteChosen)
+        return error(ErrorCode::ConversionConsentRequired,"export.jpeg-matte");
+    return p;
+}
+Result<ExportReport> writeRasterPlaceholder(const ExportPlan&p,std::span<const std::uint8_t> payload,std::stop_token st){
+    if(st.stop_requested())return error(ErrorCode::Cancelled,"export.cancelled");
+    NativeFileIO io;
+    auto w=atomicWrite(io,p.request.path,payload);
+    if(!w)return w.error();
+    ExportReport r;
+    r.paths.push_back(p.request.path);
+    r.hashes.push_back(sha256(payload));
+    r.dimensions=p.request.size;
+    r.channels=p.request.alpha?4:3;
+    if(p.requiresRgbConversion)r.warnings.push_back("explicit-rgb-conversion");
+    return r;
+}
 }
