@@ -8,6 +8,12 @@
 #include <fcntl.h>
 #include <sys/file.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <sys/syscall.h>
+#ifndef RENAME_NOREPLACE
+#define RENAME_NOREPLACE (1 << 0)
+#endif
+#endif
 #endif
 namespace drawborad {
 namespace fs = std::filesystem;
@@ -26,6 +32,13 @@ Error ioerr(const char* key) {
     return error(ErrorCode::IoError, key);
 }
 } // namespace
+
+Result<void> FileIO::publish(const fs::path& temporary, const fs::path& destination,
+                             bool allowReplace) {
+    if (!allowReplace)
+        return error(ErrorCode::UnsupportedFeature, "io.no-replace-unsupported");
+    return replace(temporary, destination);
+}
 Result<Bytes> NativeFileIO::read(const fs::path& p, std::uint64_t max) const {
     std::error_code ec;
     const auto n = fs::file_size(p, ec);
@@ -130,6 +143,38 @@ Result<void> NativeFileIO::replace(const fs::path& a, const fs::path& b) {
         return ioerr("io.replace-committed-directory-flush");
 #endif
     return {};
+}
+
+Result<void> NativeFileIO::publish(const fs::path& a, const fs::path& b, bool allowReplace) {
+    if (allowReplace)
+        return replace(a, b);
+    std::error_code ec;
+    if (fs::is_symlink(fs::symlink_status(b, ec)))
+        return error(ErrorCode::PathEscape, "io.symlink");
+#ifdef _WIN32
+    // Deliberately omit MOVEFILE_REPLACE_EXISTING. The kernel checks the
+    // destination at the move itself, closing the exists-then-replace race.
+    if (!MoveFileExW(wp(a).c_str(), wp(b).c_str(), MOVEFILE_WRITE_THROUGH))
+        return ioerr("io.atomic-create");
+    return {};
+#elif defined(__linux__)
+    if (::syscall(SYS_renameat2, AT_FDCWD, a.c_str(), AT_FDCWD, b.c_str(),
+                  RENAME_NOREPLACE) != 0)
+        return ioerr("io.atomic-create");
+    auto parent = b.parent_path().empty() ? fs::path(".") : b.parent_path();
+    int fd = ::open(parent.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (fd < 0)
+        return ioerr("io.create-committed-directory-open");
+    int r = ::fsync(fd);
+    ::close(fd);
+    if (r)
+        return ioerr("io.create-committed-directory-flush");
+    return {};
+#else
+    // Product target is Windows. On other POSIX hosts fail closed rather than
+    // emulate no-clobber with an racy exists()+rename sequence.
+    return error(ErrorCode::UnsupportedFeature, "io.atomic-create-unavailable");
+#endif
 }
 Result<void> atomicWrite(FileIO& io, const fs::path& target, std::span<const std::uint8_t> data) {
     static std::atomic<std::uint64_t> n{};
