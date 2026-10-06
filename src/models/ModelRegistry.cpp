@@ -3,6 +3,19 @@
 #include <filesystem>
 namespace drawborad {
 namespace {
+Hash packageDigest(const ModelManifest& manifest) {
+    Bytes bytes;
+    static constexpr char prefix[] = "DRAWBORAD-MODEL-PACKAGE-1";
+    bytes.insert(bytes.end(), prefix, prefix + sizeof(prefix) - 1);
+    bytes.insert(bytes.end(), manifest.taskId.begin(), manifest.taskId.end());
+    bytes.push_back(0);
+    bytes.insert(bytes.end(), manifest.abi.begin(), manifest.abi.end());
+    bytes.push_back(0);
+    bytes.insert(bytes.end(), manifest.sha256.bytes.begin(), manifest.sha256.bytes.end());
+    bytes.insert(bytes.end(), manifest.decoderSha256.bytes.begin(), manifest.decoderSha256.bytes.end());
+    return sha256(bytes);
+}
+
 Result<void> copyVerifiedFile(const std::filesystem::path& sourceRoot,
                               const std::filesystem::path& relative,
                               const std::filesystem::path& destinationRoot) {
@@ -29,8 +42,9 @@ Result<ModelId> ModelRegistry::install(const PackagePath& p, TrustDecision trust
     if (!verified.value().signedPackage && trust != TrustDecision::UserAcceptedUntrusted)
         return error(ErrorCode::LicenseBlocked, "model.untrusted-consent");
 
+    const auto packageHash = packageDigest(verified.value());
     ModelId id;
-    std::copy_n(verified.value().sha256.bytes.begin(), 16, id.bytes.begin());
+    std::copy_n(packageHash.bytes.begin(), 16, id.bytes.begin());
     if (installed_.contains(id))
         return id;
 
@@ -44,7 +58,7 @@ Result<ModelId> ModelRegistry::install(const PackagePath& p, TrustDecision trust
         if (ec)
             return error(ErrorCode::IoError, "model.install-store-root");
 
-        const auto packageName = manifest.sha256.hex();
+        const auto packageName = packageHash.hex();
         const auto finalRoot = storeRoot_ / packageName;
         const auto tempRoot = storeRoot_ / (packageName + ".tmp");
 
