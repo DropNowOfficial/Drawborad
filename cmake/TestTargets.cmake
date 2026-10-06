@@ -128,3 +128,20 @@ add_test(
           ${PROJECT_SOURCE_DIR}/tests/models/test_model_tools.py
           ${PROJECT_SOURCE_DIR})
 set_tests_properties(M02.Tools PROPERTIES TIMEOUT 30)
+
+if(DRAWBORAD_HAS_ONNXRUNTIME AND DRAWBORAD_TEST_PROBE_ENCODER AND DRAWBORAD_TEST_PROBE_DECODER)
+  add_executable(test_M05.Runtime
+    ${PROJECT_SOURCE_DIR}/tests/support/TestMain.cpp
+    ${PROJECT_SOURCE_DIR}/tests/models/CompatibilityRuntimeTests.cpp)
+  target_include_directories(test_M05.Runtime PRIVATE
+    ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/tests/support ${PROJECT_SOURCE_DIR})
+  target_link_libraries(test_M05.Runtime PRIVATE drawborad_models drawborad_core)
+  add_test(NAME M05.Runtime COMMAND test_M05.Runtime)
+  set_tests_properties(M05.Runtime PROPERTIES
+    TIMEOUT 30
+    ENVIRONMENT "DRAWBORAD_TEST_PROBE_ENCODER=${DRAWBORAD_TEST_PROBE_ENCODER};DRAWBORAD_TEST_PROBE_DECODER=${DRAWBORAD_TEST_PROBE_DECODER}")
+  if(UNIX)
+    set_tests_properties(M05.Runtime PROPERTIES
+      ENVIRONMENT_MODIFICATION "LD_LIBRARY_PATH=path_list_prepend:${DRAWBORAD_ONNXRUNTIME_ROOT}/lib")
+  endif()
+endif()
