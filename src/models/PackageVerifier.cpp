@@ -181,6 +181,11 @@ Result<bool> scanExternalData(std::span<const std::uint8_t> bytes, ProtoKind kin
 
         if (kind == ProtoKind::Tensor && field == 13)
             return true;
+        if (kind == ProtoKind::Node && field == 7) {
+            std::string_view domain(reinterpret_cast<const char*>(payload.data()), payload.size());
+            if (!domain.empty() && domain != "ai.onnx" && domain != "ai.onnx.ml")
+                return error(ErrorCode::UnsupportedAdapter, "model.onnx-custom-domain");
+        }
         if (auto child = childKind(kind, field)) {
             auto found = scanExternalData(payload, *child, depth + 1);
             if (!found) return found.error();
