@@ -41,6 +41,7 @@ endif()
 
 add_library(drawborad_codecs STATIC
   src/codecs/ImageReader.cpp
+  src/codecs/HeicAdapter.cpp
   src/codecs/RasterReaders.cpp
   src/codecs/psd/PsdReader.cpp
   src/codecs/psd/PsdWriter.cpp
@@ -78,6 +79,14 @@ endif()
 find_path(DRAWBORAD_WEBP_INCLUDE webp/encode.h)
 find_library(DRAWBORAD_WEBP_LIBRARY NAMES webp)
 find_library(DRAWBORAD_WEBPMUX_LIBRARY NAMES webpmux)
+find_path(DRAWBORAD_HEIF_INCLUDE libheif/heif.h)
+find_library(DRAWBORAD_HEIF_LIBRARY NAMES heif)
+if(DRAWBORAD_HEIF_INCLUDE AND DRAWBORAD_HEIF_LIBRARY)
+  target_include_directories(drawborad_codecs SYSTEM PRIVATE ${DRAWBORAD_HEIF_INCLUDE})
+  target_link_libraries(drawborad_codecs PRIVATE ${DRAWBORAD_HEIF_LIBRARY})
+  target_compile_definitions(drawborad_codecs PRIVATE DRAWBORAD_HAS_HEIF=1)
+endif()
+
 if(DRAWBORAD_WEBP_INCLUDE AND DRAWBORAD_WEBP_LIBRARY)
   target_include_directories(drawborad_codecs SYSTEM PRIVATE ${DRAWBORAD_WEBP_INCLUDE})
   target_link_libraries(drawborad_codecs PRIVATE ${DRAWBORAD_WEBP_LIBRARY})
