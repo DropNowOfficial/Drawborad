@@ -354,6 +354,23 @@ Result<Bytes> decodeZipPlane(std::span<const std::uint8_t> payload,
 #endif
 }
 
+Result<void> undoZipPrediction8(Bytes& plane, std::uint64_t width, std::uint64_t height) {
+    auto expected = checkedMultiply(width, height);
+    if (!expected)
+        return expected.error();
+    if (expected.value() != plane.size())
+        return error(ErrorCode::CorruptData, "psd.zip-predict-size");
+    for (std::uint64_t y = 0; y < height; ++y) {
+        const auto row = y * width;
+        for (std::uint64_t x = 1; x < width; ++x) {
+            const auto at = std::size_t(row + x);
+            plane[at] = std::uint8_t(std::uint32_t(plane[at]) +
+                                     std::uint32_t(plane[at - 1]));
+        }
+    }
+    return {};
+}
+
 Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, ProfileId profile,
                                         const CodecLimits& limits) {
     auto metadata = readPhotoshopHeader(bytes, limits);
@@ -521,13 +538,21 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
                     return rle.error();
                 decodedPlane = std::move(rle.value());
                 plane = decodedPlane;
-            } else if (compression == 2) {
+            } else if (compression == 2 || compression == 3) {
                 auto zip = decodeZipPlane(
                     bytes.subspan(reader.position, channelEnd - reader.position),
                     planeBytes.value(), limits.decodedBytes);
                 if (!zip)
                     return zip.error();
                 decodedPlane = std::move(zip.value());
+                if (compression == 3) {
+                    if (sampleBytes != 1)
+                        return error(ErrorCode::UnsupportedFeature,
+                                     "psd.zip-predict-depth");
+                    auto prediction = undoZipPrediction8(decodedPlane, width, height);
+                    if (!prediction)
+                        return prediction.error();
+                }
                 plane = decodedPlane;
             } else {
                 reader.position = channelEnd;
