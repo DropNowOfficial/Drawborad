@@ -27,7 +27,7 @@ Result<void> commitExport(FileIO& io, const StagedExport& staged,
     if (sha256(bytes.value()) != staged.verifiedHash)
         return error(ErrorCode::DigestMismatch, "export.staged-hash");
 
-    return io.replace(staged.tempPath, policy.destination);
+    return io.publish(staged.tempPath, policy.destination, policy.replaceConfirmed);
 }
 
 Result<void> commitExport(const StagedExport& staged, const DestinationPolicy& policy) {
