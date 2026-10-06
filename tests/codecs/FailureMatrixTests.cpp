@@ -107,6 +107,7 @@ TEST("C07 destination appearing during verification is never overwritten without
     std::ifstream in(io.destinationPath,std::ios::binary);
     Bytes actual((std::istreambuf_iterator<char>(in)),{});
     CHECK(actual==io.intruder);
+    in.close();
     std::filesystem::remove_all(root);
 }
 
