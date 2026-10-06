@@ -2,7 +2,15 @@ name: SAM 2.1 export parity
 on:
   push:
     branches: [impl/color-formats-models-c01-c07-m01-m06]
-    paths: [.github/workflows/cm-sam-export.yml]
+    paths:
+      - .github/workflows/cm-sam-export.yml
+      - tools/models/**
+      - models/recipes/**
+      - src/models/**
+      - src/segmentation/**
+      - tests/models/**
+      - tests/segmentation/**
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
