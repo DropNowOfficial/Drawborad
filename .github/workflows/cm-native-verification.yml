@@ -21,7 +21,7 @@ jobs:
       - name: Install native raster codec headers
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq libpng-dev libjpeg-dev libtiff-dev libwebp-dev
+          sudo apt-get install -y -qq libpng-dev libjpeg-dev libtiff-dev libwebp-dev libheif-dev
       - name: Configure portable core
         run: cmake --preset lab-debug
       - name: Build portable core
