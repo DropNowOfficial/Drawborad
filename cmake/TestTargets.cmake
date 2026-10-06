@@ -76,6 +76,12 @@ function(feature_task id source)
 endfunction()
 feature_task(C03 tests/codecs/ImageReadTests.cpp)
 feature_task(C03.ProcessProtocol tests/codecs/CodecProcessTests.cpp)
+add_test(
+  NAME C03.ProcessWorker
+  COMMAND ${Python3_EXECUTABLE}
+          ${PROJECT_SOURCE_DIR}/tests/codecs/test_codec_worker.py
+          ${CMAKE_BINARY_DIR})
+set_tests_properties(C03.ProcessWorker PROPERTIES TIMEOUT 30)
 feature_task(C04 tests/codecs/PsdReadTests.cpp)
 feature_task(C05 tests/codecs/PsdWriteTests.cpp)
 feature_task(C06 tests/codecs/ExportMatrixTests.cpp)
