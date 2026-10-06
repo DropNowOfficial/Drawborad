@@ -246,15 +246,8 @@ Result<ProposalSet> manualProposals(const AnalysisRequest& r) {
         candidate.lowResMask.assign(256*256,255);
         out.candidates.push_back(std::move(candidate));
     }
-    if(out.candidates.empty()){
-        ProposalCandidate candidate;
-        candidate.id=Id::fromNumber(1);
-        candidate.bounds=mapBox(r.view.sourceTransform,0,0,
-                                double(r.sourceSize.width),double(r.sourceSize.height));
-        candidate.score=0.0;
-        candidate.lowResMask.assign(256*256,0);
-        out.candidates.push_back(std::move(candidate));
-    }
+    if(out.candidates.empty())
+        return error(ErrorCode::UnsupportedFeature,"proposal.runtime-or-manual-box-required");
     return out;
 }
 }
