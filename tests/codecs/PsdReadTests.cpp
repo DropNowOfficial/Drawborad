@@ -105,3 +105,63 @@ TEST("C04 ZIP prediction channel planes decode to exact interleaved RGBA pixels"
     CHECK(decoded.value().layers.size()==1);
     CHECK(decoded.value().layers[0].pixels.bytes==Bytes({10,20,30,255,40,50,60,128}));
 }
+
+namespace {
+Bytes zipPrediction16LayerPsd(){
+    const std::array<std::array<std::uint8_t,12>,4> zip{{
+        {{120,156,99,100,98,98,2,0,0,20,0,8}},
+        {{120,156,19,20,98,97,1,0,0,138,0,44}},
+        {{120,156,83,84,98,99,3,0,1,0,0,80}},
+        {{120,156,251,255,191,161,17,0,8,126,3,0}}
+    }};
+
+    Bytes records;
+    p16(records,1);
+    p32(records,0);p32(records,0);p32(records,1);p32(records,2);
+    p16(records,4);
+    for(std::uint16_t channel=0;channel<4;++channel){
+        p16(records,channel<3?channel:std::uint16_t(0xffff));
+        p32(records,14);
+    }
+    records.insert(records.end(),{'8','B','I','M','n','o','r','m'});
+    records.push_back(255);records.push_back(0);records.push_back(0);records.push_back(0);
+    Bytes extra;
+    p32(extra,0);p32(extra,0);
+    extra.push_back(1);extra.push_back('H');extra.push_back(0);extra.push_back(0);
+    p32(records,std::uint32_t(extra.size()));
+    records.insert(records.end(),extra.begin(),extra.end());
+
+    Bytes channelData;
+    for(const auto& plane:zip){
+        p16(channelData,3);
+        channelData.insert(channelData.end(),plane.begin(),plane.end());
+    }
+
+    Bytes layerInfo=records;
+    layerInfo.insert(layerInfo.end(),channelData.begin(),channelData.end());
+    if(layerInfo.size()%2)layerInfo.push_back(0);
+    Bytes layerMask;
+    p32(layerMask,std::uint32_t(layerInfo.size()));
+    layerMask.insert(layerMask.end(),layerInfo.begin(),layerInfo.end());
+    p32(layerMask,0);
+
+    Bytes b{'8','B','P','S'};
+    p16(b,1);b.insert(b.end(),6,0);p16(b,4);p32(b,1);p32(b,2);p16(b,16);p16(b,3);
+    p32(b,0);p32(b,0);
+    p32(b,std::uint32_t(layerMask.size()));
+    b.insert(b.end(),layerMask.begin(),layerMask.end());
+    p16(b,0);
+    return b;
+}
+}
+
+TEST("C04 16-bit ZIP prediction preserves channel values"){
+    CodecLimits limits;
+    auto decoded=decodePhotoshopLayers(zipPrediction16LayerPsd(),ProfileId{},limits);
+    CHECK(decoded);
+    CHECK(decoded.value().layers.size()==1);
+    CHECK(decoded.value().layers[0].pixels.bytes==Bytes({
+        0x02,0x01, 0x12,0x11, 0x22,0x21, 0xff,0xff,
+        0x04,0x03, 0x16,0x15, 0x28,0x27, 0x80,0x80
+    }));
+}
