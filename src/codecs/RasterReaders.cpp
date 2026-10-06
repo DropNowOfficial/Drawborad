@@ -66,7 +66,8 @@ Result<void> orient(TileData& tile,std::uint16_t orientation) {
     return {};
 }
 
-std::uint16_t jpegOrientation(std::span<const std::uint8_t> b){
+std::pair<std::uint16_t,bool> jpegExif(std::span<const std::uint8_t> b){
+    std::uint16_t orientation=1; bool hasGps=false;
     std::size_t p=2;
     while(p+4<=b.size()&&b[p]==0xff){
         const auto marker=b[p+1];p+=2;
@@ -83,13 +84,15 @@ std::uint16_t jpegOrientation(std::span<const std::uint8_t> b){
             if(std::uint64_t(count)*12>remain-at)break;
             for(std::uint16_t i=0;i<count;i++,at+=12){
                 if(u16(t+at)==0x0112&&u16(t+at+2)==3&&u32(t+at+4)==1){
-                    const auto o=u16(t+at+8);return o>=1&&o<=8?o:1;
+                    const auto o=u16(t+at+8);orientation=o>=1&&o<=8?o:1;
+                } else if(u16(t+at)==0x8825 && u16(t+at+2)==4 && u32(t+at+4)==1) {
+                    hasGps=true;
                 }
             }
         }
         p+=len;
     }
-    return 1;
+    return {orientation,hasGps};
 }
 
 #ifdef DRAWBORAD_HAS_PNG
@@ -124,7 +127,7 @@ Result<TileData> decodePng(std::span<const std::uint8_t>b,InputInfo& info){
     std::vector<png_bytep> rows(h);for(std::uint32_t y=0;y<h;y++)rows[y]=out.bytes.data()+std::uint64_t(y)*out.rowStride;
     png_read_image(png,rows.data());
     png_charp name=nullptr;int comp=0;png_bytep profile=nullptr;png_uint_32 profileLen=0;
-    if(png_get_iCCP(png,meta,&name,&comp,&profile,&profileLen)&&profile&&profileLen)info.icc=sha256(std::span<const std::uint8_t>(profile,profileLen));
+    if(png_get_iCCP(png,meta,&name,&comp,&profile,&profileLen)&&profile&&profileLen){info.iccProfile.assign(profile,profile+profileLen);info.icc=sha256(info.iccProfile);}
     png_destroy_read_struct(&png,&meta,nullptr);out.profileId=info.icc;return out;
 }
 #ifdef _MSC_VER
@@ -153,7 +156,7 @@ Result<TileData> decodeJpeg(std::span<const std::uint8_t>b,InputInfo& info){
     while(d.output_scanline<d.output_height){JSAMPROW row=out.bytes.data()+std::uint64_t(d.output_scanline)*out.rowStride;jpeg_read_scanlines(&d,&row,1);}
     std::vector<std::pair<int,Bytes>> parts;
     for(auto*m=d.marker_list;m;m=m->next)if(m->marker==JPEG_APP0+2&&m->data_length>=14&&std::memcmp(m->data,"ICC_PROFILE\0",12)==0){parts.push_back({m->data[12],Bytes(m->data+14,m->data+m->data_length)});}
-    if(!parts.empty()){std::sort(parts.begin(),parts.end(),[](const auto& a,const auto& b){return a.first<b.first;});Bytes icc;for(auto&part:parts)icc.insert(icc.end(),part.second.begin(),part.second.end());info.icc=sha256(icc);out.profileId=info.icc;}
+    if(!parts.empty()){std::sort(parts.begin(),parts.end(),[](const auto& a,const auto& b){return a.first<b.first;});Bytes icc;for(auto&part:parts)icc.insert(icc.end(),part.second.begin(),part.second.end());info.iccProfile=icc;info.icc=sha256(info.iccProfile);out.profileId=info.icc;}
     jpeg_finish_decompress(&d);jpeg_destroy_decompress(&d);return out;
 }
 #ifdef _MSC_VER
@@ -173,7 +176,7 @@ Result<TileData> decodeWebp(std::span<const std::uint8_t>b,InputInfo& info){
     auto* result=f.has_alpha?WebPDecodeRGBAInto(b.data(),b.size(),out.bytes.data(),out.bytes.size(),int(out.rowStride)):WebPDecodeRGBInto(b.data(),b.size(),out.bytes.data(),out.bytes.size(),int(out.rowStride));
     if(!result)return error(ErrorCode::CorruptData,"webp.decode");
 #ifdef DRAWBORAD_HAS_WEBPMUX
-    WebPData data{b.data(),b.size()};WebPMux* mux=WebPMuxCreate(&data,0);if(mux){WebPData icc{nullptr,0};if(WebPMuxGetChunk(mux,"ICCP",&icc)==WEBP_MUX_OK&&icc.bytes&&icc.size)info.icc=sha256(std::span<const std::uint8_t>(icc.bytes,icc.size));WebPDataClear(&icc);WebPMuxDelete(mux);}out.profileId=info.icc;
+    WebPData data{b.data(),b.size()};WebPMux* mux=WebPMuxCreate(&data,0);if(mux){WebPData icc{nullptr,0};if(WebPMuxGetChunk(mux,"ICCP",&icc)==WEBP_MUX_OK&&icc.bytes&&icc.size){info.iccProfile.assign(icc.bytes,icc.bytes+icc.size);info.icc=sha256(info.iccProfile);}WebPDataClear(&icc);WebPMuxDelete(mux);}out.profileId=info.icc;
 #endif
     return out;
 }
@@ -207,7 +210,7 @@ Result<TileData> decodeTiff(std::span<const std::uint8_t>b,InputInfo& info,std::
     if(cmyk){std::uint16_t ink=0;TIFFGetFieldDefaulted(t,TIFFTAG_INKSET,&ink);if(ink!=INKSET_CMYK){TIFFClose(t);return error(ErrorCode::UnsupportedFeature,"tiff.inkset");}}
     TileData out;out.width=w;out.height=h;out.format={cmyk?ColorMode::CMYK:ColorMode::RGB,bits==16?Depth::U16:Depth::U8,samples==colors+1};out.rowStride=TIFFScanlineSize64(t);auto total=checkedMultiply(out.rowStride,h);if(!total||total.value()>SIZE_MAX){TIFFClose(t);return error(ErrorCode::BudgetExceeded,"tiff.size");}out.bytes.resize(std::size_t(total.value()));
     for(std::uint32_t y=0;y<h;y++)if(TIFFReadScanline(t,out.bytes.data()+std::uint64_t(y)*out.rowStride,y,0)<0){TIFFClose(t);return error(ErrorCode::CorruptData,"tiff.scanline");}
-    std::uint32_t iccSize=0;void*icc=nullptr;if(TIFFGetField(t,TIFFTAG_ICCPROFILE,&iccSize,&icc)&&icc&&iccSize)info.icc=sha256(std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(icc),iccSize));
+    std::uint32_t iccSize=0;void*icc=nullptr;if(TIFFGetField(t,TIFFTAG_ICCPROFILE,&iccSize,&icc)&&icc&&iccSize){auto* p=static_cast<const std::uint8_t*>(icc);info.iccProfile.assign(p,p+iccSize);info.icc=sha256(info.iccProfile);}
     info.orientation=orientation;out.profileId=info.icc;TIFFClose(t);return out;
 }
 #else
@@ -221,7 +224,7 @@ Result<TileData> decodeRasterBytes(std::span<const std::uint8_t> bytes,InputInfo
     Result<TileData> decoded=error(ErrorCode::UnsupportedFeature,"codec.not-raster");
     switch(info.format){
     case ImageFormat::Png:decoded=decodePng(bytes,info);break;
-    case ImageFormat::Jpeg:info.orientation=jpegOrientation(bytes);decoded=decodeJpeg(bytes,info);break;
+    case ImageFormat::Jpeg:{auto exif=jpegExif(bytes);info.orientation=exif.first;info.hasGps=exif.second;decoded=decodeJpeg(bytes,info);break;}
     case ImageFormat::Webp:decoded=decodeWebp(bytes,info);break;
     case ImageFormat::Tiff:decoded=decodeTiff(bytes,info,options.frame);break;
     case ImageFormat::Bmp:decoded=decodeBmp(bytes,info);break;
