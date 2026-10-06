@@ -104,3 +104,20 @@ if(DRAWBORAD_HAS_ONNXRUNTIME AND DRAWBORAD_TEST_ONNX_MODEL)
       ENVIRONMENT_MODIFICATION "LD_LIBRARY_PATH=path_list_prepend:${DRAWBORAD_ONNXRUNTIME_ROOT}/lib")
   endif()
 endif()
+
+if(DRAWBORAD_HAS_ONNXRUNTIME AND DRAWBORAD_TEST_SAM_ENCODER AND DRAWBORAD_TEST_SAM_DECODER)
+  add_executable(test_M02.SamRuntime
+    ${PROJECT_SOURCE_DIR}/tests/support/TestMain.cpp
+    ${PROJECT_SOURCE_DIR}/tests/models/OrtSamRuntimeTests.cpp)
+  target_include_directories(test_M02.SamRuntime PRIVATE
+    ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/tests/support ${PROJECT_SOURCE_DIR})
+  target_link_libraries(test_M02.SamRuntime PRIVATE drawborad_models drawborad_core)
+  add_test(NAME M02.SamRuntime COMMAND test_M02.SamRuntime)
+  set_tests_properties(M02.SamRuntime PROPERTIES
+    TIMEOUT 30
+    ENVIRONMENT "DRAWBORAD_TEST_SAM_ENCODER=${DRAWBORAD_TEST_SAM_ENCODER};DRAWBORAD_TEST_SAM_DECODER=${DRAWBORAD_TEST_SAM_DECODER}")
+  if(UNIX)
+    set_tests_properties(M02.SamRuntime PROPERTIES
+      ENVIRONMENT_MODIFICATION "LD_LIBRARY_PATH=path_list_prepend:${DRAWBORAD_ONNXRUNTIME_ROOT}/lib")
+  endif()
+endif()
