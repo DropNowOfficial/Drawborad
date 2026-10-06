@@ -46,4 +46,5 @@ TEST("M02 CUDA is never silently replaced by CPU") {
     auto result = session.run(request);
     CHECK(!result);
     CHECK(result.error().code == ErrorCode::UnsupportedFeature);
+    CHECK(result.error().messageKey == "model.cuda-provider-unavailable");
 }
