@@ -93,3 +93,22 @@ TEST("M01 verified package carries canonical adapter tensor contract"){
     CHECK(manifest.value().outputs[0].name=="low_res_masks");
     std::filesystem::remove_all(d);
 }
+
+
+TEST("M01 duplicate top-level manifest keys are rejected"){
+    auto d=std::filesystem::temp_directory_path()/"drawborad-model-duplicate-key";
+    std::filesystem::remove_all(d);std::filesystem::create_directories(d);
+    Bytes encoder{0x3a,0x00},decoder{0x3a,0x00};
+    std::ofstream(d/"encoder.onnx",std::ios::binary).write(reinterpret_cast<const char*>(encoder.data()),std::streamsize(encoder.size()));
+    std::ofstream(d/"decoder.onnx",std::ios::binary).write(reinterpret_cast<const char*>(decoder.data()),std::streamsize(decoder.size()));
+    std::ofstream f(d/"manifest.json");
+    f<<"{\"schema\":1,\"taskId\":\"sam21.image.v1\",\"taskId\":\"unknown.task\","
+      "\"weights\":\"encoder.onnx\",\"sha256\":\""<<sha256(encoder).hex()<<"\","
+      "\"decoderWeights\":\"decoder.onnx\",\"decoderSha256\":\""<<sha256(decoder).hex()<<"\","
+      "\"license\":\"test\",\"provider\":\"cpu\"}";
+    f.close();
+    auto result=validatePackage(d);
+    CHECK(!result);
+    CHECK(result.error().code==ErrorCode::CorruptData);
+    std::filesystem::remove_all(d);
+}
