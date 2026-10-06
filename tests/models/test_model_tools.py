@@ -31,6 +31,12 @@ def run(*args):
 
 assert run(export, "--help").returncode == 0, "export_sam21.py --help must work without loading torch"
 
+for variant in ("tiny", "small"):
+    committed = json.loads((root / "models" / "recipes" / f"sam21-{variant}.json").read_text(encoding="utf-8"))
+    assert float(committed["minMaskIou"]) >= 0.995
+    assert 0 < int(committed["maxPeakGpuBytes"]) <= 6 * 1024**3
+    assert committed["qualification"] == "requires official-reference parity and target-machine report"
+
 with tempfile.TemporaryDirectory() as td:
     td = pathlib.Path(td)
     recipe = td / "recipe.json"
