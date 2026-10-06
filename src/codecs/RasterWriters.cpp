@@ -33,6 +33,14 @@ namespace {
 unsigned colorChannels(ColorMode mode) { return mode==ColorMode::RGB ? 3u : 4u; }
 unsigned sampleBytes(Depth depth) { return depth==Depth::U16 ? 2u : 1u; }
 
+Result<void> validateMetadata(const RasterEncodingOptions& o) {
+    if(o.metadata.preserveExif && o.metadata.exifContainsGps && !o.metadata.allowGps)
+        return error(ErrorCode::ConversionConsentRequired,"export.gps-consent");
+    if(o.metadata.exif.size()>16*1024*1024 || o.metadata.xmp.size()>16*1024*1024)
+        return error(ErrorCode::BudgetExceeded,"export.metadata-size");
+    return {};
+}
+
 [[maybe_unused]] Result<void> validateRaster(const TileData& p) {
     if(!p.width||!p.height)
         return error(ErrorCode::InvalidInput,"export.empty-raster");
@@ -85,6 +93,24 @@ Result<Bytes> encodePng(const TileData& p,const RasterEncodingOptions& o) {
         png_set_iCCP(png,info,"Drawborad ICC",0,
                      reinterpret_cast<png_const_bytep>(o.iccProfile.data()),
                      png_uint_32(o.iccProfile.size()));
+    if(o.metadata.preserveExif && !o.metadata.exif.empty()) {
+#if defined(PNG_eXIf_SUPPORTED)
+        png_set_eXIf_1(png,info,png_uint_32(o.metadata.exif.size()),
+                       const_cast<png_bytep>(o.metadata.exif.data()));
+#else
+        png_destroy_write_struct(&png,&info);
+        return error(ErrorCode::UnsupportedFeature,"png.exif-unavailable");
+#endif
+    }
+    png_text xmpText{};
+    if(o.metadata.preserveXmp && !o.metadata.xmp.empty()) {
+        xmpText.compression=PNG_ITXT_COMPRESSION_NONE;
+        xmpText.key=const_cast<png_charp>("XML:com.adobe.xmp");
+        xmpText.text=reinterpret_cast<png_charp>(const_cast<std::uint8_t*>(o.metadata.xmp.data()));
+        xmpText.text_length=o.metadata.xmp.size();
+        xmpText.itxt_length=o.metadata.xmp.size();
+        png_set_text(png,info,&xmpText,1);
+    }
     png_write_info(png,info);
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
     if(p.format.depth==Depth::U16) png_set_swap(png);
@@ -137,6 +163,20 @@ void writeIccMarkers(j_compress_ptr cinfo,std::span<const std::uint8_t> profile)
         offset+=n;
     }
 }
+void writeJpegMetadata(j_compress_ptr cinfo,const RasterEncodingOptions& o) {
+    if(o.metadata.preserveExif && !o.metadata.exif.empty()) {
+        if(o.metadata.exif.size()<=65533)
+            jpeg_write_marker(cinfo,JPEG_APP0+1,o.metadata.exif.data(),unsigned(o.metadata.exif.size()));
+    }
+    if(o.metadata.preserveXmp && !o.metadata.xmp.empty()) {
+        static constexpr char prefix[]="http://ns.adobe.com/xap/1.0/";
+        std::vector<JOCTET> marker(sizeof(prefix)+o.metadata.xmp.size());
+        std::memcpy(marker.data(),prefix,sizeof(prefix));
+        std::memcpy(marker.data()+sizeof(prefix),o.metadata.xmp.data(),o.metadata.xmp.size());
+        if(marker.size()<=65533)
+            jpeg_write_marker(cinfo,JPEG_APP0+1,marker.data(),unsigned(marker.size()));
+    }
+}
 Result<Bytes> encodeJpeg(const TileData& p,const RasterEncodingOptions& o) {
     if(p.format.mode!=ColorMode::RGB||p.format.depth!=Depth::U8)
         return error(ErrorCode::UnsupportedFeature,"jpeg.rgb8-only");
@@ -155,6 +195,7 @@ Result<Bytes> encodeJpeg(const TileData& p,const RasterEncodingOptions& o) {
     if(std::isfinite(o.ppi)&&o.ppi>0&&o.ppi<=65535){cinfo.density_unit=1;cinfo.X_density=cinfo.Y_density=UINT16(std::llround(o.ppi));}
     jpeg_start_compress(&cinfo,TRUE);
     if(!o.iccProfile.empty()) writeIccMarkers(&cinfo,o.iccProfile);
+    writeJpegMetadata(&cinfo,o);
     std::vector<std::uint8_t> row(std::size_t(p.width)*3);
     const unsigned channels=p.format.alpha?4u:3u;
     while(cinfo.next_scanline<cinfo.image_height){
@@ -242,6 +283,11 @@ Result<Bytes> encodeTiff(const TileData& p,const RasterEncodingOptions& o){
     if(p.format.alpha){std::uint16_t extra=EXTRASAMPLE_UNASSALPHA;TIFFSetField(t,TIFFTAG_EXTRASAMPLES,1,&extra);}
     if(std::isfinite(o.ppi)&&o.ppi>0){float res=float(o.ppi);TIFFSetField(t,TIFFTAG_XRESOLUTION,res);TIFFSetField(t,TIFFTAG_YRESOLUTION,res);TIFFSetField(t,TIFFTAG_RESOLUTIONUNIT,RESUNIT_INCH);}
     if(!o.iccProfile.empty())TIFFSetField(t,TIFFTAG_ICCPROFILE,std::uint32_t(o.iccProfile.size()),const_cast<std::uint8_t*>(o.iccProfile.data()));
+#ifdef TIFFTAG_XMLPACKET
+    if(o.metadata.preserveXmp&&!o.metadata.xmp.empty())
+        TIFFSetField(t,TIFFTAG_XMLPACKET,std::uint32_t(o.metadata.xmp.size()),const_cast<std::uint8_t*>(o.metadata.xmp.data()));
+#endif
+    if(o.metadata.preserveExif&&!o.metadata.exif.empty()){TIFFClose(t);return error(ErrorCode::UnsupportedFeature,"tiff.exif-write-unavailable");}
     bool ok=true;
     for(std::uint32_t y=0;y<p.height;y++)if(TIFFWriteScanline(t,const_cast<std::uint8_t*>(p.bytes.data()+std::uint64_t(y)*p.rowStride),y,0)<0){ok=false;break;}
     TIFFClose(t);if(!ok)return error(ErrorCode::IoError,"tiff.write");return mem.data;
@@ -263,15 +309,27 @@ Result<Bytes> encodeWebp(const TileData& p,const RasterEncodingOptions& o){
     if(!n||!encoded)return error(ErrorCode::IoError,"webp.encode");
     Bytes out(encoded,encoded+n);WebPFree(encoded);
 #ifdef DRAWBORAD_HAS_WEBPMUX
-    if(!o.iccProfile.empty()){
-        WebPData bitstream{out.data(),out.size()},icc{o.iccProfile.data(),o.iccProfile.size()},assembled{nullptr,0};
+    if(!o.iccProfile.empty() || (o.metadata.preserveExif&&!o.metadata.exif.empty()) ||
+       (o.metadata.preserveXmp&&!o.metadata.xmp.empty())){
+        WebPData bitstream{out.data(),out.size()},assembled{nullptr,0};
         WebPMux* mux=WebPMuxCreate(&bitstream,1);if(!mux)return error(ErrorCode::IoError,"webp.mux");
-        auto set=WebPMuxSetChunk(mux,"ICCP",&icc,1);auto get=set==WEBP_MUX_OK?WebPMuxAssemble(mux,&assembled):set;WebPMuxDelete(mux);
-        if(get!=WEBP_MUX_OK)return error(ErrorCode::IoError,"webp.icc");
+        auto setChunk=[&](const char* fourcc,const Bytes& data)->bool{
+            if(data.empty())return true;
+            WebPData chunk{data.data(),data.size()};
+            return WebPMuxSetChunk(mux,fourcc,&chunk,1)==WEBP_MUX_OK;
+        };
+        bool ok=setChunk("ICCP",o.iccProfile);
+        if(ok&&o.metadata.preserveExif)ok=setChunk("EXIF",o.metadata.exif);
+        if(ok&&o.metadata.preserveXmp)ok=setChunk("XMP ",o.metadata.xmp);
+        auto assembledStatus=ok?WebPMuxAssemble(mux,&assembled):WEBP_MUX_INVALID_ARGUMENT;
+        WebPMuxDelete(mux);
+        if(assembledStatus!=WEBP_MUX_OK)return error(ErrorCode::IoError,"webp.metadata");
         out.assign(assembled.bytes,assembled.bytes+assembled.size);WebPDataClear(&assembled);
     }
 #else
-    if(!o.iccProfile.empty())return error(ErrorCode::UnsupportedFeature,"webp.icc-mux-unavailable");
+    if(!o.iccProfile.empty() || (o.metadata.preserveExif&&!o.metadata.exif.empty()) ||
+       (o.metadata.preserveXmp&&!o.metadata.xmp.empty()))
+        return error(ErrorCode::UnsupportedFeature,"webp.metadata-mux-unavailable");
 #endif
     return out;
 }
@@ -283,6 +341,7 @@ Result<Bytes> encodeWebp(const TileData&,const RasterEncodingOptions&) {
 }
 
 Result<Bytes> encodeRaster(ExportFormat format,const TileData& pixels,const RasterEncodingOptions& options){
+    auto metadata=validateMetadata(options);if(!metadata)return metadata.error();
     switch(format){
     case ExportFormat::Png:return encodePng(pixels,options);
     case ExportFormat::Tiff:return encodeTiff(pixels,options);
