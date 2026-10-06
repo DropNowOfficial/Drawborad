@@ -45,7 +45,7 @@ Result<Bytes> transformedMask(const Bytes& source, PixelSize size, const LayerTr
 }
 }
 
-Result<ReviewSession> ReviewSession::create(const ProposalSet& p,const MaskSet& m,Revision r){
+Result<ReviewSession> ReviewSession::create(const ProposalSet& p,const MaskSet& m,Revision r,RefineRunner refineRunner){
     if(p.candidates.size()!=m.fullResolutionMasks.size())
         return error(ErrorCode::InvalidInput,"review.mask-count");
     const auto pixels=m.dimensions.width*m.dimensions.height;
@@ -60,6 +60,7 @@ Result<ReviewSession> ReviewSession::create(const ProposalSet& p,const MaskSet& 
     recomputeUnassigned(s.masks_);
     s.revision_=r;
     s.locked_.assign(m.fullResolutionMasks.size(),false);
+    s.refineRunner_=std::move(refineRunner);
     return s;
 }
 
@@ -202,6 +203,30 @@ Result<void> ReviewSession::undo(){
     undo_.pop_back();
     revision_++;
     return{};
+}
+
+Result<ProposalSet> ReviewSession::refine(const PromptSet& prompts,std::stop_token stop)const{
+    if(stop.stop_requested())
+        return error(ErrorCode::Cancelled,"review.refine-cancelled");
+    if(!refineRunner_)
+        return error(ErrorCode::UnsupportedFeature,"review.refine-runner");
+    for(const auto& point:prompts.points)
+        if(!std::isfinite(point.x)||!std::isfinite(point.y))
+            return error(ErrorCode::InvalidInput,"review.refine-point");
+    for(const auto& box:prompts.boxes)
+        if(!std::isfinite(box.x0)||!std::isfinite(box.y0)||
+           !std::isfinite(box.x1)||!std::isfinite(box.y1)||
+           !(box.x1>box.x0&&box.y1>box.y0))
+            return error(ErrorCode::InvalidInput,"review.refine-box");
+    auto result=refineRunner_(prompts,stop);
+    if(!result)
+        return result.error();
+    if(result.value().sourceSize!=proposals_.sourceSize)
+        return error(ErrorCode::CorruptData,"review.refine-size");
+    for(const auto& candidate:result.value().candidates)
+        if(candidate.lowResMask.size()!=256*256)
+            return error(ErrorCode::CorruptData,"review.refine-mask");
+    return result;
 }
 
 Result<ReviewedObjects> ReviewSession::accept(Revision expected)const{
