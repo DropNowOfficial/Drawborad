@@ -1,4 +1,5 @@
 #include "PsdReader.h"
+#include <algorithm>
 #include <cstring>
 
 namespace drawborad {
