@@ -58,6 +58,13 @@ Bytes onnxWithExternalInitializer(std::string_view location){
     Bytes tensor;pbBytes(tensor,13,entry);pbVarint(tensor,(14u<<3)|0u);pbVarint(tensor,1);
     Bytes graph;pbBytes(graph,5,tensor);Bytes model;pbBytes(model,7,graph);return model;
 }
+Bytes onnxWithNodeDomain(std::string_view domain){
+    Bytes node,domainBytes(domain.begin(),domain.end());
+    pbBytes(node,7,domainBytes);
+    Bytes graph;pbBytes(graph,1,node);
+    Bytes model;pbBytes(model,7,graph);
+    return model;
+}
 std::filesystem::path externalDataPackage(std::string_view location){
     auto d=std::filesystem::temp_directory_path()/"drawborad-model-external-data";
     std::filesystem::remove_all(d);std::filesystem::create_directories(d);
@@ -110,5 +117,27 @@ TEST("M01 duplicate top-level manifest keys are rejected"){
     auto result=validatePackage(d);
     CHECK(!result);
     CHECK(result.error().code==ErrorCode::CorruptData);
+    std::filesystem::remove_all(d);
+}
+
+TEST("M01 ONNX custom operator domains are rejected before runtime load"){
+    auto d=std::filesystem::temp_directory_path()/"drawborad-model-custom-op";
+    std::filesystem::remove_all(d);std::filesystem::create_directories(d);
+    auto encoder=onnxWithNodeDomain("evil.example");
+    Bytes decoder{0x3a,0x00};
+    std::ofstream(d/"encoder.onnx",std::ios::binary)
+        .write(reinterpret_cast<const char*>(encoder.data()),std::streamsize(encoder.size()));
+    std::ofstream(d/"decoder.onnx",std::ios::binary)
+        .write(reinterpret_cast<const char*>(decoder.data()),std::streamsize(decoder.size()));
+    std::ofstream manifest(d/"manifest.json");
+    manifest<<"{\"schema\":1,\"taskId\":\"sam21.image.v1\","
+            "\"weights\":\"encoder.onnx\",\"sha256\":\""<<sha256(encoder).hex()<<"\","
+            "\"decoderWeights\":\"decoder.onnx\",\"decoderSha256\":\""<<sha256(decoder).hex()<<"\","
+            "\"license\":\"test\",\"provider\":\"cpu\"}";
+    manifest.close();
+    auto result=validatePackage(d);
+    CHECK(!result);
+    CHECK(result.error().code==ErrorCode::UnsupportedAdapter);
+    CHECK(result.error().messageKey=="model.onnx-custom-domain");
     std::filesystem::remove_all(d);
 }
