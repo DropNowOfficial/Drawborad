@@ -222,3 +222,22 @@ TEST("C05 CMYK16 PSD file planes use Photoshop inverted ink polarity"){
                 encoded.value().begin()+std::ptrdiff_t(at+8))==
           Bytes({0xff,0xff, 0xbf,0xff, 0x7f,0xff, 0x00,0x00}));
 }
+
+TEST("C05 rejects PSD estimated above two GiB before pixel traversal"){
+    PsdWriteRequest q;
+    q.size={30000,30000};
+    q.format={ColorMode::RGB,Depth::U16,true};
+    PsdLayerPixels layer;
+    layer.name="Huge";
+    layer.pixels.width=30000;
+    layer.pixels.height=30000;
+    layer.pixels.format=q.format;
+    // Deliberately omit backing bytes. The output-size gate must run before
+    // stride/pixel traversal and reject a PSD that cannot fit the format.
+    q.layers.push_back(layer);
+    q.merged=layer.pixels;
+    auto encoded=encodePsd(q);
+    CHECK(!encoded);
+    CHECK(encoded.error().code==ErrorCode::BudgetExceeded);
+    CHECK(encoded.error().messageKey=="psd.output-size-limit");
+}
