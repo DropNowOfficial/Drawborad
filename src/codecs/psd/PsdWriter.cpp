@@ -698,11 +698,14 @@ Result<void> writePsd(const PsdWriteRequest& request, std::stop_token stop,
     observe(row.size());
     const std::array<std::uint8_t, 2> rawCompression{0, 0};
 
-    auto emitPixelChannels = [&](const TileData& pixels) -> Result<void> {
+    auto emitPixelChannels = [&](const TileData& pixels,
+                                 bool perChannelCompression) -> Result<void> {
         for (unsigned channel = 0; channel < channelCount; ++channel) {
-            auto compression = emit(rawCompression);
-            if (!compression)
-                return compression.error();
+            if (perChannelCompression) {
+                auto compression = emit(rawCompression);
+                if (!compression)
+                    return compression.error();
+            }
             for (std::uint32_t y = 0; y < pixels.height; ++y) {
                 if (stop.stop_requested())
                     return error(ErrorCode::Cancelled, "psd.cancelled");
@@ -740,7 +743,7 @@ Result<void> writePsd(const PsdWriteRequest& request, std::stop_token stop,
     };
 
     for (const auto& layer : request.layers) {
-        auto pixels = emitPixelChannels(layer.pixels);
+        auto pixels = emitPixelChannels(layer.pixels, true);
         if (!pixels)
             return pixels.error();
         if (!layer.mask.empty()) {
@@ -792,7 +795,7 @@ Result<void> writePsd(const PsdWriteRequest& request, std::stop_token stop,
     emitted = emit(rawCompression);
     if (!emitted)
         return emitted.error();
-    auto composite = emitPixelChannels(*merged);
+    auto composite = emitPixelChannels(*merged, false);
     if (!composite)
         return composite.error();
 
