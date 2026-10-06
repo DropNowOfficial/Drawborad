@@ -180,9 +180,10 @@ TEST("C03 JPEG import preserves embedded ICC bytes and reports GPS metadata") {
     const std::uint16_t app2Length=std::uint16_t(16+icc.size());
     app2.push_back(std::uint8_t(app2Length>>8));
     app2.push_back(std::uint8_t(app2Length));
-    const char signature[]="ICC_PROFILE";
-    app2.insert(app2.end(),signature,signature+11);
-    app2.push_back(0);
+    constexpr std::array<std::uint8_t,12> signature{
+        'I','C','C','_','P','R','O','F','I','L','E',0
+    };
+    app2.insert(app2.end(),signature.begin(),signature.end());
     app2.push_back(1);
     app2.push_back(1);
     app2.insert(app2.end(),icc.begin(),icc.end());
