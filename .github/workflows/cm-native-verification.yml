@@ -3,6 +3,9 @@ on:
   push:
     branches: [impl/color-formats-models-c01-c07-m01-m06]
   workflow_dispatch:
+concurrency:
+  group: cm-native-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
