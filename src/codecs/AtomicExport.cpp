@@ -21,10 +21,10 @@ Result<void> commitExport(FileIO& io, const StagedExport& staged,
     if (!flushed)
         return flushed.error();
 
-    auto bytes = io.read(staged.tempPath, maxBytes);
-    if (!bytes)
-        return bytes.error();
-    if (sha256(bytes.value()) != staged.verifiedHash)
+    auto digest = io.hash(staged.tempPath, maxBytes);
+    if (!digest)
+        return digest.error();
+    if (digest.value() != staged.verifiedHash)
         return error(ErrorCode::DigestMismatch, "export.staged-hash");
 
     return io.publish(staged.tempPath, policy.destination, policy.replaceConfirmed);
