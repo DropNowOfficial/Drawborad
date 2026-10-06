@@ -92,6 +92,51 @@ jobs:
           decoder.ir_version=8
           onnx.checker.check_model(decoder)
           onnx.save(decoder,'sam-decoder.onnx')
+
+          probe_image=helper.make_tensor_value_info('image',TensorProto.FLOAT,[1,3,1024,1024])
+          probe_features=[
+              helper.make_tensor_value_info('image_embed',TensorProto.FLOAT,[1,3,1,1]),
+              helper.make_tensor_value_info('high_res_0',TensorProto.FLOAT,[1,3,1,1]),
+              helper.make_tensor_value_info('high_res_1',TensorProto.FLOAT,[1,3,1,1]),
+          ]
+          reduced='probe_reduced'
+          probe_encoder=helper.make_model(
+              helper.make_graph([
+                  helper.make_node('ReduceMean',['image'],[reduced],axes=[2,3],keepdims=1),
+                  helper.make_node('Identity',[reduced],['image_embed']),
+                  helper.make_node('Identity',[reduced],['high_res_0']),
+                  helper.make_node('Identity',[reduced],['high_res_1']),
+              ],'drawborad-probe-encoder',[probe_image],probe_features),
+              opset_imports=[helper.make_opsetid('',17)])
+          probe_encoder.ir_version=8
+          onnx.checker.check_model(probe_encoder)
+          onnx.save(probe_encoder,'sam-probe-encoder.onnx')
+
+          probe_decoder_inputs=[
+              helper.make_tensor_value_info('image_embed',TensorProto.FLOAT,[1,3,1,1]),
+              helper.make_tensor_value_info('high_res_0',TensorProto.FLOAT,[1,3,1,1]),
+              helper.make_tensor_value_info('high_res_1',TensorProto.FLOAT,[1,3,1,1]),
+              helper.make_tensor_value_info('point_coords',TensorProto.FLOAT,[1,'N',2]),
+              helper.make_tensor_value_info('point_labels',TensorProto.INT64,[1,'N']),
+              helper.make_tensor_value_info('mask_input',TensorProto.FLOAT,[1,1,256,256]),
+              helper.make_tensor_value_info('has_mask_input',TensorProto.FLOAT,[1]),
+          ]
+          probe_decoder_outputs=[
+              helper.make_tensor_value_info('low_res_masks',TensorProto.FLOAT,[1,3,256,256]),
+              helper.make_tensor_value_info('iou_scores',TensorProto.FLOAT,[1,3]),
+          ]
+          repeats=helper.make_tensor('repeats',TensorProto.INT64,[4],[1,3,1,1])
+          scores=helper.make_tensor('scores_value',TensorProto.FLOAT,[1,3],[0.5,0.5,0.5])
+          probe_decoder=helper.make_model(
+              helper.make_graph([
+                  helper.make_node('Tile',['mask_input','repeats'],['low_res_masks']),
+                  helper.make_node('Constant',[],['iou_scores'],value=scores),
+              ],'drawborad-probe-decoder',probe_decoder_inputs,probe_decoder_outputs,
+                 initializer=[repeats]),
+              opset_imports=[helper.make_opsetid('',17)])
+          probe_decoder.ir_version=8
+          onnx.checker.check_model(probe_decoder)
+          onnx.save(probe_decoder,'sam-probe-decoder.onnx')
           PY
       - name: Configure with offline ONNX Runtime SDK
         shell: bash
@@ -100,9 +145,11 @@ jobs:
             -DDRAWBORAD_ONNXRUNTIME_ROOT="$PWD/onnxruntime-linux-x64-1.23.2" \
             -DDRAWBORAD_TEST_ONNX_MODEL="$PWD/identity.onnx" \
             -DDRAWBORAD_TEST_SAM_ENCODER="$PWD/sam-encoder.onnx" \
-            -DDRAWBORAD_TEST_SAM_DECODER="$PWD/sam-decoder.onnx"
+            -DDRAWBORAD_TEST_SAM_DECODER="$PWD/sam-decoder.onnx" \
+            -DDRAWBORAD_TEST_PROBE_ENCODER="$PWD/sam-probe-encoder.onnx" \
+            -DDRAWBORAD_TEST_PROBE_DECODER="$PWD/sam-probe-decoder.onnx"
       - name: Build runtime smoke
-        run: cmake --build --preset lab-debug --target test_M02.Runtime test_M02.SamRuntime
+        run: cmake --build --preset lab-debug --target test_M02.Runtime test_M02.SamRuntime test_M05.Runtime
       - name: Execute runtime smoke
         shell: bash
         run: |
@@ -110,8 +157,34 @@ jobs:
           export DRAWBORAD_TEST_ONNX_MODEL="$PWD/identity.onnx"
           export DRAWBORAD_TEST_SAM_ENCODER="$PWD/sam-encoder.onnx"
           export DRAWBORAD_TEST_SAM_DECODER="$PWD/sam-decoder.onnx"
+          export DRAWBORAD_TEST_PROBE_ENCODER="$PWD/sam-probe-encoder.onnx"
+          export DRAWBORAD_TEST_PROBE_DECODER="$PWD/sam-probe-decoder.onnx"
           set +e
-          ctest --test-dir out/build/lab-debug -R '^M02\.(Runtime|SamRuntime)$' --output-on-failure
+          ctest --test-dir out/build/lab-debug -R '^(M02\.(Runtime|SamRuntime)|M05\.Runtime)
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            for exe in test_M02.Runtime test_M02.SamRuntime test_M05.Runtime; do
+              echo "=== GDB THROW TRACE: $exe ==="
+              gdb -q -batch -ex 'catch throw' -ex run -ex bt --args "out/build/lab-debug/tests/$exe" || true
+            done
+            exit "$status"
+          fi
+      - name: Preserve evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ort-runtime-smoke
+          path: |
+            identity.onnx
+            sam-encoder.onnx
+            sam-decoder.onnx
+            sam-probe-encoder.onnx
+            sam-probe-decoder.onnx
+            expected.sha256
+            out/build/lab-debug/Testing/Temporary/LastTest.log
+          retention-days: 7
+ --output-on-failure
           status=$?
           set -e
           if [ "$status" -ne 0 ]; then
