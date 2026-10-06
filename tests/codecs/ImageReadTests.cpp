@@ -124,5 +124,9 @@ TEST("C03 HEIC detection is local and missing codec never pretends success"){
         auto decoded=decodeHeic(heic,info,options);
         CHECK(!decoded);
         CHECK(decoded.error().code==ErrorCode::UnsupportedFeature);
+    } else {
+        auto inspected=inspectHeic(heic,options.limits);
+        CHECK(!inspected);
+        CHECK(inspected.error().code==ErrorCode::CorruptData);
     }
 }
