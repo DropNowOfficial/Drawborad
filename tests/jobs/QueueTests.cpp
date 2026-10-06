@@ -74,3 +74,19 @@ TEST("M06 stale reconstruction result cannot commit over reviewed revision"){
     CHECK(q.finish(0,true,Revision(42)));
     CHECK(q.items()[0].state==QueueState::Done);
 }
+
+TEST("M06 auto accepted reconstruction also binds result revision"){
+    ImageQueue q;
+    QueuePolicy policy;
+    policy.autoAcceptReview=true;
+    std::array<std::filesystem::path,1> paths{"auto.png"};
+    CHECK(q.enqueue(paths,policy));
+    CHECK(q.startAnalysis(0));
+    CHECK(q.analysisComplete(0,true,Revision(77)));
+    CHECK(q.items()[0].state==QueueState::Reconstructing);
+    CHECK(q.items()[0].inputRevision==77);
+    auto stale=q.finish(0,true,Revision(76));
+    CHECK(!stale);
+    CHECK(stale.error().code==ErrorCode::StaleRevision);
+    CHECK(q.finish(0,true,Revision(77)));
+}
