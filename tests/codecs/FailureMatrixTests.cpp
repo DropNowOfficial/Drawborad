@@ -4,7 +4,32 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 using namespace drawborad;
+
+#ifdef _WIN32
+namespace {
+std::wstring extendedTestPath(const std::filesystem::path& p) {
+    auto s=std::filesystem::absolute(p).lexically_normal().native();
+    if(s.rfind(L"\\\\?\\",0)==0) return s;
+    if(s.rfind(L"\\\\",0)==0) return L"\\\\?\\UNC\\"+s.substr(2);
+    return L"\\\\?\\"+s;
+}
+bool createExtendedDirectories(const std::filesystem::path& target) {
+    auto full=std::filesystem::absolute(target).lexically_normal();
+    auto current=full.root_path();
+    for(const auto& component:full.relative_path()) {
+        current/=component;
+        if(CreateDirectoryW(extendedTestPath(current).c_str(),nullptr)) continue;
+        const auto e=GetLastError();
+        if(e!=ERROR_ALREADY_EXISTS) return false;
+    }
+    return true;
+}
+}
+#endif
 TEST("C07 codec limits scale from resource budget"){ResourceBudget b;b.ramSoftBytes=8*GiB;b.scratchBytes=6*GiB;auto l=defaultCodecLimits(b);CHECK(l.decodedBytes==4*GiB);CHECK(l.encodedBytes==3*GiB);}
 TEST("C07 confined path rejects traversal"){auto root=std::filesystem::temp_directory_path()/"drawborad-safe";CHECK(!confinedPath(root,"../escape.bin"));}
 
@@ -194,7 +219,7 @@ TEST("C07 Windows Unicode emoji and long paths survive atomic write") {
     std::filesystem::remove_all(root,ec);
     auto dir=root;
     for(int i=0;i<9;++i) dir/=L"0123456789012345678901234567890123456789";
-    std::filesystem::create_directories(dir);
+    CHECK(createExtendedDirectories(dir));
     auto path=dir/L"\x7ed3\x679c-\U0001f3a8.bin";
     NativeFileIO io;
     Bytes expected{9,8,7,6,5};
@@ -216,12 +241,14 @@ TEST("C07 Windows locked destination cannot be replaced") {
     Bytes oldBytes{1,2,3},newBytes{4,5,6};
     CHECK(io.write(destination,oldBytes,true));
     CHECK(io.write(stagedPath,newBytes,true));
-    FileLease lease;
-    CHECK(lease.acquire(destination));
     StagedExport staged{stagedPath,sha256(newBytes)};
     DestinationPolicy policy{destination,true,true};
-    auto result=commitExport(io,staged,policy,1024);
-    CHECK(!result);
+    {
+        FileLease lease;
+        CHECK(lease.acquire(destination));
+        auto result=commitExport(io,staged,policy,1024);
+        CHECK(!result);
+    }
     auto existing=io.read(destination,1024);
     CHECK(existing);
     CHECK(existing.value()==oldBytes);
