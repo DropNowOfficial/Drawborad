@@ -11,7 +11,9 @@ Result<AdapterInfo> AdapterRegistry::resolve(std::string_view task) const {
     a.inputs = {
         {"image","float32",{1,3,1024,1024},16*1024*1024},
         {"point_coords","float32",{1,-1,2},4096},
-        {"point_labels","float32",{1,-1},2048}
+        {"point_labels","int64",{1,-1},4096},
+        {"mask_input","float32",{1,1,256,256},256*256*4},
+        {"has_mask_input","float32",{1},4}
     };
     a.outputs = {
         {"low_res_masks","float32",{1,-1,256,256},8*1024*1024},
