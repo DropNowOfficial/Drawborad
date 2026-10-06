@@ -254,4 +254,199 @@ Result<PhotoshopInfo> readPhotoshopHeader(std::span<const std::uint8_t> bytes,
     return out;
 }
 
+namespace {
+
+struct ChannelRecord {
+    std::int16_t id{};
+    std::uint64_t length{};
+};
+
+struct LayerDecodeRecord {
+    PhotoshopLayerInfo info;
+    std::vector<ChannelRecord> channels;
+};
+
+Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, ProfileId profile,
+                                        const CodecLimits& limits) {
+    auto metadata = readPhotoshopHeader(bytes, limits);
+    if (!metadata)
+        return metadata.error();
+    const auto version = metadata.value().format == ImageFormat::Psd ? 1u : 2u;
+    const auto lengthBytes = version == 1 ? std::size_t(4) : std::size_t(8);
+
+    Reader reader{bytes, 26};
+    for (int section = 0; section < 2; ++section) {
+        if (!reader.take(4))
+            return error(ErrorCode::CorruptData, "psd.decode-section");
+        const auto length = std::uint64_t(u32(bytes.data() + reader.position - 4));
+        if (length > bytes.size() - reader.position || !reader.take(std::size_t(length)))
+            return error(ErrorCode::CorruptData, "psd.decode-section-bounds");
+    }
+    if (!reader.take(lengthBytes))
+        return error(ErrorCode::CorruptData, "psd.decode-layer-mask-length");
+    const auto total = version == 1 ? std::uint64_t(u32(bytes.data() + reader.position - 4))
+                                    : u64(bytes.data() + reader.position - 8);
+    if (total > bytes.size() - reader.position || total == 0)
+        return total == 0 ? PhotoshopDecoded{metadata.value(), {}}
+                          : Result<PhotoshopDecoded>{error(ErrorCode::CorruptData,
+                                                          "psd.decode-layer-mask-bounds")};
+    const auto sectionEnd = reader.position + std::size_t(total);
+
+    if (!reader.take(lengthBytes))
+        return error(ErrorCode::CorruptData, "psd.decode-layer-info-length");
+    const auto layerLength =
+        version == 1 ? std::uint64_t(u32(bytes.data() + reader.position - 4))
+                     : u64(bytes.data() + reader.position - 8);
+    if (layerLength > sectionEnd - reader.position || layerLength < 2)
+        return error(ErrorCode::CorruptData, "psd.decode-layer-info-bounds");
+    const auto layerInfoEnd = reader.position + std::size_t(layerLength);
+
+    if (!reader.take(2))
+        return error(ErrorCode::CorruptData, "psd.decode-layer-count");
+    const auto signedCount = std::int16_t(u16(bytes.data() + reader.position - 2));
+    const int layerCount = signedCount < 0 ? -signedCount : signedCount;
+    if (std::uint64_t(layerCount) > limits.nodes)
+        return error(ErrorCode::BudgetExceeded, "psd.decode-layer-count-limit");
+
+    std::vector<LayerDecodeRecord> records;
+    records.reserve(std::size_t(layerCount));
+    for (int index = 0; index < layerCount; ++index) {
+        if (reader.position + 18 > layerInfoEnd)
+            return error(ErrorCode::CorruptData, "psd.decode-layer-record");
+        LayerDecodeRecord record;
+        record.info.top = std::int32_t(u32(bytes.data() + reader.position));
+        record.info.left = std::int32_t(u32(bytes.data() + reader.position + 4));
+        record.info.bottom = std::int32_t(u32(bytes.data() + reader.position + 8));
+        record.info.right = std::int32_t(u32(bytes.data() + reader.position + 12));
+        reader.position += 16;
+        record.info.channels = u16(bytes.data() + reader.position);
+        reader.position += 2;
+        if (record.info.channels > 56)
+            return error(ErrorCode::CorruptData, "psd.decode-channel-count");
+        record.channels.reserve(record.info.channels);
+        for (std::uint16_t channel = 0; channel < record.info.channels; ++channel) {
+            if (reader.position + 2 + lengthBytes > layerInfoEnd)
+                return error(ErrorCode::CorruptData, "psd.decode-channel-record");
+            const auto id = std::int16_t(u16(bytes.data() + reader.position));
+            reader.position += 2;
+            const auto length =
+                version == 1 ? std::uint64_t(u32(bytes.data() + reader.position))
+                             : u64(bytes.data() + reader.position);
+            reader.position += lengthBytes;
+            if (length < 2)
+                return error(ErrorCode::CorruptData, "psd.decode-channel-length");
+            record.channels.push_back({id, length});
+        }
+        if (reader.position + 12 > layerInfoEnd)
+            return error(ErrorCode::CorruptData, "psd.decode-layer-fixed");
+        const auto* key = bytes.data() + reader.position + 4;
+        if (std::memcmp(bytes.data() + reader.position, "8BIM", 4) != 0)
+            return error(ErrorCode::CorruptData, "psd.decode-blend-signature");
+        if (std::memcmp(key, "norm", 4) == 0) record.info.blend = BlendMode::Normal;
+        else if (std::memcmp(key, "mul ", 4) == 0) record.info.blend = BlendMode::Multiply;
+        else if (std::memcmp(key, "scrn", 4) == 0) record.info.blend = BlendMode::Screen;
+        else if (std::memcmp(key, "dark", 4) == 0) record.info.blend = BlendMode::Darken;
+        else if (std::memcmp(key, "lite", 4) == 0) record.info.blend = BlendMode::Lighten;
+        else return error(ErrorCode::UnsupportedFeature, "psd.decode-blend-mode");
+        reader.position += 8;
+        record.info.opacity = bytes[reader.position];
+        reader.position += 4;
+        if (reader.position + 4 > layerInfoEnd)
+            return error(ErrorCode::CorruptData, "psd.decode-extra-length");
+        const auto extra = std::uint64_t(u32(bytes.data() + reader.position));
+        reader.position += 4;
+        if (extra > layerInfoEnd - reader.position)
+            return error(ErrorCode::CorruptData, "psd.decode-extra-bounds");
+        const auto extraBegin = reader.position;
+        const auto extraEnd = extraBegin + std::size_t(extra);
+        auto parsedExtra = readLayerExtra(bytes, extraBegin, extraEnd, record.info);
+        if (!parsedExtra)
+            return parsedExtra.error();
+        reader.position = extraEnd;
+        records.push_back(std::move(record));
+    }
+
+    const auto baseChannels = metadata.value().colorMode == 3 ? 3u :
+                              metadata.value().colorMode == 4 ? 4u : 0u;
+    if (!baseChannels)
+        return error(ErrorCode::UnsupportedFeature, "psd.decode-color-mode");
+    const auto depth = metadata.value().depth == 8 ? Depth::U8 : Depth::U16;
+    const auto sampleBytes = depth == Depth::U8 ? 1u : 2u;
+
+    PhotoshopDecoded decoded;
+    decoded.info = metadata.value();
+    decoded.layers.reserve(records.size());
+
+    for (const auto& record : records) {
+        if (record.info.right < record.info.left || record.info.bottom < record.info.top)
+            return error(ErrorCode::CorruptData, "psd.decode-layer-rectangle");
+        const auto width = std::uint64_t(record.info.right - record.info.left);
+        const auto height = std::uint64_t(record.info.bottom - record.info.top);
+        const bool hasAlpha = std::any_of(record.channels.begin(), record.channels.end(),
+                                          [](const ChannelRecord& c) { return c.id == -1; });
+        PixelFormat format{baseChannels == 3 ? ColorMode::RGB : ColorMode::CMYK, depth, hasAlpha};
+        const auto outputChannels = format.channelCount();
+        auto pixels = checkedMultiply(width, height);
+        if (!pixels)
+            return pixels.error();
+        auto samples = checkedMultiply(pixels.value(), outputChannels);
+        if (!samples)
+            return samples.error();
+        auto byteCount = checkedMultiply(samples.value(), sampleBytes);
+        if (!byteCount || byteCount.value() > limits.decodedBytes ||
+            byteCount.value() > SIZE_MAX)
+            return error(ErrorCode::BudgetExceeded, "psd.decode-layer-bytes");
+
+        TileData tile;
+        tile.format = format;
+        tile.width = std::uint32_t(width);
+        tile.height = std::uint32_t(height);
+        tile.rowStride = width * outputChannels * sampleBytes;
+        tile.profileId = profile;
+        tile.bytes.assign(std::size_t(byteCount.value()), 0);
+
+        for (const auto& channel : record.channels) {
+            if (channel.length > layerInfoEnd - reader.position)
+                return error(ErrorCode::CorruptData, "psd.decode-channel-bounds");
+            const auto channelEnd = reader.position + std::size_t(channel.length);
+            const auto compression = u16(bytes.data() + reader.position);
+            reader.position += 2;
+            const int destination = channel.id >= 0 && channel.id < int(baseChannels)
+                                        ? int(channel.id)
+                                        : channel.id == -1 ? int(baseChannels) : -1;
+            if (compression != 0) {
+                reader.position = channelEnd;
+                return error(ErrorCode::UnsupportedFeature, "psd.decode-compression");
+            }
+            auto planeBytes = checkedMultiply(pixels.value(), sampleBytes);
+            if (!planeBytes || planeBytes.value() > channelEnd - reader.position)
+                return error(ErrorCode::CorruptData, "psd.decode-raw-size");
+            if (destination >= 0) {
+                for (std::uint64_t pixel = 0; pixel < pixels.value(); ++pixel) {
+                    const auto src = reader.position + std::size_t(pixel * sampleBytes);
+                    const auto dst = std::size_t(pixel * outputChannels * sampleBytes +
+                                                 std::uint64_t(destination) * sampleBytes);
+                    if (sampleBytes == 1) {
+                        tile.bytes[dst] = bytes[src];
+                    } else {
+                        tile.bytes[dst] = bytes[src + 1];
+                        tile.bytes[dst + 1] = bytes[src];
+                    }
+                }
+            }
+            reader.position = channelEnd;
+        }
+        decoded.layers.push_back({record.info, std::move(tile)});
+    }
+    return decoded;
+}
+
+} // namespace
+
+Result<PhotoshopDecoded> decodePhotoshopLayers(std::span<const std::uint8_t> bytes,
+                                               ProfileId profile,
+                                               const CodecLimits& limits) {
+    return decodeRawLayers(bytes, profile, limits);
+}
+
 } // namespace drawborad
