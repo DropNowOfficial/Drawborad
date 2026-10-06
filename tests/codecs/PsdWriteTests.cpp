@@ -14,3 +14,17 @@ TEST("C05 multiply blend survives layered PSD roundtrip"){
     CHECK(r.value().layers.size()==1);
     CHECK(r.value().layers[0].blend==BlendMode::Multiply);
 }
+
+TEST("C05 Unicode layer name roundtrips through luni metadata"){
+    const std::string unicodeName="\xE5\x89\x8D\xE6\x99\xAF\xE5\xB1\x82";
+    PsdWriteRequest q; q.size={1,1}; q.format={ColorMode::RGB,Depth::U8,true};
+    PsdLayerPixels l; l.name=unicodeName;
+    l.pixels.width=1; l.pixels.height=1; l.pixels.format=q.format;
+    l.pixels.rowStride=4; l.pixels.bytes={10,20,30,255};
+    q.layers.push_back(l);
+    auto encoded=encodePsd(q); CHECK(encoded);
+    CodecLimits limits;
+    auto parsed=readPhotoshopHeader(encoded.value(),limits); CHECK(parsed);
+    CHECK(parsed.value().layers.size()==1);
+    CHECK(parsed.value().layers[0].name==unicodeName);
+}
