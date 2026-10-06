@@ -3,6 +3,7 @@
 #include "codecs/RasterWriters.h"
 #include "codecs/LayerArchive.h"
 #include "storage/FileIO.h"
+#include <fstream>
 using namespace drawborad;
 TEST("C06 CMYK to PNG requires consent and explicit RGB destination profile"){
     ExportRequest r;
@@ -94,4 +95,27 @@ TEST("C06 layer ZIP carries a manifest and Unicode layer name"){
     auto manifest=firstZipData(z.value());
     CHECK(manifest.find("layers/0.png")!=std::string::npos);
     CHECK(manifest.find("12")!=std::string::npos);
+}
+
+TEST("C06 raster export never replaces existing file without overwrite consent"){
+    RasterEncodingOptions options;
+    auto pixels=rgba8();
+    auto path=std::filesystem::temp_directory_path()/"drawborad-c06-no-clobber.png";
+    const Bytes old{9,8,7,6};
+    {std::ofstream out(path,std::ios::binary|std::ios::trunc);out.write(reinterpret_cast<const char*>(old.data()),std::streamsize(old.size()));}
+    ExportRequest request;
+    request.format=ExportFormat::Png;
+    request.path=path;
+    request.size={2,2};
+    request.alpha=true;
+    request.overwrite=false;
+    auto plan=preflightExport(ColorMode::RGB,request);
+    CHECK(plan);
+    auto result=writeRaster(plan.value(),pixels,options);
+    CHECK(!result);
+    NativeFileIO io;
+    auto actual=io.read(path,1024);
+    CHECK(actual);
+    CHECK(actual.value()==old);
+    std::filesystem::remove(path);
 }
