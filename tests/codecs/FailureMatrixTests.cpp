@@ -52,3 +52,58 @@ TEST("C07 staged hash mismatch never attempts replace") {
     CHECK(result.error().code==ErrorCode::DigestMismatch);
     CHECK(!io.replaceCalled);
 }
+
+namespace {
+class DestinationAppearsDuringVerifyIO final : public FileIO {
+  public:
+    ProjectPath stagedPath;
+    ProjectPath destinationPath;
+    Bytes staged{1,2,3,4,5};
+    Bytes intruder{91,92,93,94};
+    mutable bool injected{};
+    bool replaceCalled{};
+
+    Result<Bytes> read(const ProjectPath& p, std::uint64_t maxBytes) const override {
+        if (p != stagedPath)
+            return error(ErrorCode::IoError, "test.unexpected-read");
+        if (staged.size() > maxBytes)
+            return error(ErrorCode::BudgetExceeded, "test.read-limit");
+        if (!injected) {
+            std::ofstream out(destinationPath, std::ios::binary | std::ios::trunc);
+            out.write(reinterpret_cast<const char*>(intruder.data()),
+                      std::streamsize(intruder.size()));
+            injected = true;
+        }
+        return staged;
+    }
+    Result<void> write(const ProjectPath&, std::span<const std::uint8_t>, bool) override {
+        return error(ErrorCode::IoError, "test.unexpected-write");
+    }
+    Result<void> flush(const ProjectPath&) override { return {}; }
+    Result<void> replace(const ProjectPath&, const ProjectPath& destination) override {
+        replaceCalled = true;
+        std::ofstream out(destination, std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(staged.data()),
+                  std::streamsize(staged.size()));
+        return {};
+    }
+};
+}
+
+TEST("C07 destination appearing during verification is never overwritten without consent") {
+    auto root=std::filesystem::temp_directory_path()/"drawborad-c07-race";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    DestinationAppearsDuringVerifyIO io;
+    io.stagedPath=root/"output.tmp";
+    io.destinationPath=root/"output.psd";
+    StagedExport staged{io.stagedPath,sha256(io.staged)};
+    DestinationPolicy policy{io.destinationPath,false,true};
+    auto result=commitExport(io,staged,policy,1024);
+    CHECK(!result);
+    CHECK(!io.replaceCalled);
+    std::ifstream in(io.destinationPath,std::ios::binary);
+    Bytes actual((std::istreambuf_iterator<char>(in)),{});
+    CHECK(actual==io.intruder);
+    std::filesystem::remove_all(root);
+}
