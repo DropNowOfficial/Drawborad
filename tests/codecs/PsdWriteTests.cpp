@@ -92,3 +92,26 @@ TEST("C04 C05 U16 layered PSD samples roundtrip byte-exact"){
     CHECK(decoded.value().layers.size()==1);
     CHECK(decoded.value().layers[0].pixels.bytes==l.pixels.bytes);
 }
+
+
+TEST("C04 C05 Photoshop section divider metadata roundtrips"){
+    PsdWriteRequest q;
+    q.size={1,1};
+    q.format={ColorMode::RGB,Depth::U8,true};
+    PsdLayerPixels l;
+    l.name="Group";
+    l.pixels.width=1;
+    l.pixels.height=1;
+    l.pixels.format=q.format;
+    l.pixels.rowStride=4;
+    l.pixels.bytes={0,0,0,0};
+    l.sectionType=2;
+    q.layers.push_back(l);
+    auto encoded=encodePsd(q);
+    CHECK(encoded);
+    CodecLimits limits;
+    auto info=readPhotoshopHeader(encoded.value(),limits);
+    CHECK(info);
+    CHECK(info.value().layers.size()==1);
+    CHECK(info.value().layers[0].sectionType==2);
+}
