@@ -582,7 +582,8 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
     auto metadata = readPhotoshopHeader(bytes, limits);
     if (!metadata)
         return metadata.error();
-    const auto version = metadata.value().format == ImageFormat::Psd ? 1u : 2u;
+    const std::uint16_t version =
+        metadata.value().format == ImageFormat::Psd ? std::uint16_t(1) : std::uint16_t(2);
     const auto lengthBytes = version == 1 ? std::size_t(4) : std::size_t(8);
 
     Reader reader{bytes, 26};
