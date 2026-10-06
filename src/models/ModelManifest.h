@@ -15,6 +15,9 @@ struct ModelManifest {
     std::filesystem::path weights;
     std::filesystem::path resolvedWeights;
     Hash sha256{};
+    std::filesystem::path decoderWeights;
+    std::filesystem::path resolvedDecoderWeights;
+    Hash decoderSha256{};
     std::vector<TensorSpec> inputs, outputs;
     std::string provider;
     std::string abi;
