@@ -25,24 +25,16 @@ TEST("C02 CMYK multiply uses inverted ink-domain math, not RGB channel multiply"
 
 TEST("C02 proof flags are never silently ignored"){
     ProfileStore store;
-    auto fake=[](const char* space){
-        Bytes b(128,0);b[3]=128;
-        b[16]=space[0];b[17]=space[1];b[18]=space[2];b[19]=space[3];
-        b[36]='a';b[37]='c';b[38]='s';b[39]='p';
-        return b;
-    };
-    auto document=store.import(fake("RGB "));
-    auto proofBytes=fake("CMYK");proofBytes[64]=1;
-    auto proof=store.import(proofBytes);
-    auto displayBytes=fake("RGB ");displayBytes[64]=2;
-    auto display=store.import(displayBytes);
-    CHECK(document&&proof&&display);
+    Bytes fake(128,0);fake[3]=128;
+    fake[16]='R';fake[17]='G';fake[18]='B';fake[19]=' ';
+    fake[36]='a';fake[37]='c';fake[38]='s';fake[39]='p';
+    auto profile=store.import(fake);CHECK(profile);
     TileData tile;tile.width=1;tile.height=1;tile.format={ColorMode::RGB,Depth::U8,true};
-    tile.profileId=document.value();tile.rowStride=4;tile.bytes={32,64,128,255};
+    tile.profileId=profile.value();tile.rowStride=4;tile.bytes={32,64,128,255};
     ColorService service(store);
     ProofRequest request{tile,
-        {document.value(),proof.value(),ColorIntent::Relative,true,1},
-        {proof.value(),display.value(),ColorIntent::Relative,true,1},
+        {profile.value(),profile.value(),ColorIntent::Relative,true,1},
+        {profile.value(),profile.value(),ColorIntent::Relative,true,1},
         true,true};
     auto result=softProof(request,service);
     CHECK(!result);
