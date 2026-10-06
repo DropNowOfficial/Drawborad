@@ -38,6 +38,28 @@ def git_commit(root: pathlib.Path) -> str:
     return value
 
 
+
+
+def runtime_package_manifest(*, variant: str, source_commit: str, checkpoint_sha256: str,
+                             encoder_file: str, encoder_sha256: str,
+                             decoder_file: str, decoder_sha256: str) -> dict:
+    """Return the install-time manifest consumed by the native package verifier."""
+    return {
+        "schema": 1,
+        "taskId": "sam21.image.v1",
+        "variant": variant,
+        "weights": encoder_file,
+        "sha256": encoder_sha256,
+        "decoderWeights": decoder_file,
+        "decoderSha256": decoder_sha256,
+        "provider": "cpu",
+        "abi": "sam21.image.v1",
+        "license": "Apache-2.0",
+        "sourceCommit": source_commit,
+        "checkpointSha256": checkpoint_sha256,
+        "networkAccess": False,
+    }
+
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Export a local SAM 2.1 image encoder and prompt decoder to ONNX."
@@ -187,20 +209,24 @@ def main(argv: list[str] | None = None) -> int:
     onnx.checker.check_model(str(encoder_path))
     onnx.checker.check_model(str(decoder_path))
 
+    source_commit = git_commit(source)
+    checkpoint_sha = sha256_file(checkpoint)
+    encoder_sha = sha256_file(encoder_path)
+    decoder_sha = sha256_file(decoder_path)
     manifest = {
         "schema": 1,
         "taskId": "sam21.image.v1",
         "variant": args.variant,
-        "sourceCommit": git_commit(source),
-        "checkpointSha256": sha256_file(checkpoint),
+        "sourceCommit": source_commit,
+        "checkpointSha256": checkpoint_sha,
         "opset": args.opset,
         "encoder": {
             "file": encoder_path.name,
-            "sha256": sha256_file(encoder_path),
+            "sha256": encoder_sha,
         },
         "decoder": {
             "file": decoder_path.name,
-            "sha256": sha256_file(decoder_path),
+            "sha256": decoder_sha,
         },
         "logicalInputs": [
             {"name": "image", "dtype": "float32", "shape": [1, 3, 1024, 1024]},
@@ -214,6 +240,15 @@ def main(argv: list[str] | None = None) -> int:
     }
     (output / "export-manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    runtime_manifest = runtime_package_manifest(
+        variant=args.variant, source_commit=source_commit, checkpoint_sha256=checkpoint_sha,
+        encoder_file=encoder_path.name, encoder_sha256=encoder_sha,
+        decoder_file=decoder_path.name, decoder_sha256=decoder_sha,
+    )
+    (output / "manifest.json").write_text(
+        json.dumps(runtime_manifest, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
     return 0
