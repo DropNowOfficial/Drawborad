@@ -57,6 +57,12 @@ if(PNG_FOUND)
   target_compile_definitions(drawborad_codecs PRIVATE DRAWBORAD_HAS_PNG=1)
 endif()
 
+find_package(ZLIB QUIET)
+if(ZLIB_FOUND)
+  target_link_libraries(drawborad_codecs PRIVATE ZLIB::ZLIB)
+  target_compile_definitions(drawborad_codecs PRIVATE DRAWBORAD_HAS_ZLIB=1)
+endif()
+
 find_package(JPEG QUIET)
 if(JPEG_FOUND)
   target_link_libraries(drawborad_codecs PRIVATE JPEG::JPEG)
