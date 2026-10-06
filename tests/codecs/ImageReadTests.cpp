@@ -163,3 +163,52 @@ TEST("C03 EXIF orientations one through eight map pixels deterministically"){
         CHECK(red==expected[orientation-1]);
     }
 }
+
+
+TEST("C03 JPEG import preserves embedded ICC bytes and reports GPS metadata") {
+    RasterEncodingOptions options;
+    auto source=importFixture8();
+    source.format.alpha=false;
+    source.rowStride=6;
+    source.bytes={10,20,30,40,50,60,70,80,90,100,110,120};
+    auto encoded=encodeRaster(ExportFormat::Jpeg,source,options);
+    CHECK(encoded);
+
+    Bytes icc(128,0);
+    icc[36]='a';icc[37]='c';icc[38]='s';icc[39]='p';
+    Bytes app2{0xff,0xe2};
+    const std::uint16_t app2Length=std::uint16_t(16+icc.size());
+    app2.push_back(std::uint8_t(app2Length>>8));
+    app2.push_back(std::uint8_t(app2Length));
+    const char signature[]="ICC_PROFILE";
+    app2.insert(app2.end(),signature,signature+11);
+    app2.push_back(0);
+    app2.push_back(1);
+    app2.push_back(1);
+    app2.insert(app2.end(),icc.begin(),icc.end());
+
+    Bytes exif{'E','x','i','f',0,0,'I','I',42,0,8,0,0,0,1,0};
+    exif.insert(exif.end(),{0x25,0x88,4,0,1,0,0,0,26,0,0,0,0,0,0,0});
+    Bytes app1{0xff,0xe1};
+    const std::uint16_t app1Length=std::uint16_t(exif.size()+2);
+    app1.push_back(std::uint8_t(app1Length>>8));
+    app1.push_back(std::uint8_t(app1Length));
+    app1.insert(app1.end(),exif.begin(),exif.end());
+
+    Bytes jpeg;
+    jpeg.insert(jpeg.end(),encoded.value().begin(),encoded.value().begin()+2);
+    jpeg.insert(jpeg.end(),app2.begin(),app2.end());
+    jpeg.insert(jpeg.end(),app1.begin(),app1.end());
+    jpeg.insert(jpeg.end(),encoded.value().begin()+2,encoded.value().end());
+
+    auto path=writeEncoded("drawborad-c03-icc-gps.jpg",jpeg);
+    DecodeOptions decode;
+    decode.limits.decodedBytes=1024*1024;
+    decode.limits.encodedBytes=1024*1024;
+    auto imported=decodeImage(path,decode);
+    CHECK(imported);
+    CHECK(imported.value().info.iccProfile==icc);
+    CHECK(imported.value().info.icc==sha256(icc));
+    CHECK(imported.value().info.hasGps);
+    std::filesystem::remove(path);
+}
