@@ -33,7 +33,7 @@ TEST("X13 queue processes twenty items without concurrent heavy work") {
         CHECK(q.startAnalysis(i)); CHECK(q.concurrentHeavyJobs()==1);
         CHECK(q.analysisComplete(i,true)); CHECK(q.concurrentHeavyJobs()==0);
         CHECK(q.acceptReview(i,Revision(i+1))); CHECK(q.concurrentHeavyJobs()==1);
-        CHECK(q.finish(i,true)); CHECK(q.concurrentHeavyJobs()==0); CHECK(q.items()[i].state==QueueState::Done);
+        CHECK(q.finish(i,true,Revision(i+1))); CHECK(q.concurrentHeavyJobs()==0); CHECK(q.items()[i].state==QueueState::Done);
     }
 }
 TEST("X13 mask edit revision loop remains deterministic") {
