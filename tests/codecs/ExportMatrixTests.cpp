@@ -160,3 +160,24 @@ TEST("C06 OpenRaster thumbnail is 8 bit and bounded to 256 pixels"){
     CHECK(be32(dataAt+20)<=256);
     CHECK(b[dataAt+24]==8);
 }
+
+TEST("C07 legacy export entry cannot clobber existing destination"){
+    auto path=std::filesystem::temp_directory_path()/"drawborad-c07-placeholder-no-clobber.bin";
+    const Bytes old{1,2,3,4};
+    {std::ofstream out(path,std::ios::binary|std::ios::trunc);out.write(reinterpret_cast<const char*>(old.data()),std::streamsize(old.size()));}
+    ExportRequest request;
+    request.format=ExportFormat::Png;
+    request.path=path;
+    request.size={1,1};
+    request.overwrite=false;
+    auto plan=preflightExport(ColorMode::RGB,request);
+    CHECK(plan);
+    const Bytes next{9,9,9};
+    auto result=writeRasterPlaceholder(plan.value(),next);
+    CHECK(!result);
+    NativeFileIO io;
+    auto actual=io.read(path,1024);
+    CHECK(actual);
+    CHECK(actual.value()==old);
+    std::filesystem::remove(path);
+}
