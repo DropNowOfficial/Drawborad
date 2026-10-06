@@ -215,6 +215,13 @@ Result<Bytes> encodePsd(const PsdWriteRequest& request) {
         auto unicode = appendUnicodeName(extra, layer.name);
         if (!unicode)
             return unicode.error();
+        if (layer.sectionType) {
+            if (*layer.sectionType > 3)
+                return error(ErrorCode::InvalidInput, "psd.section-divider-type");
+            extra.insert(extra.end(), {'8', 'B', 'I', 'M', 'l', 's', 'c', 't'});
+            put32(extra, 4);
+            put32(extra, *layer.sectionType);
+        }
 
         put32(records, std::uint32_t(extra.size()));
         records.insert(records.end(), extra.begin(), extra.end());
