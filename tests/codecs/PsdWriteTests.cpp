@@ -283,3 +283,61 @@ TEST("C05 file writer keeps internal staging buffer bounded") {
     CHECK(stats.peakWriterBufferBytes<=1024*1024);
     std::filesystem::remove(request.path);
 }
+
+
+TEST("C04 Lr16 additional layer info is used when main 16-bit layer info is empty"){
+    auto read32=[](const Bytes& bytes,std::size_t at){
+        return (std::uint32_t(bytes[at])<<24)|(std::uint32_t(bytes[at+1])<<16)|
+               (std::uint32_t(bytes[at+2])<<8)|bytes[at+3];
+    };
+    auto put32=[](Bytes& bytes,std::uint32_t v){
+        bytes.push_back(std::uint8_t(v>>24));bytes.push_back(std::uint8_t(v>>16));
+        bytes.push_back(std::uint8_t(v>>8));bytes.push_back(std::uint8_t(v));
+    };
+    PsdWriteRequest q;
+    q.size={1,1};
+    q.format={ColorMode::RGB,Depth::U16,true};
+    PsdLayerPixels layer;
+    layer.name="Lr16";
+    layer.pixels.width=1;layer.pixels.height=1;layer.pixels.format=q.format;
+    layer.pixels.rowStride=8;
+    layer.pixels.bytes={0x34,0x12,0x78,0x56,0xbc,0x9a,0xfe,0xff};
+    q.layers.push_back(layer);
+    auto encoded=encodePsd(q);CHECK(encoded);
+
+    const auto& source=encoded.value();
+    std::size_t at=26;
+    auto colorLength=read32(source,at);at+=4+colorLength;
+    auto resourceLength=read32(source,at);at+=4+resourceLength;
+    const auto layerMaskLengthOffset=at;
+    const auto layerMaskLength=read32(source,at);at+=4;
+    const auto layerMaskBegin=at;
+    const auto layerMaskEnd=layerMaskBegin+layerMaskLength;
+    CHECK(layerMaskEnd<=source.size());
+    const auto mainLength=read32(source,at);at+=4;
+    CHECK(mainLength>=2);
+    CHECK(at+mainLength<=layerMaskEnd);
+
+    Bytes replacement;
+    put32(replacement,0);
+    put32(replacement,0);
+    replacement.insert(replacement.end(),{'8','B','I','M','L','r','1','6'});
+    put32(replacement,mainLength);
+    replacement.insert(replacement.end(),source.begin()+std::ptrdiff_t(at),
+                       source.begin()+std::ptrdiff_t(at+mainLength));
+    if(mainLength&1u)replacement.push_back(0);
+
+    Bytes lr16;
+    lr16.insert(lr16.end(),source.begin(),source.begin()+std::ptrdiff_t(layerMaskLengthOffset));
+    put32(lr16,std::uint32_t(replacement.size()));
+    lr16.insert(lr16.end(),replacement.begin(),replacement.end());
+    lr16.insert(lr16.end(),source.begin()+std::ptrdiff_t(layerMaskEnd),source.end());
+
+    CodecLimits limits;
+    auto header=readPhotoshopHeader(lr16,limits);CHECK(header);
+    CHECK(header.value().layers.size()==1);
+    CHECK(header.value().layers[0].name=="Lr16");
+    auto decoded=decodePhotoshopLayers(lr16,ProfileId{},limits);CHECK(decoded);
+    CHECK(decoded.value().layers.size()==1);
+    CHECK(decoded.value().layers[0].pixels.bytes==layer.pixels.bytes);
+}
