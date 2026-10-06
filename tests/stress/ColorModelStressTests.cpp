@@ -14,7 +14,7 @@ std::uint64_t next(std::uint64_t& x){ x ^= x<<13; x ^= x>>7; x ^= x<<17; return 
 }
 TEST("X13 PSD parser survives deterministic corruption sweep") {
     const auto seed=seedPsd(); CodecLimits limits; std::uint64_t rng=0xD0A0B0A0D13ull;
-    for(int n=0;n<20000;n++){
+    for(int n=0;n<50000;n++){
         auto b=seed;
         const auto edits=1+int(next(rng)%6);
         for(int k=0;k<edits;k++){
@@ -25,8 +25,8 @@ TEST("X13 PSD parser survives deterministic corruption sweep") {
         if(r){ CHECK(r.value().size.width>0); CHECK(r.value().size.height>0); CHECK(r.value().size.width<=30000); CHECK(r.value().size.height<=30000); }
     }
 }
-TEST("X13 queue processes twenty items without concurrent heavy work") {
-    ImageQueue q; std::array<std::filesystem::path,100> paths{};
+TEST("X13 queue processes five hundred items without concurrent heavy work") {
+    ImageQueue q; std::array<std::filesystem::path,500> paths{};
     for(std::size_t i=0;i<paths.size();++i) paths[i]="image-"+std::to_string(i)+".png";
     auto id=q.enqueue(paths,{}); CHECK(id);
     for(std::size_t i=0;i<paths.size();++i){
@@ -40,7 +40,7 @@ TEST("X13 mask edit revision loop remains deterministic") {
     ProposalSet p; p.sourceSize={64,64}; p.candidates.push_back({Id::fromNumber(1),{0,0,64,64},{},0});
     MaskSet masks; masks.dimensions=p.sourceSize; masks.fullResolutionMasks.push_back(Bytes(4096,0)); masks.unassigned.assign(4096,255);
     auto s=ReviewSession::create(p,masks,1); CHECK(s);
-    for(int i=0;i<2000;i++){
+    for(int i=0;i<5000;i++){
         auto rev=s.value().revision(); Rect r{std::int64_t(i%56),std::int64_t((i*7)%56),8,8};
         CHECK(s.value().apply({i%2?MaskEditOp::SubtractBrush:MaskEditOp::AddBrush,0,r,1,rev}));
         if((i%17)==0){ CHECK(s.value().undo()); }
