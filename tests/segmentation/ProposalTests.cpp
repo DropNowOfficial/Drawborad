@@ -40,3 +40,58 @@ TEST("M03 malformed low resolution mask is rejected"){
     CHECK(!result);
     CHECK(result.error().code==ErrorCode::CorruptData);
 }
+
+TEST("M03 runtime path normalizes image prompts and decodes low resolution masks"){
+    AnalysisRequest r;
+    r.sourceSize={2,2};
+    r.model.taskId="sam21.image.v1";
+    r.model.resolvedWeights="verified-encoder.onnx";
+    r.model.resolvedDecoderWeights="verified-decoder.onnx";
+    r.model.sha256.bytes[0]=42;
+    TileData image;
+    image.width=2;
+    image.height=2;
+    image.format={ColorMode::RGB,Depth::U8,false};
+    image.rowStride=6;
+    image.bytes={255,0,0, 0,255,0, 0,0,255, 255,255,255};
+    r.view.rgbTiles={image};
+    r.prompts.points={{1,1,true}};
+    r.prompts.boxes={{0,0,2,2}};
+
+    bool invoked=false;
+    ProposalEngine engine([&](const ModelManifest&,const InferenceRequest& request,std::stop_token){
+        invoked=true;
+        CHECK(request.tensorRefs.size()==5);
+        CHECK(request.tensorRefs[0].size()==std::size_t(1*3*1024*1024*4));
+        CHECK(request.tensorRefs[1].size()==std::size_t(1*3*2*4));
+        CHECK(request.tensorRefs[2].size()==std::size_t(1*3*8));
+        const auto* labels=reinterpret_cast<const std::int64_t*>(request.tensorRefs[2].data());
+        CHECK(labels[0]==2);
+        CHECK(labels[1]==3);
+        CHECK(labels[2]==1);
+        CHECK(request.tensorRefs[3].size()==std::size_t(1*1*256*256*4));
+        CHECK(request.tensorRefs[4].size()==4);
+
+        InferenceOutput out;
+        std::vector<float> mask(256*256,-1.0f);
+        for(int y=64;y<192;y++)for(int x=64;x<192;x++)mask[std::size_t(y*256+x)]=1.0f;
+        out.tensorRefs.resize(2);
+        out.tensorRefs[0].resize(mask.size()*sizeof(float));
+        std::memcpy(out.tensorRefs[0].data(),mask.data(),out.tensorRefs[0].size());
+        float score=.875f;
+        out.tensorRefs[1].resize(sizeof(score));
+        std::memcpy(out.tensorRefs[1].data(),&score,sizeof(score));
+        return Result<InferenceOutput>{std::move(out)};
+    });
+    auto proposals=engine.propose(r);
+    CHECK(proposals);
+    CHECK(invoked);
+    CHECK(proposals.value().candidates.size()==1);
+    CHECK(proposals.value().candidates[0].lowResMask.size()==256*256);
+    CHECK(proposals.value().candidates[0].score>.87);
+    CHECK(proposals.value().candidates[0].score<.88);
+    CHECK(proposals.value().candidates[0].lowResMask[128*256+128]==255);
+    CHECK(proposals.value().candidates[0].lowResMask[0]==0);
+    CHECK(proposals.value().sourceToAnalysis.affine[0]==512);
+    CHECK(proposals.value().sourceToAnalysis.affine[3]==512);
+}
