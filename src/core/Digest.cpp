@@ -54,12 +54,12 @@ Hash Sha256State::finish() const{
     const auto bits=state.totalBytes_*8;
     state.buffer_[state.buffered_++]=0x80;
     if(state.buffered_>56){
-        std::fill(state.buffer_.begin()+std::ptrdiff_t(state.buffered_),state.buffer_.end(),0);
+        std::fill(state.buffer_.begin()+std::ptrdiff_t(state.buffered_),state.buffer_.end(),std::uint8_t{0});
         state.block(state.buffer_.data());
         state.buffered_=0;
     }
     std::fill(state.buffer_.begin()+std::ptrdiff_t(state.buffered_),
-              state.buffer_.begin()+56,0);
+              state.buffer_.begin()+56,std::uint8_t{0});
     for(int i=0;i<8;i++)state.buffer_[63-i]=std::uint8_t(bits>>(8*i));
     state.block(state.buffer_.data());
     Hash out;
