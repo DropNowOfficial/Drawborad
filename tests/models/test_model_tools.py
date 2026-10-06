@@ -8,6 +8,23 @@ root = pathlib.Path(sys.argv[1]).resolve()
 qualify = root / "tools" / "models" / "qualify.py"
 export = root / "tools" / "models" / "export_sam21.py"
 
+import importlib.util
+spec = importlib.util.spec_from_file_location("drawborad_export_sam21", export)
+export_module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(export_module)
+runtime = export_module.runtime_package_manifest(
+    variant="tiny", source_commit="a"*40, checkpoint_sha256="b"*64,
+    encoder_file="encoder.onnx", encoder_sha256="c"*64,
+    decoder_file="decoder.onnx", decoder_sha256="d"*64)
+assert runtime["schema"] == 1
+assert runtime["taskId"] == "sam21.image.v1"
+assert runtime["weights"] == "encoder.onnx"
+assert runtime["decoderWeights"] == "decoder.onnx"
+assert runtime["provider"] == "cpu"
+assert runtime["abi"] == "sam21.image.v1"
+assert runtime["license"] == "Apache-2.0"
+
 def run(*args):
     return subprocess.run([sys.executable, *map(str, args)], text=True,
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
