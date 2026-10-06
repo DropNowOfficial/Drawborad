@@ -155,3 +155,16 @@ TEST("C07 native no-clobber publish rejects destination created after precheck")
     CHECK(actual.value()==io.intruder);
     std::filesystem::remove_all(root);
 }
+
+
+TEST("C07 native staged hash streams across multiple chunks") {
+    auto path=std::filesystem::temp_directory_path()/"drawborad-c07-hash-stream.bin";
+    Bytes bytes(3*1024*1024+17);
+    for(std::size_t i=0;i<bytes.size();++i) bytes[i]=std::uint8_t((i*37u+11u)&0xffu);
+    NativeFileIO io;
+    CHECK(io.write(path,bytes,true));
+    auto streamed=io.hash(path,4*1024*1024);
+    CHECK(streamed);
+    CHECK(streamed.value()==sha256(bytes));
+    std::filesystem::remove(path);
+}
