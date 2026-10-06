@@ -199,8 +199,9 @@ tmsize_t tr(thandle_t h,void*out,tmsize_t n){auto*m=static_cast<TiffReadMemory*>
 tmsize_t tw(thandle_t,void*,tmsize_t){return -1;}
 toff_t ts(thandle_t h,toff_t off,int whence){auto*m=static_cast<TiffReadMemory*>(h);toff_t p=whence==SEEK_SET?off:whence==SEEK_CUR?m->pos+off:whence==SEEK_END?m->data.size()+off:toff_t(-1);if(p==toff_t(-1))return p;m->pos=p;return p;}
 int tc(thandle_t){return 0;}toff_t tz(thandle_t h){return static_cast<TiffReadMemory*>(h)->data.size();}int tm(thandle_t,void**,toff_t*){return 0;}void tu(thandle_t,void*,toff_t){}
-Result<TileData> decodeTiff(std::span<const std::uint8_t>b,InputInfo& info){
+Result<TileData> decodeTiff(std::span<const std::uint8_t>b,InputInfo& info,std::uint32_t frame){
     TiffReadMemory mem{b,0};TIFF*t=TIFFClientOpen("Drawborad","r",reinterpret_cast<thandle_t>(&mem),tr,tw,ts,tc,tz,tm,tu);if(!t)return error(ErrorCode::CorruptData,"tiff.open");
+    if(frame>0&&!TIFFSetDirectory(t,static_cast<tdir_t>(frame))){TIFFClose(t);return error(ErrorCode::InvalidInput,"tiff.frame");}
     std::uint32_t w=0,h=0;std::uint16_t bits=0,samples=0,photo=0,planar=0,orientation=1;TIFFGetField(t,TIFFTAG_IMAGEWIDTH,&w);TIFFGetField(t,TIFFTAG_IMAGELENGTH,&h);TIFFGetFieldDefaulted(t,TIFFTAG_BITSPERSAMPLE,&bits);TIFFGetFieldDefaulted(t,TIFFTAG_SAMPLESPERPIXEL,&samples);TIFFGetField(t,TIFFTAG_PHOTOMETRIC,&photo);TIFFGetFieldDefaulted(t,TIFFTAG_PLANARCONFIG,&planar);TIFFGetFieldDefaulted(t,TIFFTAG_ORIENTATION,&orientation);
     const bool cmyk=photo==PHOTOMETRIC_SEPARATED;const unsigned colors=cmyk?4u:3u;if(!w||!h||(bits!=8&&bits!=16)||planar!=PLANARCONFIG_CONTIG||(photo!=PHOTOMETRIC_RGB&&!cmyk)||(samples!=colors&&samples!=colors+1)){TIFFClose(t);return error(ErrorCode::UnsupportedFeature,"tiff.layout");}
     if(cmyk){std::uint16_t ink=0;TIFFGetFieldDefaulted(t,TIFFTAG_INKSET,&ink);if(ink!=INKSET_CMYK){TIFFClose(t);return error(ErrorCode::UnsupportedFeature,"tiff.inkset");}}
@@ -210,7 +211,7 @@ Result<TileData> decodeTiff(std::span<const std::uint8_t>b,InputInfo& info){
     info.orientation=orientation;out.profileId=info.icc;TIFFClose(t);return out;
 }
 #else
-Result<TileData> decodeTiff(std::span<const std::uint8_t>,InputInfo&){return error(ErrorCode::UnsupportedFeature,"tiff.codec-unavailable");}
+Result<TileData> decodeTiff(std::span<const std::uint8_t>,InputInfo&,std::uint32_t){return error(ErrorCode::UnsupportedFeature,"tiff.codec-unavailable");}
 #endif
 }
 
@@ -220,7 +221,7 @@ Result<TileData> decodeRasterBytes(std::span<const std::uint8_t> bytes,InputInfo
     case ImageFormat::Png:decoded=decodePng(bytes,info);break;
     case ImageFormat::Jpeg:info.orientation=jpegOrientation(bytes);decoded=decodeJpeg(bytes,info);break;
     case ImageFormat::Webp:decoded=decodeWebp(bytes,info);break;
-    case ImageFormat::Tiff:decoded=decodeTiff(bytes,info);break;
+    case ImageFormat::Tiff:decoded=decodeTiff(bytes,info,options.frame);break;
     case ImageFormat::Bmp:decoded=decodeBmp(bytes,info);break;
     default:return error(ErrorCode::UnsupportedFeature,"codec.layered-or-optional");
     }
