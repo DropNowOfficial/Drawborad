@@ -32,7 +32,11 @@ class ModelRegistry {
     std::map<ModelId,ModelManifest> installed_;
     std::map<ModelId,std::filesystem::path> roots_;
     std::map<ModelId,std::uint32_t> active_;
+    std::map<ModelId,bool> owned_;
+    std::filesystem::path storeRoot_;
   public:
+    ModelRegistry() = default;
+    explicit ModelRegistry(std::filesystem::path storeRoot) : storeRoot_(std::move(storeRoot)) {}
     Result<ModelId> install(const PackagePath&, TrustDecision);
     Result<void> remove(ModelId);
     Result<ModelManifest> manifest(ModelId) const;
