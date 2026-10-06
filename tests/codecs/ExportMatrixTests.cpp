@@ -204,9 +204,12 @@ TEST("C06 ExportService routes a real PNG through atomic publication"){
     auto report=service.write(plan.value(),merged,{},options);
     CHECK(report);
     CHECK(report.value().paths.size()==1);
-    std::ifstream in(path,std::ios::binary);
     std::array<unsigned char,8> signature{};
-    in.read(reinterpret_cast<char*>(signature.data()),8);
+    {
+        std::ifstream in(path,std::ios::binary);
+        in.read(reinterpret_cast<char*>(signature.data()),8);
+        CHECK(in.good());
+    }
     CHECK(signature==std::array<unsigned char,8>{0x89,'P','N','G',13,10,26,10});
     std::filesystem::remove(path);
 }
