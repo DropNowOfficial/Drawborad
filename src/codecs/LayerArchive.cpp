@@ -73,6 +73,63 @@ Result<Bytes> pngLayer(const ArchiveLayer& layer,const RasterEncodingOptions& o)
     if(layer.pixels.format.mode!=ColorMode::RGB)return error(ErrorCode::ConversionConsentRequired,"archive.rgb-required");
     return encodeRaster(ExportFormat::Png,layer.pixels,o);
 }
+Result<TileData> thumbnailPixels(const TileData& source){
+    if(source.format.mode!=ColorMode::RGB)
+        return error(ErrorCode::ConversionConsentRequired,"ora.thumbnail-rgb-required");
+    if(!source.width||!source.height)
+        return error(ErrorCode::InvalidInput,"ora.thumbnail-empty");
+    if(source.format.depth!=Depth::U8&&source.format.depth!=Depth::U16)
+        return error(ErrorCode::UnsupportedFeature,"ora.thumbnail-depth");
+    const auto channels=source.format.alpha?4u:3u;
+    const auto sampleBytes=source.format.depth==Depth::U16?2u:1u;
+    const auto sourceRow=std::uint64_t(source.width)*channels*sampleBytes;
+    if(source.rowStride<sourceRow)
+        return error(ErrorCode::CorruptData,"ora.thumbnail-stride");
+    auto sourceBytes=checkedMultiply(source.rowStride,source.height);
+    if(!sourceBytes||sourceBytes.value()>source.bytes.size())
+        return error(ErrorCode::CorruptData,"ora.thumbnail-bytes");
+
+    double scale=std::min({1.0,256.0/double(source.width),256.0/double(source.height)});
+    auto targetWidth=std::max<std::uint32_t>(1,std::uint32_t(std::floor(double(source.width)*scale)));
+    auto targetHeight=std::max<std::uint32_t>(1,std::uint32_t(std::floor(double(source.height)*scale)));
+    targetWidth=std::min<std::uint32_t>(targetWidth,256);
+    targetHeight=std::min<std::uint32_t>(targetHeight,256);
+
+    TileData out;
+    out.width=targetWidth;
+    out.height=targetHeight;
+    out.format={ColorMode::RGB,Depth::U8,source.format.alpha};
+    out.profileId=source.profileId;
+    out.rowStride=std::uint64_t(targetWidth)*channels;
+    auto total=checkedMultiply(out.rowStride,out.height);
+    if(!total||total.value()>SIZE_MAX)
+        return error(ErrorCode::BudgetExceeded,"ora.thumbnail-size");
+    out.bytes.resize(std::size_t(total.value()));
+
+    for(std::uint32_t y=0;y<targetHeight;++y){
+        const auto sy=std::min<std::uint32_t>(source.height-1,
+            std::uint32_t((std::uint64_t(y)*source.height)/targetHeight));
+        for(std::uint32_t x=0;x<targetWidth;++x){
+            const auto sx=std::min<std::uint32_t>(source.width-1,
+                std::uint32_t((std::uint64_t(x)*source.width)/targetWidth));
+            const auto srcAt=std::uint64_t(sy)*source.rowStride+
+                             std::uint64_t(sx)*channels*sampleBytes;
+            const auto dstAt=std::uint64_t(y)*out.rowStride+std::uint64_t(x)*channels;
+            for(unsigned c=0;c<channels;++c){
+                std::uint16_t value=0;
+                if(sampleBytes==1){
+                    value=std::uint16_t(source.bytes[std::size_t(srcAt+c)])*257u;
+                }else{
+                    const auto at=std::size_t(srcAt+std::uint64_t(c)*2u);
+                    value=std::uint16_t(source.bytes[at] |
+                        (std::uint16_t(source.bytes[at+1])<<8));
+                }
+                out.bytes[std::size_t(dstAt+c)]=std::uint8_t((std::uint32_t(value)+128u)/257u);
+            }
+        }
+    }
+    return out;
+}
 }
 
 Result<Bytes> encodeOra(PixelSize size,std::span<const ArchiveLayer> layers,const TileData& merged,const RasterEncodingOptions& options){
@@ -80,6 +137,8 @@ Result<Bytes> encodeOra(PixelSize size,std::span<const ArchiveLayer> layers,cons
     if(merged.width!=size.width||merged.height!=size.height||merged.format.mode!=ColorMode::RGB)
         return error(ErrorCode::InvalidInput,"ora.merged");
     auto mergedPng=encodeRaster(ExportFormat::Png,merged,options);if(!mergedPng)return mergedPng.error();
+    auto thumbnail=thumbnailPixels(merged);if(!thumbnail)return thumbnail.error();
+    auto thumbnailPng=encodeRaster(ExportFormat::Png,thumbnail.value(),options);if(!thumbnailPng)return thumbnailPng.error();
     std::vector<ZipEntry> entries;
     entries.push_back({"mimetype",Bytes{'i','m','a','g','e','/','o','p','e','n','r','a','s','t','e','r'}});
     std::ostringstream stack;
@@ -94,6 +153,7 @@ Result<Bytes> encodeOra(PixelSize size,std::span<const ArchiveLayer> layers,cons
     }
     stack<<"</stack></image>";
     auto stackText=stack.str();entries.insert(entries.begin()+1,{"stack.xml",Bytes(stackText.begin(),stackText.end())});
+    entries.push_back({"Thumbnails/thumbnail.png",std::move(thumbnailPng.value())});
     entries.push_back({"mergedimage.png",std::move(mergedPng.value())});
     return zipStore(std::move(entries));
 }
