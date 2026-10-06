@@ -68,11 +68,12 @@ std::size_t elementBytes(ONNXTensorElementDataType type) {
 
 Result<Ort::Value> inputTensor(const Ort::MemoryInfo& memoryInfo, const Bytes& bytes,
                                const TensorSpec& spec,
-                               const Ort::TensorTypeAndShapeInfo& runtimeInfo) {
+                               ONNXTensorElementDataType runtimeType,
+                               std::vector<std::int64_t> runtimeShape) {
     auto wanted = elementType(spec.dtype);
     if (!wanted)
         return wanted.error();
-    if (runtimeInfo.GetElementType() != wanted.value())
+    if (runtimeType != wanted.value())
         return error(ErrorCode::InvalidInput, "model.runtime-input-dtype");
     const auto width = elementBytes(wanted.value());
     if (!width || bytes.size() % width)
@@ -80,7 +81,7 @@ Result<Ort::Value> inputTensor(const Ort::MemoryInfo& memoryInfo, const Bytes& b
     if (spec.byteLimit && bytes.size() > spec.byteLimit)
         return error(ErrorCode::BudgetExceeded, "model.input-byte-limit");
 
-    auto shape = spec.shape.empty() ? runtimeInfo.GetShape() : spec.shape;
+    auto shape = spec.shape.empty() ? std::move(runtimeShape) : spec.shape;
     auto resolved = resolveShape(std::move(shape), bytes.size() / width);
     if (!resolved)
         return resolved.error();
@@ -177,7 +178,8 @@ Result<InferenceOutput> runSingle(Ort::Env& env, const ModelManifest& manifest,
         if (!spec.name.empty() && spec.name != inputNamesStorage.back())
             return error(ErrorCode::InvalidInput, "model.input-name");
         auto info = session.GetInputTypeInfo(i).GetTensorTypeAndShapeInfo();
-        auto value = inputTensor(memoryInfo, request.tensorRefs[i], spec, info);
+        auto value = inputTensor(memoryInfo, request.tensorRefs[i], spec,
+                                 info.GetElementType(), info.GetShape());
         if (!value)
             return value.error();
         inputValues.push_back(std::move(value.value()));
@@ -259,7 +261,8 @@ Result<InferenceOutput> runSam21(Ort::Env& env, const ModelManifest& manifest,
     }
 
     auto imageInfo = encoder.GetInputTypeInfo(0).GetTensorTypeAndShapeInfo();
-    auto imageValue = inputTensor(memoryInfo, request.tensorRefs[0], manifest.inputs[0], imageInfo);
+    auto imageValue = inputTensor(memoryInfo, request.tensorRefs[0], manifest.inputs[0],
+                                  imageInfo.GetElementType(), imageInfo.GetShape());
     if (!imageValue)
         return imageValue.error();
     const char* encoderInputNames[] = {"image"};
@@ -318,7 +321,8 @@ Result<InferenceOutput> runSam21(Ort::Env& env, const ModelManifest& manifest,
         const auto decoderIndex = logical + 2;
         auto info = decoder.GetInputTypeInfo(decoderIndex).GetTensorTypeAndShapeInfo();
         auto value = inputTensor(memoryInfo, request.tensorRefs[logical],
-                                 manifest.inputs[logical], info);
+                                 manifest.inputs[logical], info.GetElementType(),
+                                 info.GetShape());
         if (!value)
             return value.error();
         decoderInputs.push_back(std::move(value.value()));
