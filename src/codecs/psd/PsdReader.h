@@ -19,6 +19,18 @@ struct PhotoshopInfo {
     std::vector<PhotoshopLayerInfo> layers;
 };
 
+struct PhotoshopDecodedLayer {
+    PhotoshopLayerInfo info;
+    TileData pixels;
+};
+
+struct PhotoshopDecoded {
+    PhotoshopInfo info;
+    std::vector<PhotoshopDecodedLayer> layers;
+};
+
 Result<PhotoshopInfo> readPhotoshopHeader(std::span<const std::uint8_t>, const CodecLimits&);
+Result<PhotoshopDecoded> decodePhotoshopLayers(std::span<const std::uint8_t>, ProfileId,
+                                               const CodecLimits&);
 
 } // namespace drawborad
