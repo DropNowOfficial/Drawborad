@@ -1,5 +1,6 @@
 #include "Test.h"
 #include "color/ColorService.h"
+#include "core/Commands.h"
 using namespace drawborad;
 namespace {
 Bytes icc(const char* space){
