@@ -13,6 +13,8 @@ struct InputInfo {
     PixelSize originalSize{}, orientedSize{};
     ImageFormat format{ImageFormat::Unknown};
     ProfileId icc{};
+    Bytes iccProfile;
+    bool hasGps{};
     std::vector<std::string> unsupported;
     std::uint64_t estimatedBytes{};
     Hash sourceHash{};
