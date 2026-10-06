@@ -74,13 +74,14 @@ Result<CompatibilityReport> probeModel(const ModelManifest& m, DevicePreference 
     if(m.gpuBytes>budget.gpuTotalBytes)
         return CompatibilityReport{false,"gpu-budget-exceeded",m.ramBytes,m.gpuBytes,device};
 
-    if(device==DevicePreference::CUDA){
-        if(m.provider!="cuda")
-            return CompatibilityReport{false,"cuda-not-declared",0,0,device};
+    if(device==DevicePreference::CUDA && m.provider!="cuda")
+        return CompatibilityReport{false,"cuda-not-declared",0,0,device};
+    if(device==DevicePreference::CUDA &&
+       (m.resolvedWeights.empty() || m.resolvedDecoderWeights.empty()))
         return CompatibilityReport{false,"cuda-runtime-qualification-required",
                                    m.ramBytes,m.gpuBytes,device};
-    }
-    if(m.provider=="cuda" && (m.resolvedWeights.empty() || m.resolvedDecoderWeights.empty()))
+    if(device==DevicePreference::CPU && m.provider=="cuda" &&
+       (m.resolvedWeights.empty() || m.resolvedDecoderWeights.empty()))
         return CompatibilityReport{true,"cpu-fallback-explicit",m.ramBytes,0,device};
 
     if(!m.resolvedWeights.empty() && !m.resolvedDecoderWeights.empty()) {
@@ -99,7 +100,7 @@ Result<CompatibilityReport> probeModel(const ModelManifest& m, DevicePreference 
         std::copy_n(m.sha256.bytes.begin(),16,request.modelId.bytes.begin());
         if(request.modelId.empty())
             request.modelId=Id::fromNumber(1);
-        request.device=DevicePreference::CPU;
+        request.device=device;
         request.tensorRefs={
             floats(3*1024*1024),
             floats(2),
@@ -112,7 +113,7 @@ Result<CompatibilityReport> probeModel(const ModelManifest& m, DevicePreference 
         OrtSession session(m);
         auto probe=session.run(request,stop);
         if(!probe)
-            return CompatibilityReport{false,"runtime-probe-failed",0,0,device};
+            return CompatibilityReport{false,probe.error().messageKey,0,0,device};
         if(probe.value().tensorRefs.size()!=m.outputs.size())
             return CompatibilityReport{false,"runtime-output-count",0,0,device};
         return CompatibilityReport{true,"runtime-probe-passed",
