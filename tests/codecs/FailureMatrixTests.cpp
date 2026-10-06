@@ -5,3 +5,50 @@
 using namespace drawborad;
 TEST("C07 codec limits scale from resource budget"){ResourceBudget b;b.ramSoftBytes=8*GiB;b.scratchBytes=6*GiB;auto l=defaultCodecLimits(b);CHECK(l.decodedBytes==4*GiB);CHECK(l.encodedBytes==3*GiB);}
 TEST("C07 confined path rejects traversal"){auto root=std::filesystem::temp_directory_path()/"drawborad-safe";CHECK(!confinedPath(root,"../escape.bin"));}
+
+#include "codecs/AtomicExport.h"
+
+namespace {
+class ReplaceFailIO final : public FileIO {
+  public:
+    Bytes staged;
+    Bytes destination{9,8,7,6};
+    bool replaceCalled{};
+    Result<Bytes> read(const ProjectPath&, std::uint64_t maxBytes) const override {
+        if (staged.size() > maxBytes)
+            return error(ErrorCode::BudgetExceeded, "test.read-limit");
+        return staged;
+    }
+    Result<void> write(const ProjectPath&, std::span<const std::uint8_t>, bool) override {
+        return error(ErrorCode::IoError, "test.unexpected-write");
+    }
+    Result<void> flush(const ProjectPath&) override { return {}; }
+    Result<void> replace(const ProjectPath&, const ProjectPath&) override {
+        replaceCalled = true;
+        return error(ErrorCode::IoError, "test.replace-failed");
+    }
+};
+}
+
+TEST("C07 failed atomic replace leaves existing destination unchanged") {
+    ReplaceFailIO io;
+    io.staged={1,2,3,4,5};
+    const auto before=io.destination;
+    StagedExport staged{"safe/output.tmp",sha256(io.staged)};
+    DestinationPolicy policy{"safe/output.psd",true,true};
+    auto result=commitExport(io,staged,policy,1024);
+    CHECK(!result);
+    CHECK(io.replaceCalled);
+    CHECK(io.destination==before);
+}
+
+TEST("C07 staged hash mismatch never attempts replace") {
+    ReplaceFailIO io;
+    io.staged={1,2,3};
+    StagedExport staged{"safe/output.tmp",Hash{}};
+    DestinationPolicy policy{"safe/output.psd",true,true};
+    auto result=commitExport(io,staged,policy,1024);
+    CHECK(!result);
+    CHECK(result.error().code==ErrorCode::DigestMismatch);
+    CHECK(!io.replaceCalled);
+}
