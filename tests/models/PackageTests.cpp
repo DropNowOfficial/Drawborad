@@ -179,8 +179,8 @@ TEST("M01 package identity includes decoder digest") {
     std::filesystem::create_directories(base/"a");
     std::filesystem::create_directories(base/"b");
     Bytes encoder{0x3a,0x00};
-    Bytes decoderA{0x3a,0x00,0x01};
-    Bytes decoderB{0x3a,0x00,0x02};
+    Bytes decoderA{0x3a,0x00,0x08,0x01};
+    Bytes decoderB{0x3a,0x00,0x08,0x02};
     auto writePackage=[&](const std::filesystem::path& dir,const Bytes& decoder) {
         std::ofstream(dir/"encoder.onnx",std::ios::binary)
             .write(reinterpret_cast<const char*>(encoder.data()),std::streamsize(encoder.size()));
