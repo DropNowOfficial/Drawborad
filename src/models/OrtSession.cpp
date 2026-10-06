@@ -1,4 +1,5 @@
 #include "ModelManifest.h"
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -140,12 +141,36 @@ Result<void> requireName(Ort::Session& session, bool input, std::size_t index,
     return {};
 }
 
+Result<void> configureProvider(Ort::SessionOptions& options,
+                               const ModelManifest& manifest,
+                               DevicePreference device) {
+    if (device == DevicePreference::CPU)
+        return {};
+    const auto providers = Ort::GetAvailableProviders();
+    if (std::find(providers.begin(), providers.end(), "CUDAExecutionProvider") ==
+        providers.end())
+        return error(ErrorCode::UnsupportedFeature, "model.cuda-provider-unavailable");
+
+    OrtCUDAProviderOptions cudaOptions;
+    cudaOptions.device_id = 0;
+    cudaOptions.do_copy_in_default_stream = 1;
+    cudaOptions.arena_extend_strategy = 1;
+    if (manifest.gpuBytes)
+        cudaOptions.gpu_mem_limit = std::size_t(
+            std::min<std::uint64_t>(manifest.gpuBytes, 6 * GiB));
+    options.AppendExecutionProvider_CUDA(cudaOptions);
+    return {};
+}
+
 Result<InferenceOutput> runSingle(Ort::Env& env, const ModelManifest& manifest,
                                   const InferenceRequest& request, std::stop_token stop) {
     Ort::SessionOptions options;
     options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
     options.SetIntraOpNumThreads(1);
     options.SetInterOpNumThreads(1);
+    auto provider = configureProvider(options, manifest, request.device);
+    if (!provider)
+        return provider.error();
     Ort::Session session(env, manifest.resolvedWeights.c_str(), options);
     Ort::AllocatorWithDefaultOptions allocator;
 
@@ -243,6 +268,9 @@ Result<InferenceOutput> runSam21(Ort::Env& env, const ModelManifest& manifest,
     options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
     options.SetIntraOpNumThreads(1);
     options.SetInterOpNumThreads(1);
+    auto provider = configureProvider(options, manifest, request.device);
+    if (!provider)
+        return provider.error();
     Ort::Session encoder(env, manifest.resolvedWeights.c_str(), options);
     Ort::Session decoder(env, manifest.resolvedDecoderWeights.c_str(), options);
     Ort::AllocatorWithDefaultOptions allocator;
@@ -384,8 +412,8 @@ Result<InferenceOutput> OrtSession::run(const InferenceRequest& request,
         return error(ErrorCode::UnsupportedFeature, "model.onnxruntime-unavailable");
     if (manifest_.resolvedWeights.empty())
         return error(ErrorCode::InvalidInput, "model.unverified-runtime-path");
-    if (request.device == DevicePreference::CUDA)
-        return error(ErrorCode::UnsupportedFeature, "model.cuda-provider-not-qualified");
+    if (request.device == DevicePreference::CUDA && manifest_.provider != "cuda")
+        return error(ErrorCode::UnsupportedAdapter, "model.cuda-not-declared");
 
 #ifdef DRAWBORAD_HAS_ONNXRUNTIME
     try {
@@ -394,6 +422,8 @@ Result<InferenceOutput> OrtSession::run(const InferenceRequest& request,
             return runSam21(env, manifest_, request, stop);
         return runSingle(env, manifest_, request, stop);
     } catch (const Ort::Exception& ex) {
+        if (request.device == DevicePreference::CUDA)
+            return Error{ErrorCode::UnsupportedFeature, "model.cuda-provider-load-failed", ex.what()};
         return Error{ErrorCode::CorruptData, "model.onnxruntime-error", ex.what()};
     } catch (const std::bad_alloc&) {
         return error(ErrorCode::BudgetExceeded, "model.runtime-allocation");
