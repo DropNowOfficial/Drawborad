@@ -4,7 +4,7 @@
 #include <fstream>
 using namespace drawborad;
 TEST("M06 queue defaults to review and enforces one heavy job"){ImageQueue q;std::array<std::filesystem::path,2> p{"a.png","b.png"};auto id=q.enqueue(p,{});CHECK(id);CHECK(q.startAnalysis(0));CHECK(!q.startAnalysis(1));CHECK(q.concurrentHeavyJobs()==1);CHECK(q.analysisComplete(0,true));CHECK(q.items()[0].state==QueueState::WaitingForReview);CHECK(q.startAnalysis(1));CHECK(q.concurrentHeavyJobs()==1);}
-TEST("M06 terminal queue item rejects duplicate finish"){ImageQueue q;std::array<std::filesystem::path,1> p{"a.png"};CHECK(q.enqueue(p,{}));CHECK(q.startAnalysis(0));CHECK(q.analysisComplete(0,false));CHECK(q.finish(0,true));CHECK(!q.finish(0,true));}
+TEST("M06 terminal queue item rejects duplicate finish"){ImageQueue q;std::array<std::filesystem::path,1> p{"a.png"};CHECK(q.enqueue(p,{}));CHECK(q.startAnalysis(0));CHECK(q.analysisComplete(0,false,Revision(7)));CHECK(q.finish(0,true,Revision(7)));CHECK(!q.finish(0,true,Revision(7)));}
 
 TEST("M06 queue survives restart without duplicate heavy work"){
     ImageQueue q;
@@ -89,4 +89,18 @@ TEST("M06 auto accepted reconstruction also binds result revision"){
     CHECK(!stale);
     CHECK(stale.error().code==ErrorCode::StaleRevision);
     CHECK(q.finish(0,true,Revision(77)));
+}
+
+TEST("M06 unbound reconstruction result cannot bypass revision proof"){
+    ImageQueue q;
+    std::array<std::filesystem::path,1> paths{"unbound.png"};
+    CHECK(q.enqueue(paths,{}));
+    CHECK(q.startAnalysis(0));
+    CHECK(q.analysisComplete(0,false));
+    CHECK(q.items()[0].state==QueueState::Reconstructing);
+    CHECK(q.items()[0].inputRevision==0);
+    auto result=q.finish(0,true);
+    CHECK(!result);
+    CHECK(result.error().code==ErrorCode::StaleRevision);
+    CHECK(q.items()[0].state==QueueState::Reconstructing);
 }
