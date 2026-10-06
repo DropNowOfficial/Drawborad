@@ -153,7 +153,7 @@ Result<TileData> decodeJpeg(std::span<const std::uint8_t>b,InputInfo& info){
     while(d.output_scanline<d.output_height){JSAMPROW row=out.bytes.data()+std::uint64_t(d.output_scanline)*out.rowStride;jpeg_read_scanlines(&d,&row,1);}
     std::vector<std::pair<int,Bytes>> parts;
     for(auto*m=d.marker_list;m;m=m->next)if(m->marker==JPEG_APP0+2&&m->data_length>=14&&std::memcmp(m->data,"ICC_PROFILE\0",12)==0){parts.push_back({m->data[12],Bytes(m->data+14,m->data+m->data_length)});}
-    if(!parts.empty()){std::sort(parts.begin(),parts.end());Bytes icc;for(auto&part:parts)icc.insert(icc.end(),part.second.begin(),part.second.end());info.icc=sha256(icc);out.profileId=info.icc;}
+    if(!parts.empty()){std::sort(parts.begin(),parts.end(),[](const auto& a,const auto& b){return a.first<b.first;});Bytes icc;for(auto&part:parts)icc.insert(icc.end(),part.second.begin(),part.second.end());info.icc=sha256(icc);out.profileId=info.icc;}
     jpeg_finish_decompress(&d);jpeg_destroy_decompress(&d);return out;
 }
 #ifdef _MSC_VER
