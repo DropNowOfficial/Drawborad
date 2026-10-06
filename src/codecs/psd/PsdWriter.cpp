@@ -1,6 +1,7 @@
 #include "PsdWriter.h"
 #include "storage/FileIO.h"
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 namespace drawborad {
@@ -20,6 +21,39 @@ void put32(Bytes& bytes, std::uint32_t value) {
 
 void put32s(Bytes& bytes, std::int32_t value) {
     put32(bytes, std::uint32_t(value));
+}
+
+void appendImageResource(Bytes& resources, std::uint16_t id,
+                         std::span<const std::uint8_t> data) {
+    resources.insert(resources.end(), {'8','B','I','M'});
+    put16(resources, id);
+    resources.push_back(0);
+    resources.push_back(0);
+    put32(resources, std::uint32_t(data.size()));
+    resources.insert(resources.end(), data.begin(), data.end());
+    if ((data.size() & 1u) != 0)
+        resources.push_back(0);
+}
+
+Result<Bytes> imageResources(const PsdWriteRequest& request) {
+    if (!std::isfinite(request.ppi) || request.ppi <= 0.0 || request.ppi > 100000.0)
+        return error(ErrorCode::InvalidInput, "psd.ppi");
+    Bytes resources;
+    Bytes resolution;
+    const auto fixed = std::uint32_t(std::llround(request.ppi * 65536.0));
+    put32(resolution, fixed);
+    put16(resolution, 1);
+    put16(resolution, 1);
+    put32(resolution, fixed);
+    put16(resolution, 1);
+    put16(resolution, 1);
+    appendImageResource(resources, 1005, resolution);
+    if (!request.iccProfile.empty()) {
+        if (request.iccProfile.size() > UINT32_MAX)
+            return error(ErrorCode::BudgetExceeded, "psd.icc-size");
+        appendImageResource(resources, 1039, request.iccProfile);
+    }
+    return resources;
 }
 
 Result<std::vector<std::uint16_t>> utf16Units(std::string_view text) {
@@ -114,7 +148,13 @@ Result<Bytes> encodePsd(const PsdWriteRequest& request) {
     put16(output, std::uint16_t(request.format.depth));
     put16(output, request.format.mode == ColorMode::RGB ? 3 : 4);
     put32(output, 0);
-    put32(output, 0);
+    auto resources = imageResources(request);
+    if (!resources)
+        return resources.error();
+    if (resources.value().size() > UINT32_MAX)
+        return error(ErrorCode::BudgetExceeded, "psd.image-resources-size");
+    put32(output, std::uint32_t(resources.value().size()));
+    output.insert(output.end(), resources.value().begin(), resources.value().end());
 
     Bytes records;
     put16(records, std::uint16_t(request.layers.size()));
