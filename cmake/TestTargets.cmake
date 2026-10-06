@@ -66,6 +66,19 @@ function(color_task id source)
 endfunction()
 color_task(C01 tests/color/ProfileTests.cpp)
 color_task(C02 tests/color/BlendOracleTests.cpp)
+if(DRAWBORAD_LCMS2_INCLUDE AND DRAWBORAD_LCMS2_LIBRARY)
+  add_executable(test_C02.LCMS
+    ${PROJECT_SOURCE_DIR}/tests/support/TestMain.cpp
+    ${PROJECT_SOURCE_DIR}/tests/color/LcmsProofTests.cpp)
+  target_include_directories(test_C02.LCMS PRIVATE
+    ${PROJECT_SOURCE_DIR}/src
+    ${PROJECT_SOURCE_DIR}/tests/support
+    ${PROJECT_SOURCE_DIR})
+  target_include_directories(test_C02.LCMS SYSTEM PRIVATE ${DRAWBORAD_LCMS2_INCLUDE})
+  target_link_libraries(test_C02.LCMS PRIVATE drawborad_color drawborad_render ${DRAWBORAD_LCMS2_LIBRARY})
+  add_test(NAME C02.LCMS COMMAND test_C02.LCMS)
+  set_tests_properties(C02.LCMS PROPERTIES TIMEOUT 60)
+endif()
 
 function(feature_task id source)
   add_executable(test_${id} ${PROJECT_SOURCE_DIR}/tests/support/TestMain.cpp ${PROJECT_SOURCE_DIR}/${source})
