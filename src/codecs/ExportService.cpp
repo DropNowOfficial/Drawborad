@@ -1,5 +1,8 @@
 #include "ExportService.h"
 #include "storage/FileIO.h"
+#include "codecs/AtomicExport.h"
+#include <atomic>
+#include <chrono>
 namespace drawborad {
 Result<ExportPlan> preflightExport(ColorMode mode,const ExportRequest&r){
     if(r.path.empty()||!r.size.width||!r.size.height)
@@ -19,12 +22,27 @@ Result<ExportPlan> preflightExport(ColorMode mode,const ExportRequest&r){
 }
 Result<ExportReport> writeRasterPlaceholder(const ExportPlan&p,std::span<const std::uint8_t> payload,std::stop_token st){
     if(st.stop_requested())return error(ErrorCode::Cancelled,"export.cancelled");
+    if(p.request.path.empty())return error(ErrorCode::InvalidInput,"export.path");
+    static std::atomic<std::uint64_t> serial{};
+    auto stagedPath=p.request.path;
+    stagedPath += std::string(".stage-") +
+                  std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+                  "-" + std::to_string(serial++);
+    struct Cleanup {
+        std::filesystem::path path;
+        ~Cleanup(){std::error_code ec;std::filesystem::remove(path,ec);}
+    } cleanup{stagedPath};
     NativeFileIO io;
-    auto w=atomicWrite(io,p.request.path,payload);
-    if(!w)return w.error();
+    auto written=io.write(stagedPath,payload,true);
+    if(!written)return written.error();
+    if(st.stop_requested())return error(ErrorCode::Cancelled,"export.cancelled");
+    StagedExport staged{stagedPath,sha256(payload)};
+    DestinationPolicy policy{p.request.path,p.request.overwrite,true};
+    auto committed=commitExport(io,staged,policy,2*GiB);
+    if(!committed)return committed.error();
     ExportReport r;
     r.paths.push_back(p.request.path);
-    r.hashes.push_back(sha256(payload));
+    r.hashes.push_back(staged.verifiedHash);
     r.dimensions=p.request.size;
     r.channels=p.request.alpha?4:3;
     if(p.requiresRgbConversion)r.warnings.push_back("explicit-rgb-conversion");
