@@ -1,4 +1,5 @@
 #include "ColorService.h"
+#include "core/Commands.h"
 #include <cstring>
 #ifdef DRAWBORAD_HAS_LCMS2
 #include <lcms2.h>
@@ -14,6 +15,24 @@ cmsUInt32Number pt(ColorMode m,Depth d){if(m==ColorMode::RGB)return d==Depth::U8
 #endif
 }
 Result<ColorSpec> ColorService::assign(const ColorSpec&c,ProfileId id)const{auto p=profiles_.get(id);if(!p)return p.error();if(p.value().colorSpace!=space(c.format.mode))return error(ErrorCode::InvalidProfile,"icc.channel-mismatch");auto o=c;o.profileId=id;return o;}
+Result<ChangeSet> ColorService::assign(Document& document,ProfileId id)const{
+ auto before=document.snapshot();
+ auto target=assign(before.spec.colorSpec,id);
+ if(!target)return target.error();
+ auto events=std::make_shared<EventList>(*before.eventIndex);
+ for(auto& event:*events)event.color.profileId=id;
+ std::map<NodeId,std::vector<Hash>> sameContent;
+ for(const auto& [nodeId,node]:*before.nodes)
+     if(!node.content.empty())sameContent.emplace(nodeId,node.content);
+ std::optional<ColorValue> paper;
+ if(!before.spec.background.transparent){
+     paper=before.spec.background.paperColor;
+     paper->profileId=id;
+ }
+ ConvertColor operation{target.value(),std::move(sameContent),
+                        std::make_shared<const EventList>(*events),paper};
+ return document.apply(Command{std::move(operation)},before.revision);
+}
 bool ColorService::hasNativeTransformBackend()const{
 #ifdef DRAWBORAD_HAS_LCMS2
 return true;
