@@ -46,7 +46,7 @@ Result<Handle> selectHandle(heif_context* ctx,std::uint32_t frame) {
     const int count=heif_context_get_number_of_top_level_images(ctx);
     if(count<=0) return error(ErrorCode::CorruptData,"heic.no-images");
     if(frame>=std::uint32_t(count)) return error(ErrorCode::InvalidInput,"heic.frame");
-    std::vector<heif_item_id> ids(std::size_t(count));
+    std::vector<heif_item_id> ids;\n    ids.resize(std::size_t(count));
     const int got=heif_context_get_list_of_top_level_image_IDs(ctx,ids.data(),count);
     if(got!=count) return error(ErrorCode::CorruptData,"heic.image-list");
     Handle h;
