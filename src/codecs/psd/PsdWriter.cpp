@@ -129,11 +129,24 @@ Result<Bytes> encodePsd(const PsdWriteRequest& request) {
         if (layer.pixels.rowStride < expectedRow)
             return error(ErrorCode::CorruptData, "psd.layer-stride");
 
+        const bool hasMask = !layer.mask.empty();
+        if (hasMask) {
+            if (!layer.maskBounds.width || !layer.maskBounds.height ||
+                layer.maskBounds.x < 0 || layer.maskBounds.y < 0 ||
+                std::uint64_t(layer.maskBounds.x) + layer.maskBounds.width > request.size.width ||
+                std::uint64_t(layer.maskBounds.y) + layer.maskBounds.height > request.size.height)
+                return error(ErrorCode::InvalidInput, "psd.mask-bounds");
+            auto maskPixels = checkedMultiply(layer.maskBounds.width, layer.maskBounds.height);
+            if (!maskPixels || maskPixels.value() != layer.mask.size())
+                return error(ErrorCode::InvalidInput, "psd.mask-layout");
+        }
+
         put32s(records, 0);
         put32s(records, 0);
         put32(records, std::uint32_t(request.size.height));
         put32(records, std::uint32_t(request.size.width));
-        put16(records, std::uint16_t(channelCount));
+        const auto layerChannelCount = channelCount + (hasMask ? 1u : 0u);
+        put16(records, std::uint16_t(layerChannelCount));
 
         const auto pixelCount = checkedMultiply(request.size.width, request.size.height);
         if (!pixelCount)
@@ -148,6 +161,19 @@ Result<Bytes> encodePsd(const PsdWriteRequest& request) {
         for (unsigned channel = 0; channel < channelCount; ++channel) {
             put16(records, channel < baseChannels ? std::uint16_t(channel) : std::uint16_t(0xffff));
             put32(records, std::uint32_t(channelBytes.value()));
+        }
+        if (hasMask) {
+            auto maskPixels = checkedMultiply(layer.maskBounds.width, layer.maskBounds.height);
+            if (!maskPixels)
+                return maskPixels.error();
+            auto maskPayload = checkedMultiply(maskPixels.value(), sampleBytes);
+            if (!maskPayload)
+                return maskPayload.error();
+            auto maskBytes = checkedAdd(maskPayload.value(), 2);
+            if (!maskBytes || maskBytes.value() > UINT32_MAX)
+                return error(ErrorCode::BudgetExceeded, "psd.mask-channel-size");
+            put16(records, std::uint16_t(0xfffe));
+            put32(records, std::uint32_t(maskBytes.value()));
         }
 
         records.insert(records.end(), {'8', 'B', 'I', 'M'});
@@ -166,7 +192,19 @@ Result<Bytes> encodePsd(const PsdWriteRequest& request) {
         records.push_back(0);
 
         Bytes extra;
-        put32(extra, 0);
+        if (hasMask) {
+            put32(extra, 20);
+            put32s(extra, std::int32_t(layer.maskBounds.y));
+            put32s(extra, std::int32_t(layer.maskBounds.x));
+            put32s(extra, std::int32_t(layer.maskBounds.y + std::int64_t(layer.maskBounds.height)));
+            put32s(extra, std::int32_t(layer.maskBounds.x + std::int64_t(layer.maskBounds.width)));
+            extra.push_back(layer.maskDefault);
+            extra.push_back(0);
+            extra.push_back(0);
+            extra.push_back(0);
+        } else {
+            put32(extra, 0);
+        }
         put32(extra, 0);
         const auto fallbackLength = std::min<std::size_t>(255, layer.name.size());
         extra.push_back(std::uint8_t(fallbackLength));
@@ -198,6 +236,17 @@ Result<Bytes> encodePsd(const PsdWriteRequest& request) {
                                        layer.pixels.bytes.begin() + std::ptrdiff_t(offset),
                                        layer.pixels.bytes.begin() +
                                            std::ptrdiff_t(offset + sampleBytes));
+                }
+            }
+        }
+        if (!layer.mask.empty()) {
+            put16(channelData, 0);
+            for (auto value : layer.mask) {
+                if (sampleBytes == 1) {
+                    channelData.push_back(value);
+                } else {
+                    channelData.push_back(value);
+                    channelData.push_back(value);
                 }
             }
         }
