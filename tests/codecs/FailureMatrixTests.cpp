@@ -109,3 +109,48 @@ TEST("C07 destination appearing during verification is never overwritten without
     CHECK(actual==io.intruder);
     std::filesystem::remove_all(root);
 }
+
+namespace {
+class NativeDestinationAppearsIO final : public NativeFileIO {
+  public:
+    ProjectPath destinationPath;
+    Bytes intruder{41,42,43,44};
+    mutable bool injected{};
+
+    Result<Bytes> read(const ProjectPath& p, std::uint64_t maxBytes) const override {
+        auto bytes=NativeFileIO::read(p,maxBytes);
+        if(!bytes) return bytes.error();
+        if(!injected){
+            NativeFileIO writer;
+            auto written=writer.write(destinationPath,intruder,true);
+            if(!written) return written.error();
+            injected=true;
+        }
+        return bytes.value();
+    }
+};
+}
+
+TEST("C07 native no-clobber publish rejects destination created after precheck") {
+    auto root=std::filesystem::temp_directory_path()/"drawborad-c07-native-race";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    auto stagedPath=root/"output.tmp";
+    auto destinationPath=root/"output.psd";
+    Bytes stagedBytes{1,3,5,7,9};
+    NativeFileIO setup;
+    CHECK(setup.write(stagedPath,stagedBytes,true));
+    CHECK(setup.flush(stagedPath));
+
+    NativeDestinationAppearsIO io;
+    io.destinationPath=destinationPath;
+    StagedExport staged{stagedPath,sha256(stagedBytes)};
+    DestinationPolicy policy{destinationPath,false,true};
+    auto result=commitExport(io,staged,policy,1024);
+    CHECK(!result);
+    CHECK(std::filesystem::exists(stagedPath));
+    auto actual=setup.read(destinationPath,1024);
+    CHECK(actual);
+    CHECK(actual.value()==io.intruder);
+    std::filesystem::remove_all(root);
+}
