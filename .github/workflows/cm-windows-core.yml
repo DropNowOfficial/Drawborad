@@ -21,6 +21,9 @@ on:
       - tests/stress/**
       - .github/workflows/cm-windows-core.yml
   workflow_dispatch:
+concurrency:
+  group: cm-windows-core-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
