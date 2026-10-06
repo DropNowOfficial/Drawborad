@@ -107,6 +107,9 @@ jobs:
         shell: bash
         run: |
           export LD_LIBRARY_PATH="$PWD/onnxruntime-linux-x64-1.23.2/lib:${LD_LIBRARY_PATH:-}"
+          export DRAWBORAD_TEST_ONNX_MODEL="$PWD/identity.onnx"
+          export DRAWBORAD_TEST_SAM_ENCODER="$PWD/sam-encoder.onnx"
+          export DRAWBORAD_TEST_SAM_DECODER="$PWD/sam-decoder.onnx"
           set +e
           ctest --test-dir out/build/lab-debug -R '^M02\.(Runtime|SamRuntime)$' --output-on-failure
           status=$?
