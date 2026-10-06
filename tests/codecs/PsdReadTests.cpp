@@ -211,3 +211,50 @@ TEST("C04 CMYK16 PSD file polarity decodes to native ink coverage"){
     CHECK(decoded.value().composite->bytes==
           Bytes({0x00,0x00, 0x00,0x40, 0x00,0x80, 0xff,0xff}));
 }
+
+namespace {
+Bytes psdWithUnsupportedLayerTag(const char key[5]){
+    Bytes records;
+    p16(records,1);
+    p32(records,0);p32(records,0);p32(records,1);p32(records,1);
+    p16(records,0);
+    records.insert(records.end(),{'8','B','I','M','n','o','r','m'});
+    records.push_back(255);records.push_back(0);records.push_back(0);records.push_back(0);
+    Bytes extra;
+    p32(extra,0);
+    p32(extra,0);
+    extra.push_back(1);extra.push_back('L');extra.push_back(0);extra.push_back(0);
+    extra.insert(extra.end(),{'8','B','I','M'});
+    extra.insert(extra.end(),key,key+4);
+    p32(extra,0);
+    p32(records,std::uint32_t(extra.size()));
+    records.insert(records.end(),extra.begin(),extra.end());
+    Bytes layerInfo=records;
+    if(layerInfo.size()%2)layerInfo.push_back(0);
+    Bytes layerMask;
+    p32(layerMask,std::uint32_t(layerInfo.size()));
+    layerMask.insert(layerMask.end(),layerInfo.begin(),layerInfo.end());
+    p32(layerMask,0);
+    Bytes b{'8','B','P','S'};
+    p16(b,1);b.insert(b.end(),6,0);p16(b,4);p32(b,1);p32(b,1);p16(b,8);p16(b,3);
+    p32(b,0);p32(b,0);p32(b,std::uint32_t(layerMask.size()));
+    b.insert(b.end(),layerMask.begin(),layerMask.end());
+    return b;
+}
+}
+
+TEST("C04 smart object layer data is rejected instead of silently claimed editable"){
+    CodecLimits limits;
+    auto result=readPhotoshopHeader(psdWithUnsupportedLayerTag("SoLE"),limits);
+    CHECK(!result);
+    CHECK(result.error().code==ErrorCode::UnsupportedFeature);
+    CHECK(result.error().messageKey=="psd.unsupported-layer-feature");
+}
+
+TEST("C04 text layer data is rejected instead of silently claimed editable"){
+    CodecLimits limits;
+    auto result=readPhotoshopHeader(psdWithUnsupportedLayerTag("TySh"),limits);
+    CHECK(!result);
+    CHECK(result.error().code==ErrorCode::UnsupportedFeature);
+    CHECK(result.error().messageKey=="psd.unsupported-layer-feature");
+}

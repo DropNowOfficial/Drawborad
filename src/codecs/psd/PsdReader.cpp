@@ -193,6 +193,15 @@ Result<void> readLayerExtra(std::span<const std::uint8_t> bytes, std::size_t beg
             if (!decoded)
                 return decoded.error();
             layer.name = std::move(decoded.value());
+        } else if (std::memcmp(key, "TySh", 4) == 0 ||
+                   std::memcmp(key, "SoLE", 4) == 0 ||
+                   std::memcmp(key, "SoLd", 4) == 0 ||
+                   std::memcmp(key, "PlLd", 4) == 0 ||
+                   std::memcmp(key, "lnk2", 4) == 0 ||
+                   std::memcmp(key, "lnkD", 4) == 0 ||
+                   std::memcmp(key, "lnk3", 4) == 0) {
+            return Error{ErrorCode::UnsupportedFeature, "psd.unsupported-layer-feature",
+                         std::string(reinterpret_cast<const char*>(key), 4)};
         } else if (std::memcmp(key, "lsct", 4) == 0 ||
                    std::memcmp(key, "lsdk", 4) == 0) {
             if (blockLength < 4)
