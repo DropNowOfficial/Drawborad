@@ -11,7 +11,7 @@ permissions:
 jobs:
   source-and-core:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,6 +28,21 @@ jobs:
         run: cmake --build --preset lab-debug
       - name: Run portable tests
         run: ctest --preset lab-debug --output-on-failure --output-junit test-results.xml
+      - name: Configure release stress
+        run: cmake --preset lab-release
+      - name: Build release stress
+        run: cmake --build --preset lab-release
+      - name: Run release stress
+        run: ctest --preset lab-release --output-on-failure --output-junit release-results.xml
+      - name: Configure sanitizer stress
+        run: cmake --preset lab-asan
+      - name: Build sanitizer stress
+        run: cmake --build --preset lab-asan
+      - name: Run sanitizer stress
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1
+        run: ctest --preset lab-asan --output-on-failure --output-junit asan-results.xml
       - name: Retain source and test evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -36,4 +51,6 @@ jobs:
           path: |
             drawborad-source.zip
             out/build/lab-debug/test-results.xml
+            out/build/lab-release/release-results.xml
+            out/build/lab-asan/asan-results.xml
           retention-days: 7
