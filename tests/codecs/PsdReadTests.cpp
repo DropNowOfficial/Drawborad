@@ -20,6 +20,12 @@ Bytes compressedLayerPsd(std::uint16_t compression){
         {{120,156,147,179,1,0,0,122,0,91}},
         {{120,156,251,223,0,0,2,128,1,128}}
     }};
+    const std::array<std::array<std::uint8_t,10>,4> zipPrediction{{
+        {{120,156,227,146,3,0,0,52,0,41}},
+        {{120,156,19,145,3,0,0,72,0,51}},
+        {{120,156,147,147,3,0,0,92,0,61}},
+        {{120,156,251,223,8,0,2,129,1,129}}
+    }};
 
     Bytes records;
     p16(records,1);
@@ -46,8 +52,10 @@ Bytes compressedLayerPsd(std::uint16_t compression){
             channelData.push_back(1);
             channelData.push_back(planes[channel][0]);
             channelData.push_back(planes[channel][1]);
-        }else{
+        }else if(compression==2){
             channelData.insert(channelData.end(),zip[channel].begin(),zip[channel].end());
+        }else{
+            channelData.insert(channelData.end(),zipPrediction[channel].begin(),zipPrediction[channel].end());
         }
     }
 
@@ -85,6 +93,14 @@ TEST("C04 RLE channel planes decode to exact interleaved RGBA pixels"){
 TEST("C04 ZIP channel planes decode to exact interleaved RGBA pixels"){
     CodecLimits limits;
     auto decoded=decodePhotoshopLayers(compressedLayerPsd(2),ProfileId{},limits);
+    CHECK(decoded);
+    CHECK(decoded.value().layers.size()==1);
+    CHECK(decoded.value().layers[0].pixels.bytes==Bytes({10,20,30,255,40,50,60,128}));
+}
+
+TEST("C04 ZIP prediction channel planes decode to exact interleaved RGBA pixels"){
+    CodecLimits limits;
+    auto decoded=decodePhotoshopLayers(compressedLayerPsd(3),ProfileId{},limits);
     CHECK(decoded);
     CHECK(decoded.value().layers.size()==1);
     CHECK(decoded.value().layers[0].pixels.bytes==Bytes({10,20,30,255,40,50,60,128}));
