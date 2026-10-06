@@ -707,6 +707,8 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
     }
 
     reader.position = sectionEnd;
+    if (reader.position == bytes.size())
+        return decoded;
     if (reader.position + 2 > bytes.size())
         return error(ErrorCode::CorruptData, "psd.composite-compression");
     const auto compositeCompression = u16(bytes.data() + reader.position);
