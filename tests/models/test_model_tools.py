@@ -31,11 +31,15 @@ def run(*args):
 
 assert run(export, "--help").returncode == 0, "export_sam21.py --help must work without loading torch"
 
+is_hex = lambda value, length: (
+    isinstance(value, str)
+    and len(value) == length
+    and all(ch in "0123456789abcdefABCDEF" for ch in value)
+)
 for variant in ("tiny", "small"):
     committed = json.loads((root / "models" / "recipes" / f"sam21-{variant}.json").read_text(encoding="utf-8"))
     assert float(committed["minMaskIou"]) >= 0.995
     assert 0 < int(committed["maxPeakGpuBytes"]) <= 6 * 1024**3
-    assert is_hex := (lambda value, length: isinstance(value, str) and len(value) == length and all(ch in "0123456789abcdefABCDEF" for ch in value))
     assert is_hex(committed["sourceCommit"], 40)
     assert is_hex(committed["checkpointSha256"], 64)
     assert committed["qualification"] == "requires official-reference parity and target-machine report"
