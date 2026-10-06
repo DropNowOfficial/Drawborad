@@ -28,3 +28,18 @@ TEST("C05 Unicode layer name roundtrips through luni metadata"){
     CHECK(parsed.value().layers.size()==1);
     CHECK(parsed.value().layers[0].name==unicodeName);
 }
+
+TEST("C04 C05 raw layered PSD pixels roundtrip exactly"){
+    PsdWriteRequest q; q.size={2,1}; q.format={ColorMode::RGB,Depth::U8,true};
+    PsdLayerPixels l; l.name="Pixels";
+    l.pixels.width=2; l.pixels.height=1; l.pixels.format=q.format;
+    l.pixels.rowStride=8; l.pixels.bytes={10,20,30,255,40,50,60,128};
+    q.layers.push_back(l);
+    auto encoded=encodePsd(q); CHECK(encoded);
+    CodecLimits limits;
+    auto decoded=decodePhotoshopLayers(encoded.value(),ProfileId{},limits);
+    CHECK(decoded);
+    CHECK(decoded.value().layers.size()==1);
+    CHECK(decoded.value().layers[0].pixels.bytes==l.pixels.bytes);
+    CHECK(decoded.value().layers[0].pixels.format==q.format);
+}
