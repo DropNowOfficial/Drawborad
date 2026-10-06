@@ -215,6 +215,8 @@ Result<TileData> decodeTiff(std::span<const std::uint8_t>,InputInfo&,std::uint32
 #endif
 }
 
+Result<void> applyExifOrientation(TileData& tile,std::uint16_t orientation){return orient(tile,orientation);}
+
 Result<TileData> decodeRasterBytes(std::span<const std::uint8_t> bytes,InputInfo& info,const DecodeOptions& options){
     Result<TileData> decoded=error(ErrorCode::UnsupportedFeature,"codec.not-raster");
     switch(info.format){
@@ -227,7 +229,7 @@ Result<TileData> decodeRasterBytes(std::span<const std::uint8_t> bytes,InputInfo
     }
     if(!decoded)return decoded.error();
     if(info.icc.empty()&&!options.explicitProfile.empty()){info.icc=options.explicitProfile;decoded.value().profileId=options.explicitProfile;}
-    if(options.applyOrientation&&info.orientation!=1){auto ok=orient(decoded.value(),info.orientation);if(!ok)return ok.error();info.orientedSize={decoded.value().width,decoded.value().height};}else info.orientedSize={decoded.value().width,decoded.value().height};
+    if(options.applyOrientation&&info.orientation!=1){auto ok=applyExifOrientation(decoded.value(),info.orientation);if(!ok)return ok.error();info.orientedSize={decoded.value().width,decoded.value().height};}else info.orientedSize={decoded.value().width,decoded.value().height};
     auto bytesResult=checkedMultiply(decoded.value().rowStride,decoded.value().height);if(!bytesResult||bytesResult.value()>options.limits.decodedBytes)return error(ErrorCode::BudgetExceeded,"codec.decode-budget");
     return decoded;
 }

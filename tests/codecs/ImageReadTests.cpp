@@ -2,6 +2,7 @@
 #include "codecs/ImageReader.h"
 #include "codecs/HeicAdapter.h"
 #include "codecs/RasterWriters.h"
+#include "codecs/RasterReaders.h"
 #include <filesystem>
 #include <fstream>
 using namespace drawborad;
@@ -128,5 +129,37 @@ TEST("C03 HEIC detection is local and missing codec never pretends success"){
         auto inspected=inspectHeic(heic,options.limits);
         CHECK(!inspected);
         CHECK(inspected.error().code==ErrorCode::CorruptData);
+    }
+}
+
+
+TEST("C03 EXIF orientations one through eight map pixels deterministically"){
+    auto make=[](){
+        TileData p;
+        p.width=2; p.height=3; p.format={ColorMode::RGB,Depth::U8,false}; p.rowStride=6;
+        p.bytes={10,0,0, 20,0,0,
+                 30,0,0, 40,0,0,
+                 50,0,0, 60,0,0};
+        return p;
+    };
+    const std::array<std::vector<std::uint8_t>,8> expected{{
+        {10,20,30,40,50,60},
+        {20,10,40,30,60,50},
+        {60,50,40,30,20,10},
+        {50,60,30,40,10,20},
+        {10,30,50,20,40,60},
+        {50,30,10,60,40,20},
+        {60,40,20,50,30,10},
+        {20,40,60,10,30,50}
+    }};
+    for(std::uint16_t orientation=1;orientation<=8;++orientation){
+        auto pixels=make();
+        auto result=applyExifOrientation(pixels,orientation);
+        CHECK(result);
+        CHECK(pixels.width==(orientation>=5?3u:2u));
+        CHECK(pixels.height==(orientation>=5?2u:3u));
+        std::vector<std::uint8_t> red;
+        for(std::size_t i=0;i<pixels.bytes.size();i+=3)red.push_back(pixels.bytes[i]);
+        CHECK(red==expected[orientation-1]);
     }
 }

@@ -210,3 +210,26 @@ TEST("C06 ExportService routes a real PNG through atomic publication"){
     CHECK(signature==std::array<unsigned char,8>{0x89,'P','N','G',13,10,26,10});
     std::filesystem::remove(path);
 }
+
+
+TEST("C06 CMYKA16 TIFF roundtrip preserves five native channels"){
+    TileData pixels;
+    pixels.width=1; pixels.height=1;
+    pixels.format={ColorMode::CMYK,Depth::U16,true};
+    pixels.rowStride=10;
+    pixels.bytes={0x34,0x12, 0x78,0x56, 0xbc,0x9a, 0xff,0xde, 0x11,0x80};
+    RasterEncodingOptions options;
+    auto encoded=encodeRaster(ExportFormat::Tiff,pixels,options);
+    CHECK(encoded);
+    auto path=std::filesystem::temp_directory_path()/"drawborad-c06-cmyka16.tif";
+    {std::ofstream out(path,std::ios::binary);out.write(reinterpret_cast<const char*>(encoded.value().data()),std::streamsize(encoded.value().size()));}
+    DecodeOptions decode;
+    decode.limits.encodedBytes=1024*1024;
+    decode.limits.decodedBytes=1024*1024;
+    auto image=decodeImage(path,decode);
+    CHECK(image);
+    CHECK(image.value().decodedPixels);
+    CHECK(image.value().decodedPixels->format==PixelFormat{ColorMode::CMYK,Depth::U16,true});
+    CHECK(image.value().decodedPixels->bytes==pixels.bytes);
+    std::filesystem::remove(path);
+}
