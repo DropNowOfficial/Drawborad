@@ -42,7 +42,7 @@ jobs:
           .\vcpkg\vcpkg.exe install lcms libpng libjpeg-turbo 'tiff[core,jpeg,lzma,zip]' 'libwebp[core]' zlib --triplet x64-windows --x-install-root="$PWD\vcpkg-installed"
           if ($LASTEXITCODE) { throw 'vcpkg dependency build failed' }
           Invoke-WebRequest https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-win-x64-1.23.2.zip -OutFile ort.zip
-          $expected='6090b908901162b1e001878d7fbecba24b9ba71ddad6abf6498e150ee9b0f90'
+          $expected='0b38df9af21834e41e73d602d90db5cb06dbd1ca618948b8f1d66d607ac9f3cd'
           $actual=(Get-FileHash ort.zip -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($actual -ne $expected) { throw "ORT digest mismatch: $actual" }
           Expand-Archive ort.zip ort
