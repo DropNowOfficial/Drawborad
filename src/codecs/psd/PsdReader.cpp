@@ -371,6 +371,32 @@ Result<void> undoZipPrediction8(Bytes& plane, std::uint64_t width, std::uint64_t
     return {};
 }
 
+Result<void> undoZipPrediction16(Bytes& plane, std::uint64_t width, std::uint64_t height) {
+    auto samples = checkedMultiply(width, height);
+    if (!samples)
+        return samples.error();
+    auto expected = checkedMultiply(samples.value(), 2);
+    if (!expected)
+        return expected.error();
+    if (expected.value() != plane.size())
+        return error(ErrorCode::CorruptData, "psd.zip-predict-size");
+    for (std::uint64_t y = 0; y < height; ++y) {
+        const auto row = y * width;
+        for (std::uint64_t x = 1; x < width; ++x) {
+            const auto previous = std::size_t((row + x - 1) * 2);
+            const auto current = std::size_t((row + x) * 2);
+            const auto prevValue = std::uint16_t((std::uint16_t(plane[previous]) << 8) |
+                                                 plane[previous + 1]);
+            const auto delta = std::uint16_t((std::uint16_t(plane[current]) << 8) |
+                                             plane[current + 1]);
+            const auto value = std::uint16_t(prevValue + delta);
+            plane[current] = std::uint8_t(value >> 8);
+            plane[current + 1] = std::uint8_t(value);
+        }
+    }
+    return {};
+}
+
 Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, ProfileId profile,
                                         const CodecLimits& limits) {
     auto metadata = readPhotoshopHeader(bytes, limits);
@@ -546,10 +572,9 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
                     return zip.error();
                 decodedPlane = std::move(zip.value());
                 if (compression == 3) {
-                    if (sampleBytes != 1)
-                        return error(ErrorCode::UnsupportedFeature,
-                                     "psd.zip-predict-depth");
-                    auto prediction = undoZipPrediction8(decodedPlane, width, height);
+                    Result<void> prediction = sampleBytes == 1
+                                                  ? undoZipPrediction8(decodedPlane, width, height)
+                                                  : undoZipPrediction16(decodedPlane, width, height);
                     if (!prediction)
                         return prediction.error();
                 }
