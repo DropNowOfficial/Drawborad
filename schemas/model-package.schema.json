@@ -1,1 +1,75 @@
-{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","required":["schema","taskId","weights","sha256","license"],"properties":{"schema":{"const":1},"taskId":{"const":"sam21.image.v1"},"weights":{"type":"string"},"sha256":{"type":"string","pattern":"^[0-9a-fA-F]{64}$"},"provider":{"enum":["cpu","cuda"]},"abi":{"type":"string"},"license":{"type":"string"},"signature":{"type":"string"}},"additionalProperties":true}
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "schema",
+    "taskId",
+    "weights",
+    "sha256",
+    "license"
+  ],
+  "properties": {
+    "schema": {
+      "const": 1
+    },
+    "taskId": {
+      "const": "sam21.image.v1"
+    },
+    "weights": {
+      "type": "string"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "provider": {
+      "enum": [
+        "cpu",
+        "cuda"
+      ]
+    },
+    "abi": {
+      "type": "string"
+    },
+    "license": {
+      "type": "string"
+    },
+    "signature": {
+      "type": "string"
+    },
+    "decoderWeights": {
+      "type": "string"
+    },
+    "decoderSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    }
+  },
+  "additionalProperties": true,
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "decoderWeights"
+        ]
+      },
+      "then": {
+        "required": [
+          "decoderSha256"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "decoderSha256"
+        ]
+      },
+      "then": {
+        "required": [
+          "decoderWeights"
+        ]
+      }
+    }
+  ]
+}
