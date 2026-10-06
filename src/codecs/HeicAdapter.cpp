@@ -117,7 +117,7 @@ Result<InputInfo> inspectHeic(std::span<const std::uint8_t> bytes,const CodecLim
     if(profileSize>0 && profileSize<=32ull*1024*1024) {
         Bytes profile(profileSize);
         auto e=heif_image_handle_get_raw_color_profile(h.value,profile.data());
-        if(e.code==heif_error_Ok) info.icc=sha256(profile);
+        if(e.code==heif_error_Ok){info.iccProfile=profile;info.icc=sha256(info.iccProfile);}
     }
     return info;
 #endif
