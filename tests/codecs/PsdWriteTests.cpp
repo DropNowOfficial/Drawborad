@@ -1,5 +1,8 @@
 #include "Test.h"
 #include "codecs/psd/PsdWriter.h"
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 using namespace drawborad;
 TEST("C05 layered PSD writer emits layer records readable by independent header parser"){PsdWriteRequest q;q.size={2,2};q.format={ColorMode::RGB,Depth::U8,true};PsdLayerPixels l;l.name="Layer";l.pixels.width=2;l.pixels.height=2;l.pixels.format=q.format;l.pixels.rowStride=8;l.pixels.bytes.assign(16,255);q.layers.push_back(l);auto b=encodePsd(q);CHECK(b);CodecLimits lim;auto r=readPhotoshopHeader(b.value(),lim);CHECK(r);CHECK(r.value().layers.size()==1);CHECK(r.value().size==q.size);}
 TEST("C05 refuses PSD dimensions above format limit"){PsdWriteRequest q;q.size={30001,1};q.format={ColorMode::RGB,Depth::U8,true};CHECK(!encodePsd(q));}
@@ -240,4 +243,19 @@ TEST("C05 rejects PSD estimated above two GiB before pixel traversal"){
     CHECK(!encoded);
     CHECK(encoded.error().code==ErrorCode::BudgetExceeded);
     CHECK(encoded.error().messageKey=="psd.output-size-limit");
+}
+
+TEST("C05 writePsd never replaces an existing file without overwrite consent"){
+    auto path=std::filesystem::temp_directory_path()/"drawborad-c05-no-clobber.psd";
+    const Bytes old{9,8,7,6};
+    {std::ofstream out(path,std::ios::binary|std::ios::trunc);out.write(reinterpret_cast<const char*>(old.data()),std::streamsize(old.size()));}
+    PsdWriteRequest q;
+    q.path=path;q.size={1,1};q.format={ColorMode::RGB,Depth::U8,true};q.overwrite=false;
+    PsdLayerPixels l;l.name="Layer";l.pixels.width=1;l.pixels.height=1;l.pixels.format=q.format;l.pixels.rowStride=4;l.pixels.bytes={10,20,30,255};
+    q.layers.push_back(l);q.merged=l.pixels;
+    auto result=writePsd(q);
+    CHECK(!result);
+    std::ifstream in(path,std::ios::binary);Bytes actual((std::istreambuf_iterator<char>(in)),{});in.close();
+    CHECK(actual==old);
+    std::filesystem::remove(path);
 }

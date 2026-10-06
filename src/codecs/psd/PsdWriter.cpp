@@ -1,5 +1,8 @@
 #include "PsdWriter.h"
 #include "storage/FileIO.h"
+#include "codecs/AtomicExport.h"
+#include <atomic>
+#include <chrono>
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -417,11 +420,31 @@ Result<Bytes> encodePsd(const PsdWriteRequest& request) {
 Result<void> writePsd(const PsdWriteRequest& request, std::stop_token stop) {
     if (stop.stop_requested())
         return error(ErrorCode::Cancelled, "psd.cancelled");
+    if (request.path.empty())
+        return error(ErrorCode::InvalidInput, "psd.output-path");
     auto encoded = encodePsd(request);
     if (!encoded)
         return encoded.error();
+    if (stop.stop_requested())
+        return error(ErrorCode::Cancelled, "psd.cancelled");
+
+    static std::atomic<std::uint64_t> serial{};
+    auto stagedPath=request.path;
+    stagedPath += std::string(".stage-") +
+                  std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+                  "-" + std::to_string(serial++);
+    struct Cleanup {
+        std::filesystem::path path;
+        ~Cleanup(){std::error_code ec;std::filesystem::remove(path,ec);}
+    } cleanup{stagedPath};
+
     NativeFileIO io;
-    return atomicWrite(io, request.path, encoded.value());
+    auto written=io.write(stagedPath,encoded.value(),true);
+    if(!written)return written.error();
+    if(stop.stop_requested())return error(ErrorCode::Cancelled,"psd.cancelled");
+    StagedExport staged{stagedPath,sha256(encoded.value())};
+    DestinationPolicy policy{request.path,request.overwrite,true};
+    return commitExport(io,staged,policy,2*GiB);
 }
 
 } // namespace drawborad
