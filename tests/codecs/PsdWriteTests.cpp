@@ -70,3 +70,25 @@ TEST("C04 C05 user layer mask roundtrips as channel minus two"){
     CHECK(decoded.value().layers[0].info.maskBounds==l.maskBounds);
     CHECK(decoded.value().layers[0].info.maskDefault==255);
 }
+
+
+TEST("C04 C05 U16 layered PSD samples roundtrip byte-exact"){
+    PsdWriteRequest q;
+    q.size={1,1};
+    q.format={ColorMode::RGB,Depth::U16,true};
+    PsdLayerPixels l;
+    l.name="U16";
+    l.pixels.width=1;
+    l.pixels.height=1;
+    l.pixels.format=q.format;
+    l.pixels.rowStride=8;
+    l.pixels.bytes={0x34,0x12, 0x78,0x56, 0xbc,0x9a, 0xfe,0xff};
+    q.layers.push_back(l);
+    auto encoded=encodePsd(q);
+    CHECK(encoded);
+    CodecLimits limits;
+    auto decoded=decodePhotoshopLayers(encoded.value(),ProfileId{},limits);
+    CHECK(decoded);
+    CHECK(decoded.value().layers.size()==1);
+    CHECK(decoded.value().layers[0].pixels.bytes==l.pixels.bytes);
+}
