@@ -1,6 +1,7 @@
 #pragma once
 #include "models/AdapterRegistry.h"
 #include "core/Document.h"
+#include <functional>
 namespace drawborad {
 struct AnalysisView { std::vector<TileData> rgbTiles; LayerTransform sourceTransform; std::vector<Bytes> sourceAlpha; Hash iccTransformHash{}; };
 struct PromptPoint { double x{},y{}; bool positive{true}; };
@@ -18,6 +19,15 @@ struct ProposalSet {
 };
 struct MaskSet { PixelSize dimensions{}; std::vector<Bytes> fullResolutionMasks; Bytes unassigned; };
 struct ProjectionPolicy { PixelSize targetSize{}; bool preserveAlpha{true}; };
-class ProposalEngine { public: Result<ProposalSet> propose(const AnalysisRequest&,std::stop_token={}) const; };
+using InferenceRunner = std::function<Result<InferenceOutput>(
+    const ModelManifest&, const InferenceRequest&, std::stop_token)>;
+class ProposalEngine {
+    InferenceRunner runner_;
+    bool forceRuntime_{};
+  public:
+    ProposalEngine();
+    explicit ProposalEngine(InferenceRunner);
+    Result<ProposalSet> propose(const AnalysisRequest&,std::stop_token={}) const;
+};
 Result<MaskSet> projectMasks(const ProposalSet&,const ProjectionPolicy&);
 }
