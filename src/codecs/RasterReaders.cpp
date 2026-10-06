@@ -79,7 +79,7 @@ std::uint16_t jpegOrientation(std::span<const std::uint8_t> b){
             const bool little=t[0]=='I'&&t[1]=='I';const bool big=t[0]=='M'&&t[1]=='M';if(!little&&!big)break;
             auto u16=[&](const std::uint8_t*q){return little?le16(q):be16(q);};
             auto u32=[&](const std::uint8_t*q){return little?le32(q):be32(q);};
-            const auto off=u32(t+4);if(off>remain-2)break;const auto count=u16(t+off);auto at=std::size_t(off)+2;
+            const auto off=u32(t+4);if(std::uint64_t(off)>std::uint64_t(remain)-2)break;const auto count=u16(t+off);auto at=std::size_t(off)+2;
             if(std::uint64_t(count)*12>remain-at)break;
             for(std::uint16_t i=0;i<count;i++,at+=12){
                 if(u16(t+at)==0x0112&&u16(t+at+2)==3&&u32(t+at+4)==1){
@@ -164,9 +164,9 @@ Result<TileData> decodeWebp(std::span<const std::uint8_t>,InputInfo&){return err
 Result<TileData> decodeBmp(std::span<const std::uint8_t>b,InputInfo& info){
     if(b.size()<54||b[0]!='B'||b[1]!='M')return error(ErrorCode::CorruptData,"bmp.header");
     auto offset=le32(b.data()+10),dib=le32(b.data()+14);if(dib<40||offset>b.size())return error(ErrorCode::UnsupportedFeature,"bmp.dib");
-    auto wi=std::int32_t(le32(b.data()+18)),hi=std::int32_t(le32(b.data()+22));auto bits=le16(b.data()+28),compression=le32(b.data()+30);
+    const auto wi=std::int32_t(le32(b.data()+18));const auto hi=std::int32_t(le32(b.data()+22));const auto bits=le16(b.data()+28);const auto compression=le32(b.data()+30);
     if(wi<=0||hi==0||compression!=0||(bits!=24&&bits!=32))return error(ErrorCode::UnsupportedFeature,"bmp.layout");
-    auto w=std::uint32_t(wi),h=std::uint32_t(hi<0?-std::int64_t(hi):hi),srcRow=((std::uint64_t(w)*bits+31)/32)*4;
+    const auto w=std::uint32_t(wi);const auto h=std::uint32_t(hi<0?-std::int64_t(hi):hi);const auto srcRow=((std::uint64_t(w)*bits+31)/32)*4;
     auto need=checkedMultiply(srcRow,h);if(!need||offset+need.value()>b.size())return error(ErrorCode::CorruptData,"bmp.bounds");
     TileData out;out.width=w;out.height=h;out.format={ColorMode::RGB,Depth::U8,bits==32};auto channels=bits==32?4u:3u;out.rowStride=std::uint64_t(w)*channels;out.bytes.resize(std::size_t(out.rowStride)*h);
     for(std::uint32_t y=0;y<h;y++){auto sy=hi>0?h-1-y:y;auto*src=b.data()+offset+std::uint64_t(sy)*srcRow;auto*dst=out.bytes.data()+std::uint64_t(y)*out.rowStride;for(std::uint32_t x=0;x<w;x++){dst[x*channels]=src[x*(bits/8)+2];dst[x*channels+1]=src[x*(bits/8)+1];dst[x*channels+2]=src[x*(bits/8)];if(bits==32)dst[x*channels+3]=src[x*4+3];}}
