@@ -556,16 +556,27 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
         tile.profileId = profile;
         tile.bytes.assign(std::size_t(byteCount.value()), 0);
 
+        Bytes userMask;
         for (const auto& channel : record.channels) {
             if (channel.length > layerInfoEnd - reader.position)
                 return error(ErrorCode::CorruptData, "psd.decode-channel-bounds");
             const auto channelEnd = reader.position + std::size_t(channel.length);
+            if (reader.position + 2 > channelEnd)
+                return error(ErrorCode::CorruptData, "psd.decode-channel-compression");
             const auto compression = u16(bytes.data() + reader.position);
             reader.position += 2;
+            const bool maskChannel = channel.id == -2;
             const int destination = channel.id >= 0 && channel.id < int(baseChannels)
                                         ? int(channel.id)
                                         : channel.id == -1 ? int(baseChannels) : -1;
-            auto planeBytes = checkedMultiply(pixels.value(), sampleBytes);
+            const auto channelWidth = maskChannel ? record.info.maskBounds.width : width;
+            const auto channelHeight = maskChannel ? record.info.maskBounds.height : height;
+            if (maskChannel && (!record.info.hasUserMask || !channelWidth || !channelHeight))
+                return error(ErrorCode::CorruptData, "psd.decode-mask-metadata");
+            auto channelPixels = checkedMultiply(channelWidth, channelHeight);
+            if (!channelPixels)
+                return channelPixels.error();
+            auto planeBytes = checkedMultiply(channelPixels.value(), sampleBytes);
             if (!planeBytes)
                 return planeBytes.error();
 
@@ -578,7 +589,7 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
             } else if (compression == 1) {
                 auto rle = decodePackBitsPlane(
                     bytes.subspan(reader.position, channelEnd - reader.position),
-                    std::uint32_t(height), width * sampleBytes,
+                    std::uint32_t(channelHeight), channelWidth * sampleBytes,
                     version == 2, limits.decodedBytes);
                 if (!rle)
                     return rle.error();
@@ -592,9 +603,10 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
                     return zip.error();
                 decodedPlane = std::move(zip.value());
                 if (compression == 3) {
-                    Result<void> prediction = sampleBytes == 1
-                                                  ? undoZipPrediction8(decodedPlane, width, height)
-                                                  : undoZipPrediction16(decodedPlane, width, height);
+                    Result<void> prediction =
+                        sampleBytes == 1
+                            ? undoZipPrediction8(decodedPlane, channelWidth, channelHeight)
+                            : undoZipPrediction16(decodedPlane, channelWidth, channelHeight);
                     if (!prediction)
                         return prediction.error();
                 }
@@ -604,7 +616,14 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
                 return error(ErrorCode::UnsupportedFeature, "psd.decode-compression");
             }
 
-            if (destination >= 0) {
+            if (maskChannel) {
+                userMask.resize(std::size_t(channelPixels.value()));
+                for (std::uint64_t pixel = 0; pixel < channelPixels.value(); ++pixel) {
+                    const auto src = std::size_t(pixel * sampleBytes);
+                    userMask[std::size_t(pixel)] =
+                        sampleBytes == 1 ? plane[src] : plane[src];
+                }
+            } else if (destination >= 0) {
                 for (std::uint64_t pixel = 0; pixel < pixels.value(); ++pixel) {
                     const auto src = std::size_t(pixel * sampleBytes);
                     const auto dst = std::size_t(pixel * outputChannels * sampleBytes +
@@ -619,7 +638,7 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
             }
             reader.position = channelEnd;
         }
-        decoded.layers.push_back({record.info, std::move(tile)});
+        decoded.layers.push_back({record.info, std::move(tile), std::move(userMask)});
     }
     return decoded;
 }
