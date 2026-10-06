@@ -146,6 +146,14 @@ Result<void> readLayerExtra(std::span<const std::uint8_t> bytes, std::size_t beg
             if (!decoded)
                 return decoded.error();
             layer.name = std::move(decoded.value());
+        } else if (std::memcmp(key, "lsct", 4) == 0 ||
+                   std::memcmp(key, "lsdk", 4) == 0) {
+            if (blockLength < 4)
+                return error(ErrorCode::CorruptData, "psd.section-divider-length");
+            const auto type = u32(bytes.data() + at);
+            if (type > 3)
+                return error(ErrorCode::UnsupportedFeature, "psd.section-divider-type");
+            layer.sectionType = type;
         }
         at += std::size_t(blockLength);
         if ((blockLength & 1u) != 0) {
