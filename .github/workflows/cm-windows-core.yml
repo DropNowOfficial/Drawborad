@@ -19,6 +19,9 @@ on:
       - tests/review/**
       - tests/jobs/QueueTests.cpp
       - tests/stress/**
+      - models/recipes/**
+      - tools/models/**
+      - schemas/model-package.schema.json
       - .github/workflows/cm-windows-core.yml
   workflow_dispatch:
 concurrency:
