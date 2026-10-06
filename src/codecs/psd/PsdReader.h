@@ -9,6 +9,7 @@ struct PhotoshopLayerInfo {
     std::uint16_t channels{};
     std::uint8_t opacity{};
     BlendMode blend{BlendMode::Normal};
+    std::string name;
 };
 
 struct PhotoshopInfo {
