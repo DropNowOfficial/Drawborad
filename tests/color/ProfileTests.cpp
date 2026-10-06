@@ -43,7 +43,9 @@ TEST("C01 ICC conversion accepts documents without alpha"){
 TEST("C01 assigning a document profile changes interpretation without pixel resource bytes") {
     ProfileStore profiles;
     auto source=profiles.import(icc("RGB "));
-    auto target=profiles.import(icc("RGB "));
+    auto targetBytes=icc("RGB ");
+    targetBytes[64]=1;
+    auto target=profiles.import(targetBytes);
     CHECK(source);
     CHECK(target);
 
