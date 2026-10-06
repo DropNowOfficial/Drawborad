@@ -58,3 +58,19 @@ TEST("M06 stopOnFailure pauses later heavy work until explicit resume"){
     CHECK(q.startAnalysis(1));
     CHECK(q.concurrentHeavyJobs()==1);
 }
+
+TEST("M06 stale reconstruction result cannot commit over reviewed revision"){
+    ImageQueue q;
+    std::array<std::filesystem::path,1> paths{"revision.png"};
+    CHECK(q.enqueue(paths,{}));
+    CHECK(q.startAnalysis(0));
+    CHECK(q.analysisComplete(0,true));
+    CHECK(q.acceptReview(0,42));
+    auto stale=q.finish(0,true,Revision(41));
+    CHECK(!stale);
+    CHECK(stale.error().code==ErrorCode::StaleRevision);
+    CHECK(q.items()[0].state==QueueState::Reconstructing);
+    CHECK(q.concurrentHeavyJobs()==1);
+    CHECK(q.finish(0,true,Revision(42)));
+    CHECK(q.items()[0].state==QueueState::Done);
+}
