@@ -22,6 +22,7 @@ struct PsdWriteRequest {
     Bytes iccProfile;
     double ppi{72.0};
     std::vector<PsdLayerPixels> layers;
+    std::optional<TileData> merged;
     bool overwrite{};
 };
 
