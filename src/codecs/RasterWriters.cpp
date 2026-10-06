@@ -1,5 +1,8 @@
 #include "RasterWriters.h"
 #include "storage/FileIO.h"
+#include "codecs/AtomicExport.h"
+#include <atomic>
+#include <chrono>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -298,8 +301,24 @@ Result<ExportReport> writeRaster(const ExportPlan& plan,const TileData& pixels,
         return error(ErrorCode::ConversionConsentRequired,"export.rgb-conversion-not-applied");
     auto encoded=encodeRaster(plan.request.format,pixels,options);if(!encoded)return encoded.error();
     if(stop.stop_requested())return error(ErrorCode::Cancelled,"export.cancelled");
-    NativeFileIO io;auto written=atomicWrite(io,plan.request.path,encoded.value());if(!written)return written.error();
-    ExportReport report;report.paths={plan.request.path};report.hashes={sha256(encoded.value())};report.dimensions=plan.request.size;
+    static std::atomic<std::uint64_t> serial{};
+    auto stagedPath=plan.request.path;
+    stagedPath += std::string(".stage-") +
+                  std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+                  "-" + std::to_string(serial++);
+    struct Cleanup {
+        std::filesystem::path path;
+        ~Cleanup(){std::error_code ec;std::filesystem::remove(path,ec);}
+    } cleanup{stagedPath};
+    NativeFileIO io;
+    auto written=io.write(stagedPath,encoded.value(),true);
+    if(!written)return written.error();
+    if(stop.stop_requested())return error(ErrorCode::Cancelled,"export.cancelled");
+    StagedExport staged{stagedPath,sha256(encoded.value())};
+    DestinationPolicy policy{plan.request.path,plan.request.overwrite,true};
+    auto committed=commitExport(io,staged,policy,2*GiB);
+    if(!committed)return committed.error();
+    ExportReport report;report.paths={plan.request.path};report.hashes={staged.verifiedHash};report.dimensions=plan.request.size;
     report.channels=colorChannels(pixels.format.mode)+(pixels.format.alpha?1u:0u);
     if(plan.requiresRgbConversion)report.warnings.push_back("explicit-rgb-conversion");
     return report;
