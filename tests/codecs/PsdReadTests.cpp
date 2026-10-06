@@ -179,6 +179,11 @@ Bytes rawCmykComposite(std::uint16_t depth,std::span<const std::uint8_t> planes)
     p16(b,4);
     p32(b,0);
     p32(b,0);
+    // Non-empty layer/mask section with a valid zero-layer layer-info block.
+    // This keeps the test focused on CMYK polarity instead of composite-only parsing.
+    p32(b,10);
+    p32(b,2);
+    p16(b,0);
     p32(b,0);
     p16(b,0);
     b.insert(b.end(),planes.begin(),planes.end());
