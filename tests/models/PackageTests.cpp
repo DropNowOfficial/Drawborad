@@ -169,3 +169,39 @@ TEST("M01 install owns verified package and blocks active removal"){
     CHECK(!std::filesystem::exists(ownedEncoder));
     std::filesystem::remove_all(root);
 }
+
+
+TEST("M01 package identity includes decoder digest") {
+    auto base=std::filesystem::temp_directory_path()/"drawborad-model-identity";
+    auto store=std::filesystem::temp_directory_path()/"drawborad-model-identity-store";
+    std::filesystem::remove_all(base);
+    std::filesystem::remove_all(store);
+    std::filesystem::create_directories(base/"a");
+    std::filesystem::create_directories(base/"b");
+    Bytes encoder{0x3a,0x00};
+    Bytes decoderA{0x3a,0x00,0x01};
+    Bytes decoderB{0x3a,0x00,0x02};
+    auto writePackage=[&](const std::filesystem::path& dir,const Bytes& decoder) {
+        std::ofstream(dir/"encoder.onnx",std::ios::binary)
+            .write(reinterpret_cast<const char*>(encoder.data()),std::streamsize(encoder.size()));
+        std::ofstream(dir/"decoder.onnx",std::ios::binary)
+            .write(reinterpret_cast<const char*>(decoder.data()),std::streamsize(decoder.size()));
+        std::ofstream manifest(dir/"manifest.json");
+        manifest<<"{\"schema\":1,\"taskId\":\"sam21.image.v1\","
+                "\"weights\":\"encoder.onnx\",\"sha256\":\""<<sha256(encoder).hex()<<"\","
+                "\"decoderWeights\":\"decoder.onnx\",\"decoderSha256\":\""<<sha256(decoder).hex()<<"\","
+                "\"license\":\"test\",\"provider\":\"cpu\"}";
+    };
+    writePackage(base/"a",decoderA);
+    writePackage(base/"b",decoderB);
+    ModelRegistry registry(store);
+    auto a=registry.install(base/"a",TrustDecision::UserAcceptedUntrusted);
+    auto b=registry.install(base/"b",TrustDecision::UserAcceptedUntrusted);
+    CHECK(a);
+    CHECK(b);
+    CHECK(a.value()!=b.value());
+    CHECK(registry.manifest(a.value()).value().decoderSha256!=
+          registry.manifest(b.value()).value().decoderSha256);
+    std::filesystem::remove_all(base);
+    std::filesystem::remove_all(store);
+}
