@@ -45,18 +45,75 @@ jobs:
           model.ir_version=8
           onnx.checker.check_model(model)
           onnx.save(model,'identity.onnx')
+
+          image=helper.make_tensor_value_info('image',TensorProto.FLOAT,[1,4])
+          image_embed=helper.make_tensor_value_info('image_embed',TensorProto.FLOAT,[1,4])
+          high_res_0=helper.make_tensor_value_info('high_res_0',TensorProto.FLOAT,[1,4])
+          high_res_1=helper.make_tensor_value_info('high_res_1',TensorProto.FLOAT,[1,4])
+          encoder_nodes=[
+              helper.make_node('Identity',['image'],['image_embed']),
+              helper.make_node('Identity',['image'],['high_res_0']),
+              helper.make_node('Identity',['image'],['high_res_1']),
+          ]
+          encoder=helper.make_model(
+              helper.make_graph(encoder_nodes,'drawborad-sam-encoder',[image],[image_embed,high_res_0,high_res_1]),
+              opset_imports=[helper.make_opsetid('',17)])
+          encoder.ir_version=8
+          onnx.checker.check_model(encoder)
+          onnx.save(encoder,'sam-encoder.onnx')
+
+          dec_inputs=[
+              helper.make_tensor_value_info('image_embed',TensorProto.FLOAT,[1,4]),
+              helper.make_tensor_value_info('high_res_0',TensorProto.FLOAT,[1,4]),
+              helper.make_tensor_value_info('high_res_1',TensorProto.FLOAT,[1,4]),
+              helper.make_tensor_value_info('point_coords',TensorProto.FLOAT,[1,1,2]),
+              helper.make_tensor_value_info('point_labels',TensorProto.INT64,[1,1]),
+              helper.make_tensor_value_info('mask_input',TensorProto.FLOAT,[1,1,2,2]),
+              helper.make_tensor_value_info('has_mask_input',TensorProto.FLOAT,[1]),
+          ]
+          dec_outputs=[
+              helper.make_tensor_value_info('low_res_masks',TensorProto.FLOAT,[1,4]),
+              helper.make_tensor_value_info('iou_scores',TensorProto.FLOAT,[1]),
+          ]
+          decoder_nodes=[
+              helper.make_node('Identity',['image_embed'],['low_res_masks']),
+              helper.make_node('Identity',['has_mask_input'],['iou_scores']),
+          ]
+          decoder=helper.make_model(
+              helper.make_graph(decoder_nodes,'drawborad-sam-decoder',dec_inputs,dec_outputs),
+              opset_imports=[helper.make_opsetid('',17)])
+          decoder.ir_version=8
+          onnx.checker.check_model(decoder)
+          onnx.save(decoder,'sam-decoder.onnx')
           PY
       - name: Configure with offline ONNX Runtime SDK
         shell: bash
         run: |
-          cmake --preset lab-debug             -DDRAWBORAD_ONNXRUNTIME_ROOT="$PWD/onnxruntime-linux-x64-1.23.2"             -DDRAWBORAD_TEST_ONNX_MODEL="$PWD/identity.onnx"
+          cmake --preset lab-debug \
+            -DDRAWBORAD_ONNXRUNTIME_ROOT="$PWD/onnxruntime-linux-x64-1.23.2" \
+            -DDRAWBORAD_TEST_ONNX_MODEL="$PWD/identity.onnx" \
+            -DDRAWBORAD_TEST_SAM_ENCODER="$PWD/sam-encoder.onnx" \
+            -DDRAWBORAD_TEST_SAM_DECODER="$PWD/sam-decoder.onnx"
       - name: Build runtime smoke
-        run: cmake --build --preset lab-debug --target test_M02.Runtime
+        run: cmake --build --preset lab-debug --target test_M02.Runtime test_M02.SamRuntime
       - name: Execute runtime smoke
         shell: bash
         run: |
           export LD_LIBRARY_PATH="$PWD/onnxruntime-linux-x64-1.23.2/lib:${LD_LIBRARY_PATH:-}"
-          ctest --test-dir out/build/lab-debug -R '^M02.Runtime$' --output-on-failure
+          ctest --test-dir out/build/lab-debug -R '^M02\\.(Runtime|SamRuntime)
+      - name: Preserve evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ort-runtime-smoke
+          path: |
+            identity.onnx
+            sam-encoder.onnx
+            sam-decoder.onnx
+            expected.sha256
+            out/build/lab-debug/Testing/Temporary/LastTest.log
+          retention-days: 7
+ --output-on-failure
       - name: Preserve evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
