@@ -24,7 +24,7 @@ TEST("M06 queue survives restart without duplicate heavy work"){
     CHECK(restored.value().items()[1].state==QueueState::Queued);
     CHECK(restored.value().acceptReview(0,42));
     CHECK(restored.value().concurrentHeavyJobs()==1);
-    CHECK(restored.value().finish(0,true));
+    CHECK(restored.value().finish(0,true,Revision(42)));
     CHECK(QueueStore::save(restored.value(),file));
     auto terminal=QueueStore::load(file);
     CHECK(terminal);
