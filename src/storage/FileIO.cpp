@@ -73,7 +73,12 @@ Result<Hash> NativeFileIO::hash(const fs::path& p, std::uint64_t maxBytes) const
     if (!in)
         return ioerr("io.open");
     Sha256State state;
-    std::array<std::uint8_t, 1024 * 1024> buffer{};
+    std::vector<std::uint8_t> buffer;
+    try {
+        buffer.resize(1024 * 1024);
+    } catch (const std::bad_alloc&) {
+        return error(ErrorCode::BudgetExceeded, "io.hash-buffer");
+    }
     std::uint64_t total = 0;
     while (total < expected) {
         const auto request = std::size_t(std::min<std::uint64_t>(buffer.size(), expected - total));
