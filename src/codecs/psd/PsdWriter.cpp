@@ -1,6 +1,7 @@
 #include "PsdWriter.h"
 #include "storage/FileIO.h"
 #include <algorithm>
+#include <vector>
 
 namespace drawborad {
 namespace {
@@ -19,6 +20,69 @@ void put32(Bytes& bytes, std::uint32_t value) {
 
 void put32s(Bytes& bytes, std::int32_t value) {
     put32(bytes, std::uint32_t(value));
+}
+
+Result<std::vector<std::uint16_t>> utf16Units(std::string_view text) {
+    std::vector<std::uint16_t> out;
+    for (std::size_t i = 0; i < text.size();) {
+        const auto first = std::uint8_t(text[i]);
+        std::uint32_t cp = 0;
+        std::size_t width = 0;
+        if (first <= 0x7f) {
+            cp = first;
+            width = 1;
+        } else if ((first & 0xe0u) == 0xc0u) {
+            cp = first & 0x1fu;
+            width = 2;
+        } else if ((first & 0xf0u) == 0xe0u) {
+            cp = first & 0x0fu;
+            width = 3;
+        } else if ((first & 0xf8u) == 0xf0u) {
+            cp = first & 0x07u;
+            width = 4;
+        } else {
+            return error(ErrorCode::InvalidInput, "psd.layer-name-utf8");
+        }
+        if (i + width > text.size())
+            return error(ErrorCode::InvalidInput, "psd.layer-name-utf8");
+        for (std::size_t j = 1; j < width; ++j) {
+            const auto next = std::uint8_t(text[i + j]);
+            if ((next & 0xc0u) != 0x80u)
+                return error(ErrorCode::InvalidInput, "psd.layer-name-utf8");
+            cp = (cp << 6) | (next & 0x3fu);
+        }
+        const std::uint32_t minimum[] = {0, 0, 0x80, 0x800, 0x10000};
+        if (cp < minimum[width] || cp > 0x10ffff ||
+            (cp >= 0xd800 && cp <= 0xdfff))
+            return error(ErrorCode::InvalidInput, "psd.layer-name-utf8");
+        if (cp <= 0xffff) {
+            out.push_back(std::uint16_t(cp));
+        } else {
+            cp -= 0x10000;
+            out.push_back(std::uint16_t(0xd800u + (cp >> 10)));
+            out.push_back(std::uint16_t(0xdc00u + (cp & 0x3ffu)));
+        }
+        i += width;
+    }
+    if (out.size() > UINT32_MAX)
+        return error(ErrorCode::BudgetExceeded, "psd.layer-name-length");
+    return out;
+}
+
+Result<void> appendUnicodeName(Bytes& extra, std::string_view name) {
+    auto units = utf16Units(name);
+    if (!units)
+        return units.error();
+    Bytes data;
+    put32(data, std::uint32_t(units.value().size()));
+    for (const auto unit : units.value())
+        put16(data, unit);
+    extra.insert(extra.end(), {'8', 'B', 'I', 'M', 'l', 'u', 'n', 'i'});
+    put32(extra, std::uint32_t(data.size()));
+    extra.insert(extra.end(), data.begin(), data.end());
+    if ((data.size() & 1u) != 0)
+        extra.push_back(0);
+    return {};
 }
 
 } // namespace
@@ -104,11 +168,15 @@ Result<Bytes> encodePsd(const PsdWriteRequest& request) {
         Bytes extra;
         put32(extra, 0);
         put32(extra, 0);
-        const auto nameLength = std::min<std::size_t>(255, layer.name.size());
-        extra.push_back(std::uint8_t(nameLength));
-        extra.insert(extra.end(), layer.name.begin(), layer.name.begin() + std::ptrdiff_t(nameLength));
+        const auto fallbackLength = std::min<std::size_t>(255, layer.name.size());
+        extra.push_back(std::uint8_t(fallbackLength));
+        extra.insert(extra.end(), layer.name.begin(),
+                     layer.name.begin() + std::ptrdiff_t(fallbackLength));
         while (extra.size() % 4)
             extra.push_back(0);
+        auto unicode = appendUnicodeName(extra, layer.name);
+        if (!unicode)
+            return unicode.error();
 
         put32(records, std::uint32_t(extra.size()));
         records.insert(records.end(), extra.begin(), extra.end());
