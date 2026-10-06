@@ -10,6 +10,9 @@ struct PhotoshopLayerInfo {
     std::uint8_t opacity{};
     BlendMode blend{BlendMode::Normal};
     std::string name;
+    Rect maskBounds{};
+    std::uint8_t maskDefault{255};
+    bool hasUserMask{};
 };
 
 struct PhotoshopInfo {
@@ -22,6 +25,7 @@ struct PhotoshopInfo {
 struct PhotoshopDecodedLayer {
     PhotoshopLayerInfo info;
     TileData pixels;
+    Bytes mask;
 };
 
 struct PhotoshopDecoded {
