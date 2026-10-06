@@ -1,6 +1,7 @@
 #pragma once
 #include "codecs/ImageReader.h"
 #include "core/Document.h"
+#include <optional>
 
 namespace drawborad {
 
@@ -13,6 +14,7 @@ struct PhotoshopLayerInfo {
     Rect maskBounds{};
     std::uint8_t maskDefault{255};
     bool hasUserMask{};
+    std::optional<std::uint32_t> sectionType;
 };
 
 struct PhotoshopInfo {
