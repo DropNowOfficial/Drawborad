@@ -11,6 +11,7 @@ struct PsdLayerPixels {
     Bytes mask;
     Rect maskBounds{};
     std::uint8_t maskDefault{255};
+    std::optional<std::uint32_t> sectionType;
 };
 
 struct PsdWriteRequest {
