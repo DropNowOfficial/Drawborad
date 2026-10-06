@@ -30,3 +30,21 @@ TEST("M01 two-stage SAM package verifies decoder digest independently"){
     CHECK(bad.error().code==ErrorCode::DigestMismatch);
     std::filesystem::remove_all(d);
 }
+
+TEST("M01 SAM 2.1 package rejects missing decoder pair"){
+    auto d=std::filesystem::temp_directory_path()/"drawborad-model-missing-decoder";
+    std::filesystem::remove_all(d);
+    std::filesystem::create_directories(d);
+    Bytes encoder{1,2,3,4};
+    std::ofstream(d/"encoder.onnx",std::ios::binary)
+        .write(reinterpret_cast<const char*>(encoder.data()),std::streamsize(encoder.size()));
+    std::ofstream manifest(d/"manifest.json");
+    manifest<<"{\"schema\":1,\"taskId\":\"sam21.image.v1\","
+            "\"weights\":\"encoder.onnx\",\"sha256\":\""<<sha256(encoder).hex()<<"\","
+            "\"license\":\"test\",\"provider\":\"cpu\"}";
+    manifest.close();
+    auto result=validatePackage(d);
+    CHECK(!result);
+    CHECK(result.error().code==ErrorCode::CorruptData);
+    std::filesystem::remove_all(d);
+}
