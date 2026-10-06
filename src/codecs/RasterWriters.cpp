@@ -49,6 +49,10 @@ unsigned sampleBytes(Depth depth) { return depth==Depth::U16 ? 2u : 1u; }
 }
 
 #ifdef DRAWBORAD_HAS_PNG
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4611)
+#endif
 struct PngWriteState { Bytes bytes; };
 void pngWrite(png_structp png,png_bytep data,png_size_t length) {
     auto* state=static_cast<PngWriteState*>(png_get_io_ptr(png));
@@ -90,6 +94,9 @@ Result<Bytes> encodePng(const TileData& p,const RasterEncodingOptions& o) {
     png_destroy_write_struct(&png,&info);
     return state.bytes;
 }
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 #else
 Result<Bytes> encodePng(const TileData&,const RasterEncodingOptions&) {
     return error(ErrorCode::UnsupportedFeature,"png.codec-unavailable");
@@ -97,6 +104,10 @@ Result<Bytes> encodePng(const TileData&,const RasterEncodingOptions&) {
 #endif
 
 #ifdef DRAWBORAD_HAS_JPEG
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4611 4324)
+#endif
 struct JpegError {
     jpeg_error_mgr base;
     jmp_buf jump;
@@ -166,6 +177,9 @@ Result<Bytes> encodeJpeg(const TileData& p,const RasterEncodingOptions& o) {
     jpeg_destroy_compress(&cinfo);
     return out;
 }
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 #else
 Result<Bytes> encodeJpeg(const TileData&,const RasterEncodingOptions&) {
     return error(ErrorCode::UnsupportedFeature,"jpeg.codec-unavailable");
