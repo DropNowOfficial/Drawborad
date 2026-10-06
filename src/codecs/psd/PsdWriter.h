@@ -19,6 +19,8 @@ struct PsdWriteRequest {
     PixelSize size{};
     PixelFormat format{};
     ProfileId profile{};
+    Bytes iccProfile;
+    double ppi{72.0};
     std::vector<PsdLayerPixels> layers;
     bool overwrite{};
 };
