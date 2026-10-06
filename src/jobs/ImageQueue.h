@@ -21,6 +21,7 @@ class ImageQueue {
     Result<void> analysisComplete(std::size_t,bool hasReview);
     Result<void> acceptReview(std::size_t,Revision current);
     Result<void> finish(std::size_t,bool success,std::string error={});
+    Result<void> finish(std::size_t,bool success,Revision resultRevision,std::string error={});
     Result<void> cancel(std::size_t);
     const std::vector<QueueItem>& items()const{return items_;}
     std::size_t concurrentHeavyJobs()const{return activeHeavy_?1:0;}
