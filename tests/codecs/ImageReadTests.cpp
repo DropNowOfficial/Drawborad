@@ -48,3 +48,61 @@ TEST("C03 JPEG decode returns RGB pixels and strips alpha through explicit encod
     CHECK((decoded.value().decodedPixels->format==PixelFormat{ColorMode::RGB,Depth::U8,false}));
     std::filesystem::remove(path);
 }
+
+namespace {
+void le16(Bytes& b,std::size_t at,std::uint16_t v){
+    if(b.size()<at+2)b.resize(at+2);
+    b[at]=std::uint8_t(v);b[at+1]=std::uint8_t(v>>8);
+}
+void le32(Bytes& b,std::size_t at,std::uint32_t v){
+    if(b.size()<at+4)b.resize(at+4);
+    b[at]=std::uint8_t(v);b[at+1]=std::uint8_t(v>>8);
+    b[at+2]=std::uint8_t(v>>16);b[at+3]=std::uint8_t(v>>24);
+}
+void tiffEntry(Bytes& b,std::size_t at,std::uint16_t tag,std::uint16_t type,
+               std::uint32_t count,std::uint32_t value){
+    le16(b,at,tag);le16(b,at+2,type);le32(b,at+4,count);le32(b,at+8,value);
+}
+void tiffPage(Bytes& b,std::size_t ifd,std::uint32_t bitsOffset,
+              std::uint32_t pixelOffset,std::uint32_t nextIfd,
+              std::array<std::uint8_t,3> pixel){
+    le16(b,ifd,10);
+    std::size_t e=ifd+2;
+    tiffEntry(b,e+0*12,256,4,1,1);
+    tiffEntry(b,e+1*12,257,4,1,1);
+    tiffEntry(b,e+2*12,258,3,3,bitsOffset);
+    tiffEntry(b,e+3*12,259,3,1,1);
+    tiffEntry(b,e+4*12,262,3,1,2);
+    tiffEntry(b,e+5*12,273,4,1,pixelOffset);
+    tiffEntry(b,e+6*12,277,3,1,3);
+    tiffEntry(b,e+7*12,278,4,1,1);
+    tiffEntry(b,e+8*12,279,4,1,3);
+    tiffEntry(b,e+9*12,284,3,1,1);
+    le32(b,e+120,nextIfd);
+    le16(b,bitsOffset,8);le16(b,bitsOffset+2,8);le16(b,bitsOffset+4,8);
+    if(b.size()<pixelOffset+3)b.resize(pixelOffset+3);
+    std::copy(pixel.begin(),pixel.end(),b.begin()+pixelOffset);
+}
+Bytes twoPageTiff(){
+    Bytes b(279,0);
+    b[0]='I';b[1]='I';le16(b,2,42);le32(b,4,8);
+    tiffPage(b,8,134,140,144,{10,20,30});
+    tiffPage(b,144,270,276,0,{200,150,100});
+    return b;
+}
+}
+TEST("C03 TIFF frame selection decodes requested page instead of silently using page zero"){
+    auto path=writeEncoded("drawborad-c03-two-page.tif",twoPageTiff());
+    DecodeOptions options;
+    options.frame=1;
+    options.limits.decodedBytes=1024*1024;
+    options.limits.encodedBytes=1024*1024;
+    auto decoded=decodeImage(path,options);
+    CHECK(decoded);
+    CHECK(decoded.value().decodedPixels);
+    CHECK(decoded.value().decodedPixels->bytes.size()>=3);
+    CHECK(decoded.value().decodedPixels->bytes[0]==200);
+    CHECK(decoded.value().decodedPixels->bytes[1]==150);
+    CHECK(decoded.value().decodedPixels->bytes[2]==100);
+    std::filesystem::remove(path);
+}
