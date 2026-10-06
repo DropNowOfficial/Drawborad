@@ -113,7 +113,7 @@ TEST("C04 C05 Photoshop section divider metadata roundtrips"){
     auto info=readPhotoshopHeader(encoded.value(),limits);
     CHECK(info);
     CHECK(info.value().layers.size()==1);
-    CHECK(info.value().layers[0].sectionType==2);
+    CHECK(info.value().layers[0].sectionType==2u);
 }
 
 
