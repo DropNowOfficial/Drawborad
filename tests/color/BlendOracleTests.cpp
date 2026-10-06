@@ -12,3 +12,13 @@ TEST("C02 unsupported layout returns error instead of RGB fallback"){
  auto a=tile(ColorMode::RGB,Depth::U8,{255,0,0,255});auto b=tile(ColorMode::CMYK,Depth::U8,{0,0,0,0,255});
  CHECK(!blendPixels({a,b,BlendMode::Multiply,1}));
 }
+
+TEST("C02 CMYK multiply uses inverted ink-domain math, not RGB channel multiply") {
+    auto src=tile(ColorMode::CMYK,Depth::U8,{128,0,0,0,255});
+    auto dst=tile(ColorMode::CMYK,Depth::U8,{128,0,0,0,255});
+    auto result=blendPixels({src,dst,BlendMode::Multiply,1});
+    CHECK(result);
+    CHECK(result.value().bytes[0] > 180);
+    CHECK(result.value().bytes[0] < 196);
+    CHECK(result.value().bytes[4] == 255);
+}
