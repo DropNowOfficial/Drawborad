@@ -1,5 +1,6 @@
 #include "Test.h"
 #include "codecs/ImageReader.h"
+#include "codecs/HeicAdapter.h"
 #include "codecs/RasterWriters.h"
 #include <filesystem>
 #include <fstream>
@@ -105,4 +106,23 @@ TEST("C03 TIFF frame selection decodes requested page instead of silently using 
     CHECK(decoded.value().decodedPixels->bytes[1]==150);
     CHECK(decoded.value().decodedPixels->bytes[2]==100);
     std::filesystem::remove(path);
+}
+
+TEST("C03 HEIC detection is local and missing codec never pretends success"){
+    Bytes heic(32,0);
+    heic[0]=0;heic[1]=0;heic[2]=0;heic[3]=24;
+    heic[4]='f';heic[5]='t';heic[6]='y';heic[7]='p';
+    heic[8]='h';heic[9]='e';heic[10]='i';heic[11]='c';
+    CHECK(looksLikeHeic(heic));
+    DecodeOptions options;
+    InputInfo info;
+    info.format=ImageFormat::Heic;
+    if(!heicCodecAvailable()){
+        auto inspected=inspectHeic(heic,options.limits);
+        CHECK(!inspected);
+        CHECK(inspected.error().code==ErrorCode::UnsupportedFeature);
+        auto decoded=decodeHeic(heic,info,options);
+        CHECK(!decoded);
+        CHECK(decoded.error().code==ErrorCode::UnsupportedFeature);
+    }
 }
