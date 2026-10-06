@@ -44,7 +44,11 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          git clone --depth 1 https://github.com/microsoft/vcpkg.git vcpkg
+          git init vcpkg
+          git -C vcpkg remote add origin https://github.com/microsoft/vcpkg.git
+          git -C vcpkg fetch --depth 1 origin 08d0fe224aa55920c20eac560021b004102dbe8f
+          git -C vcpkg checkout --detach FETCH_HEAD
+          if ((git -C vcpkg rev-parse HEAD).Trim() -ne '08d0fe224aa55920c20eac560021b004102dbe8f') { throw 'vcpkg commit mismatch' }
           .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
           if ($LASTEXITCODE) { throw 'vcpkg bootstrap failed' }
           $env:VCPKG_DISABLE_METRICS='1'
