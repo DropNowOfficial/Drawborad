@@ -118,16 +118,14 @@ class NativeDestinationAppearsIO final : public NativeFileIO {
     Bytes intruder{41,42,43,44};
     mutable bool injected{};
 
-    Result<Bytes> read(const ProjectPath& p, std::uint64_t maxBytes) const override {
-        auto bytes=NativeFileIO::read(p,maxBytes);
-        if(!bytes) return bytes.error();
+    Result<Hash> hash(const ProjectPath& p, std::uint64_t maxBytes) const override {
         if(!injected){
             NativeFileIO writer;
             auto written=writer.write(destinationPath,intruder,true);
             if(!written) return written.error();
             injected=true;
         }
-        return bytes.value();
+        return NativeFileIO::hash(p,maxBytes);
     }
 };
 }
