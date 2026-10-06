@@ -121,3 +121,10 @@ if(DRAWBORAD_HAS_ONNXRUNTIME AND DRAWBORAD_TEST_SAM_ENCODER AND DRAWBORAD_TEST_S
       ENVIRONMENT_MODIFICATION "LD_LIBRARY_PATH=path_list_prepend:${DRAWBORAD_ONNXRUNTIME_ROOT}/lib")
   endif()
 endif()
+
+add_test(
+  NAME M02.Tools
+  COMMAND ${Python3_EXECUTABLE}
+          ${PROJECT_SOURCE_DIR}/tests/models/test_model_tools.py
+          ${PROJECT_SOURCE_DIR})
+set_tests_properties(M02.Tools PROPERTIES TIMEOUT 30)
