@@ -19,6 +19,7 @@ class ImageQueue {
     Result<void> resume(QueueId);
     Result<void> startAnalysis(std::size_t);
     Result<void> analysisComplete(std::size_t,bool hasReview);
+    Result<void> analysisComplete(std::size_t,bool hasReview,Revision current);
     Result<void> acceptReview(std::size_t,Revision current);
     Result<void> finish(std::size_t,bool success,std::string error={});
     Result<void> finish(std::size_t,bool success,Revision resultRevision,std::string error={});
