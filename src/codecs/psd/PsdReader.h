@@ -35,6 +35,7 @@ struct PhotoshopDecodedLayer {
 struct PhotoshopDecoded {
     PhotoshopInfo info;
     std::vector<PhotoshopDecodedLayer> layers;
+    std::optional<TileData> composite;
 };
 
 Result<PhotoshopInfo> readPhotoshopHeader(std::span<const std::uint8_t>, const CodecLimits&);
