@@ -9,15 +9,17 @@ Result<void> ImageQueue::analysisComplete(std::size_t i,bool hasReview,Revision 
 Result<void> ImageQueue::acceptReview(std::size_t i,Revision current){if(i>=items_.size()||items_[i].state!=QueueState::WaitingForReview)return error(ErrorCode::InvalidInput,"queue.state");items_[i].inputRevision=current;if(activeHeavy_)return error(ErrorCode::BudgetExceeded,"queue.single-heavy");items_[i].state=QueueState::Reconstructing;activeHeavy_=i;return{};}
 Result<void> ImageQueue::finish(std::size_t i,bool success,std::string e){
     if(i>=items_.size())return error(ErrorCode::InvalidInput,"queue.item");
-    if(items_[i].state==QueueState::Reconstructing&&items_[i].inputRevision!=0)
+    if(items_[i].state==QueueState::Reconstructing)
         return error(ErrorCode::StaleRevision,"queue.result-revision-required");
-    return finish(i,success,items_[i].inputRevision,std::move(e));
+    return finish(i,success,Revision{},std::move(e));
 }
 Result<void> ImageQueue::finish(std::size_t i,bool success,Revision resultRevision,std::string e){
     if(i>=items_.size())return error(ErrorCode::InvalidInput,"queue.item");
     auto state=items_[i].state;
     if(state!=QueueState::Analyzing&&state!=QueueState::Reconstructing)
         return error(ErrorCode::InvalidInput,"queue.state");
+    if(state==QueueState::Reconstructing&&items_[i].inputRevision==0)
+        return error(ErrorCode::StaleRevision,"queue.result-revision-unbound");
     if(state==QueueState::Reconstructing&&resultRevision!=items_[i].inputRevision)
         return error(ErrorCode::StaleRevision,"queue.result-revision");
     if(success&&state!=QueueState::Reconstructing)
