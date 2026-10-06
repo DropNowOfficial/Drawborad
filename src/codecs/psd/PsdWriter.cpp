@@ -232,10 +232,12 @@ Result<Bytes> encodePsd(const PsdWriteRequest& request) {
                         std::uint64_t(channel) * sampleBytes);
                     if (offset + sampleBytes > layer.pixels.bytes.size())
                         return error(ErrorCode::CorruptData, "psd.layer-bytes");
-                    channelData.insert(channelData.end(),
-                                       layer.pixels.bytes.begin() + std::ptrdiff_t(offset),
-                                       layer.pixels.bytes.begin() +
-                                           std::ptrdiff_t(offset + sampleBytes));
+                    if (sampleBytes == 1) {
+                        channelData.push_back(layer.pixels.bytes[offset]);
+                    } else {
+                        channelData.push_back(layer.pixels.bytes[offset + 1]);
+                        channelData.push_back(layer.pixels.bytes[offset]);
+                    }
                 }
             }
         }
