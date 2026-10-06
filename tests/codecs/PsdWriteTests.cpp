@@ -162,3 +162,63 @@ TEST("C05 merged composite carries real pixels and alpha") {
     CHECK(decoded.value().composite->format==q.format);
     CHECK(decoded.value().composite->bytes==layer.pixels.bytes);
 }
+
+
+namespace {
+std::uint32_t readBe32(const Bytes& bytes,std::size_t at){
+    return (std::uint32_t(bytes[at])<<24)|(std::uint32_t(bytes[at+1])<<16)|
+           (std::uint32_t(bytes[at+2])<<8)|bytes[at+3];
+}
+std::size_t compositePayloadOffset(const Bytes& bytes){
+    if(bytes.size()<30) return SIZE_MAX;
+    std::size_t pos=26;
+    for(int section=0;section<3;++section){
+        if(pos+4>bytes.size()) return SIZE_MAX;
+        const auto n=readBe32(bytes,pos);
+        pos+=4;
+        if(n>bytes.size()-pos) return SIZE_MAX;
+        pos+=n;
+    }
+    if(pos+2>bytes.size()||bytes[pos]!=0||bytes[pos+1]!=0) return SIZE_MAX;
+    return pos+2;
+}
+PsdWriteRequest cmykRequest(Depth depth,Bytes pixel){
+    PsdWriteRequest q;
+    q.size={1,1};
+    q.format={ColorMode::CMYK,depth,false};
+    PsdLayerPixels layer;
+    layer.name="CMYK";
+    layer.pixels.width=1;
+    layer.pixels.height=1;
+    layer.pixels.format=q.format;
+    layer.pixels.rowStride=pixel.size();
+    layer.pixels.bytes=std::move(pixel);
+    q.layers.push_back(layer);
+    q.merged=q.layers.front().pixels;
+    return q;
+}
+}
+
+TEST("C05 CMYK8 PSD file planes use Photoshop inverted ink polarity"){
+    auto q=cmykRequest(Depth::U8,{0,64,128,255});
+    auto encoded=encodePsd(q);
+    CHECK(encoded);
+    const auto at=compositePayloadOffset(encoded.value());
+    CHECK(at!=SIZE_MAX);
+    CHECK(at+4<=encoded.value().size());
+    CHECK(Bytes(encoded.value().begin()+std::ptrdiff_t(at),
+                encoded.value().begin()+std::ptrdiff_t(at+4))==
+          Bytes({255,191,127,0}));
+}
+
+TEST("C05 CMYK16 PSD file planes use Photoshop inverted ink polarity"){
+    auto q=cmykRequest(Depth::U16,{0x00,0x00, 0x00,0x40, 0x00,0x80, 0xff,0xff});
+    auto encoded=encodePsd(q);
+    CHECK(encoded);
+    const auto at=compositePayloadOffset(encoded.value());
+    CHECK(at!=SIZE_MAX);
+    CHECK(at+8<=encoded.value().size());
+    CHECK(Bytes(encoded.value().begin()+std::ptrdiff_t(at),
+                encoded.value().begin()+std::ptrdiff_t(at+8))==
+          Bytes({0xff,0xff, 0xbf,0xff, 0x7f,0xff, 0x00,0x00}));
+}

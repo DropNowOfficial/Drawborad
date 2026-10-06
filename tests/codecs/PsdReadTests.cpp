@@ -165,3 +165,44 @@ TEST("C04 16-bit ZIP prediction preserves channel values"){
         0x04,0x03, 0x16,0x15, 0x28,0x27, 0x80,0x80
     }));
 }
+
+
+namespace {
+Bytes rawCmykComposite(std::uint16_t depth,std::span<const std::uint8_t> planes){
+    Bytes b{'8','B','P','S'};
+    p16(b,1);
+    b.insert(b.end(),6,0);
+    p16(b,4);
+    p32(b,1);
+    p32(b,1);
+    p16(b,depth);
+    p16(b,4);
+    p32(b,0);
+    p32(b,0);
+    p32(b,0);
+    p16(b,0);
+    b.insert(b.end(),planes.begin(),planes.end());
+    return b;
+}
+}
+
+TEST("C04 CMYK8 PSD file polarity decodes to native ink coverage"){
+    const Bytes planes{255,191,127,0};
+    CodecLimits limits;
+    auto decoded=decodePhotoshopLayers(rawCmykComposite(8,planes),ProfileId{},limits);
+    CHECK(decoded);
+    CHECK(decoded.value().composite.has_value());
+    CHECK(decoded.value().composite->format==PixelFormat{ColorMode::CMYK,Depth::U8,false});
+    CHECK(decoded.value().composite->bytes==Bytes({0,64,128,255}));
+}
+
+TEST("C04 CMYK16 PSD file polarity decodes to native ink coverage"){
+    const Bytes planes{0xff,0xff, 0xbf,0xff, 0x7f,0xff, 0x00,0x00};
+    CodecLimits limits;
+    auto decoded=decodePhotoshopLayers(rawCmykComposite(16,planes),ProfileId{},limits);
+    CHECK(decoded);
+    CHECK(decoded.value().composite.has_value());
+    CHECK(decoded.value().composite->format==PixelFormat{ColorMode::CMYK,Depth::U16,false});
+    CHECK(decoded.value().composite->bytes==
+          Bytes({0x00,0x00, 0x00,0x40, 0x00,0x80, 0xff,0xff}));
+}
