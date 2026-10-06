@@ -7,4 +7,12 @@ struct ExportPlan { ExportRequest request; bool requiresRgbConversion{}; std::ve
 struct ExportReport { std::vector<std::filesystem::path> paths; std::vector<Hash> hashes; PixelSize dimensions{}; std::uint32_t channels{}; std::vector<std::string> warnings; };
 Result<ExportPlan> preflightExport(ColorMode documentMode,const ExportRequest&);
 Result<ExportReport> writeRasterPlaceholder(const ExportPlan&, std::span<const std::uint8_t> payload, std::stop_token = {});
+struct RasterEncodingOptions;
+class ExportService {
+  public:
+    Result<ExportReport> write(const ExportPlan&, const TileData&,
+                               std::span<const PsdLayerPixels>,
+                               const RasterEncodingOptions&,
+                               std::stop_token = {}) const;
+};
 }

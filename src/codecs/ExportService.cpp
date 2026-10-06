@@ -1,6 +1,8 @@
 #include "ExportService.h"
 #include "storage/FileIO.h"
 #include "codecs/AtomicExport.h"
+#include "codecs/RasterWriters.h"
+#include "codecs/LayerArchive.h"
 #include <atomic>
 #include <chrono>
 namespace drawborad {
@@ -48,4 +50,62 @@ Result<ExportReport> writeRasterPlaceholder(const ExportPlan&p,std::span<const s
     if(p.requiresRgbConversion)r.warnings.push_back("explicit-rgb-conversion");
     return r;
 }
+
+Result<ExportReport> ExportService::write(const ExportPlan& plan,const TileData& merged,
+                                          std::span<const PsdLayerPixels> layers,
+                                          const RasterEncodingOptions& options,
+                                          std::stop_token stop) const {
+    if(stop.stop_requested())return error(ErrorCode::Cancelled,"export.cancelled");
+    if(merged.width!=plan.request.size.width||merged.height!=plan.request.size.height)
+        return error(ErrorCode::InvalidInput,"export.size-mismatch");
+    if(plan.requiresRgbConversion&&merged.format.mode!=ColorMode::RGB)
+        return error(ErrorCode::ConversionConsentRequired,"export.rgb-conversion-not-applied");
+
+    if(plan.request.format==ExportFormat::Png||plan.request.format==ExportFormat::Tiff||
+       plan.request.format==ExportFormat::Jpeg||plan.request.format==ExportFormat::Webp)
+        return writeRaster(plan,merged,options,stop);
+
+    if(plan.request.format==ExportFormat::Psd){
+        PsdWriteRequest q;
+        q.path=plan.request.path;
+        q.size=plan.request.size;
+        q.format=merged.format;
+        q.profile=plan.request.profile;
+        q.iccProfile=options.iccProfile;
+        q.ppi=options.ppi;
+        q.layers.assign(layers.begin(),layers.end());
+        q.merged=merged;
+        q.overwrite=plan.request.overwrite;
+        auto written=writePsd(q,stop);
+        if(!written)return written.error();
+        NativeFileIO io;
+        auto bytes=io.read(q.path,2*GiB);
+        if(!bytes)return bytes.error();
+        ExportReport report;
+        report.paths.push_back(q.path);
+        report.hashes.push_back(sha256(bytes.value()));
+        report.dimensions=q.size;
+        report.channels=merged.format.channelCount();
+        return report;
+    }
+
+    std::vector<ArchiveLayer> archive;
+    archive.reserve(layers.size());
+    for(const auto& layer:layers){
+        ArchiveLayer a;
+        a.name=layer.name;
+        a.pixels=layer.pixels;
+        a.opacity=double(layer.opacity)/255.0;
+        a.blend=layer.blend;
+        archive.push_back(std::move(a));
+    }
+    Result<Bytes> encoded=error(ErrorCode::UnsupportedFeature,"export.format");
+    if(plan.request.format==ExportFormat::Ora)
+        encoded=encodeOra(plan.request.size,archive,merged,options);
+    else if(plan.request.format==ExportFormat::LayerZip)
+        encoded=encodeLayerZip(plan.request.size,archive,options);
+    if(!encoded)return encoded.error();
+    return writeRasterPlaceholder(plan,encoded.value(),stop);
+}
+
 }

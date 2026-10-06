@@ -181,3 +181,32 @@ TEST("C07 legacy export entry cannot clobber existing destination"){
     CHECK(actual.value()==old);
     std::filesystem::remove(path);
 }
+
+
+TEST("C06 ExportService routes a real PNG through atomic publication"){
+    auto path=std::filesystem::temp_directory_path()/"drawborad-c06-service.png";
+    std::filesystem::remove(path);
+    ExportRequest request;
+    request.format=ExportFormat::Png;
+    request.path=path;
+    request.size={2,1};
+    request.alpha=true;
+    request.overwrite=false;
+    auto plan=preflightExport(ColorMode::RGB,request);
+    CHECK(plan);
+    TileData merged;
+    merged.width=2; merged.height=1;
+    merged.format={ColorMode::RGB,Depth::U8,true};
+    merged.rowStride=8;
+    merged.bytes={255,0,0,255,0,255,0,255};
+    RasterEncodingOptions options;
+    ExportService service;
+    auto report=service.write(plan.value(),merged,{},options);
+    CHECK(report);
+    CHECK(report.value().paths.size()==1);
+    std::ifstream in(path,std::ios::binary);
+    std::array<unsigned char,8> signature{};
+    in.read(reinterpret_cast<char*>(signature.data()),8);
+    CHECK(signature==std::array<unsigned char,8>{0x89,'P','N','G',13,10,26,10});
+    std::filesystem::remove(path);
+}

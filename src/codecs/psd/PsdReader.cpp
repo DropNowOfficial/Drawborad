@@ -1,4 +1,5 @@
 #include "PsdReader.h"
+#include "storage/FileIO.h"
 #include <algorithm>
 #include <cstring>
 #ifdef DRAWBORAD_HAS_ZLIB
@@ -802,6 +803,19 @@ Result<PhotoshopDecoded> decodePhotoshopLayers(std::span<const std::uint8_t> byt
                                                ProfileId profile,
                                                const CodecLimits& limits) {
     return decodeRawLayers(bytes, profile, limits);
+}
+
+Result<ImportResult> readPhotoshop(const InputPath& path,const ImportPolicy& policy,
+                                   std::stop_token stop){
+    if(stop.stop_requested())return error(ErrorCode::Cancelled,"psd.cancelled");
+    if(path.empty())return error(ErrorCode::InvalidInput,"psd.input-path");
+    NativeFileIO io;
+    auto bytes=io.read(path,policy.limits.encodedBytes);
+    if(!bytes)return bytes.error();
+    if(stop.stop_requested())return error(ErrorCode::Cancelled,"psd.cancelled");
+    auto decoded=decodePhotoshopLayers(bytes.value(),policy.profile,policy.limits);
+    if(!decoded)return decoded.error();
+    return ImportResult{std::move(decoded.value()),SourceKind::ImportedRaster};
 }
 
 } // namespace drawborad

@@ -42,4 +42,17 @@ Result<PhotoshopInfo> readPhotoshopHeader(std::span<const std::uint8_t>, const C
 Result<PhotoshopDecoded> decodePhotoshopLayers(std::span<const std::uint8_t>, ProfileId,
                                                const CodecLimits&);
 
+struct ImportPolicy {
+    ProfileId profile{};
+    CodecLimits limits{};
+};
+
+struct ImportResult {
+    PhotoshopDecoded photoshop;
+    SourceKind sourceKind{SourceKind::ImportedRaster};
+};
+
+Result<ImportResult> readPhotoshop(const InputPath&, const ImportPolicy&,
+                                   std::stop_token = {});
+
 } // namespace drawborad

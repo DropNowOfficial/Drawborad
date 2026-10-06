@@ -1,5 +1,7 @@
 #include "Test.h"
 #include "codecs/psd/PsdReader.h"
+#include <filesystem>
+#include <fstream>
 using namespace drawborad;
 
 namespace {
@@ -257,4 +259,22 @@ TEST("C04 text layer data is rejected instead of silently claimed editable"){
     CHECK(!result);
     CHECK(result.error().code==ErrorCode::UnsupportedFeature);
     CHECK(result.error().messageKey=="psd.unsupported-layer-feature");
+}
+
+
+TEST("C04 file-level Photoshop import uses bounded decoder and marks imported source"){
+    auto path=std::filesystem::temp_directory_path()/"drawborad-c04-file-import.psd";
+    auto bytes=compressedLayerPsd(1);
+    {
+        std::ofstream out(path,std::ios::binary);
+        out.write(reinterpret_cast<const char*>(bytes.data()),std::streamsize(bytes.size()));
+    }
+    ImportPolicy policy;
+    policy.limits.encodedBytes=1024*1024;
+    auto imported=readPhotoshop(path,policy);
+    CHECK(imported);
+    CHECK(imported.value().sourceKind==SourceKind::ImportedRaster);
+    CHECK(imported.value().photoshop.layers.size()==1);
+    CHECK(imported.value().photoshop.layers[0].pixels.bytes==Bytes({10,20,30,255,40,50,60,128}));
+    std::filesystem::remove(path);
 }
