@@ -11,6 +11,10 @@ class FileIO {
                                bool exclusive) = 0;
     virtual Result<void> flush(const ProjectPath&) = 0;
     virtual Result<void> replace(const ProjectPath& temporary, const ProjectPath& destination) = 0;
+    // Publish a staged file. When allowReplace is false the implementation must
+    // fail atomically if the destination already exists; a pre-check is not sufficient.
+    virtual Result<void> publish(const ProjectPath& temporary, const ProjectPath& destination,
+                                 bool allowReplace);
 };
 class NativeFileIO : public FileIO {
   public:
@@ -18,6 +22,7 @@ class NativeFileIO : public FileIO {
     Result<void> write(const ProjectPath&, std::span<const std::uint8_t>, bool) override;
     Result<void> flush(const ProjectPath&) override;
     Result<void> replace(const ProjectPath&, const ProjectPath&) override;
+    Result<void> publish(const ProjectPath&, const ProjectPath&, bool allowReplace) override;
 };
 Result<void> atomicWrite(FileIO&, const ProjectPath&, std::span<const std::uint8_t>);
 Result<ProjectPath> confinedPath(const ProjectPath& root, const ProjectPath& relative);
