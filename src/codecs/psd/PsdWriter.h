@@ -26,7 +26,12 @@ struct PsdWriteRequest {
     bool overwrite{};
 };
 
+struct PsdWriteStats {
+    std::uint64_t stagedBytes{};
+    std::uint64_t peakWriterBufferBytes{};
+};
+
 Result<Bytes> encodePsd(const PsdWriteRequest&);
-Result<void> writePsd(const PsdWriteRequest&, std::stop_token = {});
+Result<void> writePsd(const PsdWriteRequest&, std::stop_token = {}, PsdWriteStats* = nullptr);
 
 } // namespace drawborad
