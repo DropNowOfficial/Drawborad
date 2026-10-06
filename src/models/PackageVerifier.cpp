@@ -1,4 +1,5 @@
 #include "ModelManifest.h"
+#include "AdapterRegistry.h"
 #include "storage/FileIO.h"
 #include <fstream>
 #include <cctype>
@@ -142,6 +143,6 @@ Result<ModelManifest> validatePackage(const PackagePath& root){
   auto dactual=sha256(dbytes.value());if(dactual!=dexp.value())return error(ErrorCode::DigestMismatch,"model.decoder-digest");auto decoderStorage=validateOnnxStorage(dbytes.value());if(!decoderStorage)return decoderStorage.error();
   m.decoderWeights=drel;m.resolvedDecoderWeights=dfull;m.decoderSha256=dactual;
  }
- m.license=*license;m.provider=provider;m.abi=field(j,"abi").value_or("sam21.image.v1");m.signedPackage=field(j,"signature").has_value();return m;
+ m.license=*license;m.provider=provider;m.abi=field(j,"abi").value_or("sam21.image.v1");m.signedPackage=field(j,"signature").has_value();AdapterRegistry registry;auto adapter=registry.resolve(m.taskId);if(!adapter)return adapter.error();if(m.abi!=adapter.value().abi)return error(ErrorCode::UnsupportedAdapter,"model.abi");m.inputs=adapter.value().inputs;m.outputs=adapter.value().outputs;return m;
 }
 }
