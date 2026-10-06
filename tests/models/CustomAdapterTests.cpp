@@ -76,3 +76,17 @@ TEST("M05 CUDA request stays blocked until CUDA runtime is qualified"){
     CHECK(!p.value().supported);
     CHECK(p.value().reason=="cuda-runtime-qualification-required");
 }
+
+TEST("M05 SAM logical adapter exposes image prompts mask and int64 labels"){
+    AdapterRegistry r;
+    auto a=r.resolve("sam21.image.v1");
+    CHECK(a);
+    CHECK(a.value().inputs.size()==5);
+    CHECK(a.value().inputs[0].name=="image");
+    CHECK(a.value().inputs[1].name=="point_coords");
+    CHECK(a.value().inputs[2].name=="point_labels");
+    CHECK(a.value().inputs[2].dtype=="int64");
+    CHECK(a.value().inputs[3].name=="mask_input");
+    CHECK(a.value().inputs[4].name=="has_mask_input");
+    CHECK(a.value().outputs.size()==2);
+}
