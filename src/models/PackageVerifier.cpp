@@ -225,6 +225,6 @@ Result<ModelManifest> validatePackage(const PackagePath& root){
   auto dactual=sha256(dbytes.value());if(dactual!=dexp.value())return error(ErrorCode::DigestMismatch,"model.decoder-digest");auto decoderStorage=validateOnnxStorage(dbytes.value());if(!decoderStorage)return decoderStorage.error();
   m.decoderWeights=drel;m.resolvedDecoderWeights=dfull;m.decoderSha256=dactual;
  }
- m.license=*license;m.provider=provider;m.abi=field(fields,"abi").value_or("sam21.image.v1");m.signedPackage=field(fields,"signature").has_value();AdapterRegistry registry;auto adapter=registry.resolve(m.taskId);if(!adapter)return adapter.error();if(m.abi!=adapter.value().abi)return error(ErrorCode::UnsupportedAdapter,"model.abi");m.inputs=adapter.value().inputs;m.outputs=adapter.value().outputs;return m;
+ m.license=*license;m.provider=provider;m.abi=field(fields,"abi").value_or("sam21.image.v1");m.signedPackage=false;AdapterRegistry registry;auto adapter=registry.resolve(m.taskId);if(!adapter)return adapter.error();if(m.abi!=adapter.value().abi)return error(ErrorCode::UnsupportedAdapter,"model.abi");m.inputs=adapter.value().inputs;m.outputs=adapter.value().outputs;return m;
 }
 }
