@@ -38,3 +38,36 @@ TEST("C01 ICC conversion accepts documents without alpha"){
  CHECK(out.value().rowStride==6);
  CHECK(out.value().bytes==tile.bytes);
 }
+
+TEST("C01 assigning a document profile changes interpretation without pixel resource bytes") {
+    ProfileStore profiles;
+    auto source=profiles.import(icc("RGB "));
+    auto target=profiles.import(icc("RGB "));
+    CHECK(source);
+    CHECK(target);
+
+    NewDocumentRequest request;
+    request.dimensions={16,16,Unit::Px,300};
+    request.colorSpec.format={ColorMode::RGB,Depth::U8,true};
+    request.colorSpec.profileId=source.value();
+    auto spec=validateDocument(request,ResourceBudget{});
+    CHECK(spec);
+    auto document=Document::create(spec.value(),Id::fromNumber(7001));
+    CHECK(document);
+
+    Bytes pixels{1,2,3,4,5,6,7,8};
+    auto pixelHash=sha256(pixels);
+    Resource resource{pixelHash,ResourceKind::Tile,std::make_shared<const Bytes>(pixels),{}};
+    CHECK(document.value().apply(Command{InstallResource{resource}},document.value().snapshot().revision));
+    auto before=document.value().snapshot();
+
+    ColorService service(profiles);
+    auto changed=service.assign(document.value(),target.value());
+    CHECK(changed);
+    auto after=document.value().snapshot();
+    CHECK(after.spec.colorSpec.profileId==target.value());
+    CHECK(*after.resources==*before.resources);
+    CHECK(*after.nodes==*before.nodes);
+    CHECK(after.eventIndex->size()==before.eventIndex->size());
+    CHECK(after.revision==before.revision+1);
+}
