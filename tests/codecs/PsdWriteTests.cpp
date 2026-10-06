@@ -139,3 +139,26 @@ TEST("C05 PSD preserves ICC resource and document resolution"){
     CHECK(info.value().iccProfile==q.iccProfile);
     CHECK(std::abs(info.value().ppi-q.ppi)<0.01);
 }
+
+TEST("C05 merged composite carries real pixels and alpha") {
+    PsdWriteRequest q;
+    q.size={1,1};
+    q.format={ColorMode::RGB,Depth::U8,true};
+    PsdLayerPixels layer;
+    layer.name="Merged source";
+    layer.pixels.width=1;
+    layer.pixels.height=1;
+    layer.pixels.format=q.format;
+    layer.pixels.rowStride=4;
+    layer.pixels.bytes={12,34,56,78};
+    q.layers.push_back(layer);
+    q.merged=layer.pixels;
+    auto encoded=encodePsd(q);
+    CHECK(encoded);
+    CodecLimits limits;
+    auto decoded=decodePhotoshopLayers(encoded.value(),ProfileId{},limits);
+    CHECK(decoded);
+    CHECK(decoded.value().composite.has_value());
+    CHECK(decoded.value().composite->format==q.format);
+    CHECK(decoded.value().composite->bytes==layer.pixels.bytes);
+}
