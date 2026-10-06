@@ -95,6 +95,8 @@ target_include_directories(drawborad_models PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(drawborad_models PUBLIC drawborad_core drawborad_color)
 set(DRAWBORAD_ONNXRUNTIME_ROOT "" CACHE PATH "Offline ONNX Runtime SDK root")
 set(DRAWBORAD_TEST_ONNX_MODEL "" CACHE FILEPATH "Developer-only ONNX Runtime smoke model")
+set(DRAWBORAD_TEST_SAM_ENCODER "" CACHE FILEPATH "Developer-only SAM encoder smoke model")
+set(DRAWBORAD_TEST_SAM_DECODER "" CACHE FILEPATH "Developer-only SAM decoder smoke model")
 if(DRAWBORAD_ONNXRUNTIME_ROOT)
   find_path(DRAWBORAD_ORT_INCLUDE onnxruntime_cxx_api.h
     PATHS "${DRAWBORAD_ONNXRUNTIME_ROOT}/include" NO_DEFAULT_PATH)
