@@ -1,6 +1,9 @@
 #include "PsdReader.h"
 #include <algorithm>
 #include <cstring>
+#ifdef DRAWBORAD_HAS_ZLIB
+#include <zlib.h>
+#endif
 
 namespace drawborad {
 namespace {
@@ -330,6 +333,27 @@ Result<Bytes> decodePackBitsPlane(std::span<const std::uint8_t> payload,
     return plane;
 }
 
+Result<Bytes> decodeZipPlane(std::span<const std::uint8_t> payload,
+                             std::uint64_t expectedBytes,
+                             std::uint64_t byteLimit) {
+    if (expectedBytes > byteLimit || expectedBytes > SIZE_MAX)
+        return error(ErrorCode::BudgetExceeded, "psd.zip-plane-budget");
+#ifdef DRAWBORAD_HAS_ZLIB
+    if (expectedBytes > std::uint64_t(std::numeric_limits<uLongf>::max()) ||
+        payload.size() > std::size_t(std::numeric_limits<uLong>::max()))
+        return error(ErrorCode::BudgetExceeded, "psd.zip-zlib-limit");
+    Bytes out(std::size_t(expectedBytes), 0);
+    uLongf produced = uLongf(expectedBytes);
+    const auto status = ::uncompress(out.data(), &produced, payload.data(), uLong(payload.size()));
+    if (status != Z_OK || produced != expectedBytes)
+        return error(ErrorCode::CorruptData, "psd.zip-data");
+    return out;
+#else
+    (void)payload;
+    return error(ErrorCode::UnsupportedFeature, "psd.zip-zlib-unavailable");
+#endif
+}
+
 Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, ProfileId profile,
                                         const CodecLimits& limits) {
     auto metadata = readPhotoshopHeader(bytes, limits);
@@ -496,6 +520,14 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
                 if (!rle)
                     return rle.error();
                 decodedPlane = std::move(rle.value());
+                plane = decodedPlane;
+            } else if (compression == 2) {
+                auto zip = decodeZipPlane(
+                    bytes.subspan(reader.position, channelEnd - reader.position),
+                    planeBytes.value(), limits.decodedBytes);
+                if (!zip)
+                    return zip.error();
+                decodedPlane = std::move(zip.value());
                 plane = decodedPlane;
             } else {
                 reader.position = channelEnd;
