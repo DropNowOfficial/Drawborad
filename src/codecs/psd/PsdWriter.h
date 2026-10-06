@@ -8,6 +8,9 @@ struct PsdLayerPixels {
     TileData pixels;
     std::uint8_t opacity{255};
     BlendMode blend{BlendMode::Normal};
+    Bytes mask;
+    Rect maskBounds{};
+    std::uint8_t maskDefault{255};
 };
 
 struct PsdWriteRequest {
