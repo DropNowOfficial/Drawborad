@@ -1,4 +1,5 @@
 #include "AdapterRegistry.h"
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
