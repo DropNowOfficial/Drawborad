@@ -115,3 +115,27 @@ TEST("C04 C05 Photoshop section divider metadata roundtrips"){
     CHECK(info.value().layers.size()==1);
     CHECK(info.value().layers[0].sectionType==2);
 }
+
+
+TEST("C05 PSD preserves ICC resource and document resolution"){
+    PsdWriteRequest q;
+    q.size={1,1};
+    q.format={ColorMode::RGB,Depth::U8,true};
+    q.iccProfile={0x00,0x01,0x02,0x03,0x7f,0x80,0xfe,0xff};
+    q.ppi=300.0;
+    PsdLayerPixels l;
+    l.name="Layer";
+    l.pixels.width=1;
+    l.pixels.height=1;
+    l.pixels.format=q.format;
+    l.pixels.rowStride=4;
+    l.pixels.bytes={1,2,3,255};
+    q.layers.push_back(l);
+    auto encoded=encodePsd(q);
+    CHECK(encoded);
+    CodecLimits limits;
+    auto info=readPhotoshopHeader(encoded.value(),limits);
+    CHECK(info);
+    CHECK(info.value().iccProfile==q.iccProfile);
+    CHECK(std::abs(info.value().ppi-q.ppi)<0.01);
+}
