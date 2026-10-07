@@ -265,6 +265,50 @@ TEST("C04 flattened PSB RLE uses four-byte scanline counts"){
     CHECK(decoded.value().composite->bytes==Bytes({10,20,30,255,40,50,60,128}));
 }
 
+namespace {
+Bytes layeredRgbCompositeWithLayerCount(std::int16_t count){
+    auto b=compressedLayerPsd(1);
+    std::size_t at=26;
+    const auto read32=[](const Bytes& bytes,std::size_t pos){
+        return (std::uint32_t(bytes[pos])<<24)|(std::uint32_t(bytes[pos+1])<<16)|
+               (std::uint32_t(bytes[pos+2])<<8)|bytes[pos+3];
+    };
+    for(int section=0;section<2;++section){
+        const auto length=read32(b,at);
+        at+=4+length;
+    }
+    at+=4; // layer/mask section length
+    const auto layerInfoLength=read32(b,at);
+    at+=4;
+    if(layerInfoLength>=2){
+        const auto encoded=std::uint16_t(count);
+        b[at]=std::uint8_t(encoded>>8);
+        b[at+1]=std::uint8_t(encoded);
+    }
+    b.insert(b.end(),{10,40,20,50,30,60,255,128});
+    return b;
+}
+}
+
+TEST("C04 positive layer count does not reinterpret saved alpha as transparency"){
+    CodecLimits limits;
+    auto decoded=decodePhotoshopLayers(
+        layeredRgbCompositeWithLayerCount(1),ProfileId{},limits);
+    CHECK(!decoded);
+    CHECK(decoded.error().code==ErrorCode::UnsupportedFeature);
+    CHECK(decoded.error().messageKey=="psd.composite-extra-channels");
+}
+
+TEST("C04 negative layer count marks merged transparency"){
+    CodecLimits limits;
+    auto decoded=decodePhotoshopLayers(
+        layeredRgbCompositeWithLayerCount(-1),ProfileId{},limits);
+    CHECK(decoded);
+    CHECK(decoded.value().composite.has_value());
+    CHECK(decoded.value().composite->format==PixelFormat{ColorMode::RGB,Depth::U8,true});
+    CHECK(decoded.value().composite->bytes==Bytes({10,20,30,255,40,50,60,128}));
+}
+
 
 namespace {
 Bytes rawCmykComposite(std::uint16_t depth,std::span<const std::uint8_t> planes){
