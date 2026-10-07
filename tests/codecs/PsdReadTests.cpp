@@ -171,6 +171,36 @@ TEST("C04 16-bit ZIP prediction preserves channel values"){
 
 
 namespace {
+Bytes rawRgbFlatComposite(){
+    Bytes b{'8','B','P','S'};
+    p16(b,1);
+    b.insert(b.end(),6,0);
+    p16(b,4);
+    p32(b,1);
+    p32(b,2);
+    p16(b,8);
+    p16(b,3);
+    p32(b,0);
+    p32(b,0);
+    p32(b,0);
+    p16(b,0);
+    b.insert(b.end(),{10,40,20,50,30,60,255,128});
+    return b;
+}
+}
+
+TEST("C04 flattened PSD without layer section decodes merged composite"){
+    CodecLimits limits;
+    auto decoded=decodePhotoshopLayers(rawRgbFlatComposite(),ProfileId{},limits);
+    CHECK(decoded);
+    CHECK(decoded.value().layers.empty());
+    CHECK(decoded.value().composite.has_value());
+    CHECK(decoded.value().composite->format==PixelFormat{ColorMode::RGB,Depth::U8,true});
+    CHECK(decoded.value().composite->bytes==Bytes({10,20,30,255,40,50,60,128}));
+}
+
+
+namespace {
 Bytes rawCmykComposite(std::uint16_t depth,std::span<const std::uint8_t> planes){
     Bytes b{'8','B','P','S'};
     p16(b,1);
