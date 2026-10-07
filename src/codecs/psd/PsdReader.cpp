@@ -605,30 +605,30 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
         return error(ErrorCode::CorruptData, "psd.decode-layer-mask-length");
     const auto total = version == 1 ? std::uint64_t(u32(bytes.data() + reader.position - 4))
                                     : u64(bytes.data() + reader.position - 8);
-    if (total > bytes.size() - reader.position || total == 0)
-        return total == 0 ? PhotoshopDecoded{metadata.value(), {}, std::nullopt}
-                          : Result<PhotoshopDecoded>{error(ErrorCode::CorruptData,
-                                                          "psd.decode-layer-mask-bounds")};
+    if (total > bytes.size() - reader.position)
+        return error(ErrorCode::CorruptData, "psd.decode-layer-mask-bounds");
     const auto sectionEnd = reader.position + std::size_t(total);
 
-    const auto located = locateLayerInfo(bytes, reader.position, sectionEnd, version, metadata.value().depth);
-    if (!located)
-        return located.error();
-    if (!located.value())
-        return PhotoshopDecoded{metadata.value(), {}, std::nullopt};
-    reader.position = located.value()->begin;
-    const auto layerInfoEnd = located.value()->end;
-
-    if (!reader.take(2) || reader.position > layerInfoEnd)
-        return error(ErrorCode::CorruptData, "psd.decode-layer-count");
-    const auto signedCount = std::int16_t(u16(bytes.data() + reader.position - 2));
-    const int layerCount = signedCount < 0 ? -signedCount : signedCount;
-    if (std::uint64_t(layerCount) > limits.nodes)
-        return error(ErrorCode::BudgetExceeded, "psd.decode-layer-count-limit");
-
     std::vector<LayerDecodeRecord> records;
-    records.reserve(std::size_t(layerCount));
-    for (int index = 0; index < layerCount; ++index) {
+    std::size_t layerInfoEnd = reader.position;
+    if (total != 0) {
+        const auto located = locateLayerInfo(bytes, reader.position, sectionEnd, version,
+                                             metadata.value().depth);
+        if (!located)
+            return located.error();
+        if (located.value()) {
+            reader.position = located.value()->begin;
+            layerInfoEnd = located.value()->end;
+
+            if (!reader.take(2) || reader.position > layerInfoEnd)
+                return error(ErrorCode::CorruptData, "psd.decode-layer-count");
+            const auto signedCount = std::int16_t(u16(bytes.data() + reader.position - 2));
+            const int layerCount = signedCount < 0 ? -signedCount : signedCount;
+            if (std::uint64_t(layerCount) > limits.nodes)
+                return error(ErrorCode::BudgetExceeded, "psd.decode-layer-count-limit");
+
+            records.reserve(std::size_t(layerCount));
+            for (int index = 0; index < layerCount; ++index) {
         if (reader.position + 18 > layerInfoEnd)
             return error(ErrorCode::CorruptData, "psd.decode-layer-record");
         LayerDecodeRecord record;
@@ -682,7 +682,9 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
         if (!parsedExtra)
             return parsedExtra.error();
         reader.position = extraEnd;
-        records.push_back(std::move(record));
+                records.push_back(std::move(record));
+            }
+        }
     }
 
     const auto baseChannels = metadata.value().colorMode == 3 ? 3u :
