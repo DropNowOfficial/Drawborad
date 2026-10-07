@@ -171,7 +171,7 @@ TEST("C04 16-bit ZIP prediction preserves channel values"){
 
 
 namespace {
-Bytes rawRgbFlatComposite(){
+Bytes rgbFlatComposite(std::uint16_t compression){
     Bytes b{'8','B','P','S'};
     p16(b,1);
     b.insert(b.end(),6,0);
@@ -183,20 +183,51 @@ Bytes rawRgbFlatComposite(){
     p32(b,0);
     p32(b,0);
     p32(b,0);
-    p16(b,0);
-    b.insert(b.end(),{10,40,20,50,30,60,255,128});
+    p16(b,compression);
+    if(compression==0){
+        b.insert(b.end(),{10,40,20,50,30,60,255,128});
+    }else if(compression==1){
+        for(int row=0;row<4;++row)p16(b,3);
+        const std::array<std::array<std::uint8_t,2>,4> rows{{
+            {{10,40}},{{20,50}},{{30,60}},{{255,128}}
+        }};
+        for(const auto& row:rows){
+            b.push_back(1);
+            b.insert(b.end(),row.begin(),row.end());
+        }
+    }else if(compression==2){
+        b.insert(b.end(),{120,156,227,210,16,49,146,179,249,223,0,0,6,140,2,82});
+    }else if(compression==3){
+        b.insert(b.end(),{120,156,227,146,19,145,147,147,251,223,8,0,5,137,2,23});
+    }
     return b;
 }
 }
 
-TEST("C04 flattened PSD without layer section decodes merged composite"){
+void checkFlatComposite(std::uint16_t compression){
     CodecLimits limits;
-    auto decoded=decodePhotoshopLayers(rawRgbFlatComposite(),ProfileId{},limits);
+    auto decoded=decodePhotoshopLayers(rgbFlatComposite(compression),ProfileId{},limits);
     CHECK(decoded);
     CHECK(decoded.value().layers.empty());
     CHECK(decoded.value().composite.has_value());
     CHECK(decoded.value().composite->format==PixelFormat{ColorMode::RGB,Depth::U8,true});
     CHECK(decoded.value().composite->bytes==Bytes({10,20,30,255,40,50,60,128}));
+}
+
+TEST("C04 flattened PSD without layer section decodes raw merged composite"){
+    checkFlatComposite(0);
+}
+
+TEST("C04 flattened PSD decodes RLE merged composite"){
+    checkFlatComposite(1);
+}
+
+TEST("C04 flattened PSD decodes ZIP merged composite"){
+    checkFlatComposite(2);
+}
+
+TEST("C04 flattened PSD decodes ZIP prediction merged composite"){
+    checkFlatComposite(3);
 }
 
 
