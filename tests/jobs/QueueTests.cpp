@@ -104,3 +104,18 @@ TEST("M06 unbound reconstruction result cannot bypass revision proof"){
     CHECK(result.error().code==ErrorCode::StaleRevision);
     CHECK(q.items()[0].state==QueueState::Reconstructing);
 }
+
+
+TEST("M06 terminal queue states cannot be rewritten by cancel"){
+    ImageQueue q;
+    std::array<std::filesystem::path,1> paths{"done.png"};
+    CHECK(q.enqueue(paths,{}));
+    CHECK(q.startAnalysis(0));
+    CHECK(q.analysisComplete(0,false,Revision(9)));
+    CHECK(q.finish(0,true,Revision(9)));
+    CHECK(q.items()[0].state==QueueState::Done);
+    auto cancelled=q.cancel(0);
+    CHECK(!cancelled);
+    CHECK(cancelled.error().code==ErrorCode::InvalidInput);
+    CHECK(q.items()[0].state==QueueState::Done);
+}
