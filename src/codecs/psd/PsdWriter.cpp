@@ -26,6 +26,13 @@ void put32s(Bytes& bytes, std::int32_t value) {
     put32(bytes, std::uint32_t(value));
 }
 
+std::uint16_t encodedLayerCount(std::size_t count, bool mergedTransparency) {
+    auto signedCount = std::int16_t(count);
+    if (mergedTransparency && signedCount > 0)
+        signedCount = std::int16_t(-signedCount);
+    return std::uint16_t(signedCount);
+}
+
 void appendImageResource(Bytes& resources, std::uint16_t id,
                          std::span<const std::uint8_t> data) {
     resources.insert(resources.end(), {'8','B','I','M'});
@@ -202,7 +209,7 @@ Result<Bytes> encodePsd(const PsdWriteRequest& request) {
     output.insert(output.end(), resources.value().begin(), resources.value().end());
 
     Bytes records;
-    put16(records, std::uint16_t(request.layers.size()));
+    put16(records, encodedLayerCount(request.layers.size(), request.format.alpha));
 
     for (const auto& layer : request.layers) {
         if (layer.pixels.width != request.size.width || layer.pixels.height != request.size.height ||
@@ -473,7 +480,7 @@ Result<void> writePsd(const PsdWriteRequest& request, std::stop_token stop,
         return error(ErrorCode::CorruptData, "psd.merged-bytes");
 
     Bytes records;
-    put16(records, std::uint16_t(request.layers.size()));
+    put16(records, encodedLayerCount(request.layers.size(), request.format.alpha));
     std::uint64_t channelDataBytes = 0;
 
     for (const auto& layer : request.layers) {
