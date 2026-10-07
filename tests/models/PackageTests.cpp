@@ -205,3 +205,24 @@ TEST("M01 package identity includes decoder digest") {
     std::filesystem::remove_all(base);
     std::filesystem::remove_all(store);
 }
+
+TEST("M01 malformed numeric JSON in ignored fields is rejected"){
+    auto d=std::filesystem::temp_directory_path()/"drawborad-model-bad-json-number";
+    std::filesystem::remove_all(d);
+    std::filesystem::create_directories(d);
+    Bytes encoder{0x3a,0x00},decoder{0x3a,0x00};
+    std::ofstream(d/"encoder.onnx",std::ios::binary)
+        .write(reinterpret_cast<const char*>(encoder.data()),std::streamsize(encoder.size()));
+    std::ofstream(d/"decoder.onnx",std::ios::binary)
+        .write(reinterpret_cast<const char*>(decoder.data()),std::streamsize(decoder.size()));
+    std::ofstream manifest(d/"manifest.json");
+    manifest<<"{\"schema\":1,\"taskId\":\"sam21.image.v1\","
+            "\"weights\":\"encoder.onnx\",\"sha256\":\""<<sha256(encoder).hex()<<"\","
+            "\"decoderWeights\":\"decoder.onnx\",\"decoderSha256\":\""<<sha256(decoder).hex()<<"\","
+            "\"license\":\"test\",\"provider\":\"cpu\",\"ignored\":1e}";
+    manifest.close();
+    auto result=validatePackage(d);
+    CHECK(!result);
+    CHECK(result.error().code==ErrorCode::CorruptData);
+    std::filesystem::remove_all(d);
+}
