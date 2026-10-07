@@ -230,6 +230,41 @@ TEST("C04 flattened PSD decodes ZIP prediction merged composite"){
     checkFlatComposite(3);
 }
 
+namespace {
+Bytes rgbFlatPsbRleComposite(){
+    Bytes b{'8','B','P','S'};
+    p16(b,2);
+    b.insert(b.end(),6,0);
+    p16(b,4);
+    p32(b,1);
+    p32(b,2);
+    p16(b,8);
+    p16(b,3);
+    p32(b,0);
+    p32(b,0);
+    p64(b,0);
+    p16(b,1);
+    for(int row=0;row<4;++row)p32(b,3);
+    const std::array<std::array<std::uint8_t,2>,4> rows{{
+        {{10,40}},{{20,50}},{{30,60}},{{255,128}}
+    }};
+    for(const auto& row:rows){
+        b.push_back(1);
+        b.insert(b.end(),row.begin(),row.end());
+    }
+    return b;
+}
+}
+
+TEST("C04 flattened PSB RLE uses four-byte scanline counts"){
+    CodecLimits limits;
+    auto decoded=decodePhotoshopLayers(rgbFlatPsbRleComposite(),ProfileId{},limits);
+    CHECK(decoded);
+    CHECK(decoded.value().info.format==ImageFormat::Psb);
+    CHECK(decoded.value().composite.has_value());
+    CHECK(decoded.value().composite->bytes==Bytes({10,20,30,255,40,50,60,128}));
+}
+
 
 namespace {
 Bytes rawCmykComposite(std::uint16_t depth,std::span<const std::uint8_t> planes){
