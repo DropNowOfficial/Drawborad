@@ -829,8 +829,6 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
     reader.position += 2;
     if (reader.position == bytes.size())
         return decoded;
-    if (compositeCompression != 0)
-        return error(ErrorCode::UnsupportedFeature, "psd.composite-compression");
 
     const bool compositeAlpha = metadata.value().channels == baseChannels + 1u;
     if (metadata.value().channels != baseChannels &&
@@ -853,8 +851,53 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
     if (!compositeByteCount || compositeByteCount.value() > limits.decodedBytes ||
         compositeByteCount.value() > SIZE_MAX)
         return error(ErrorCode::BudgetExceeded, "psd.composite-budget");
-    if (compositeByteCount.value() > bytes.size() - reader.position)
-        return error(ErrorCode::CorruptData, "psd.composite-bounds");
+
+    Bytes decodedComposite;
+    std::span<const std::uint8_t> compositePlanes;
+    if (compositeCompression == 0) {
+        if (compositeByteCount.value() > bytes.size() - reader.position)
+            return error(ErrorCode::CorruptData, "psd.composite-bounds");
+        compositePlanes =
+            bytes.subspan(reader.position, std::size_t(compositeByteCount.value()));
+    } else if (compositeCompression == 1) {
+        auto rows = checkedMultiply(metadata.value().size.height, compositeChannels);
+        if (!rows || rows.value() > std::numeric_limits<std::uint32_t>::max())
+            return error(ErrorCode::BudgetExceeded, "psd.composite-rle-rows");
+        auto rowBytes = checkedMultiply(metadata.value().size.width, sampleBytes);
+        if (!rowBytes)
+            return rowBytes.error();
+        auto rle = decodePackBitsPlane(
+            bytes.subspan(reader.position),
+            std::uint32_t(rows.value()), rowBytes.value(),
+            version == 2, limits.decodedBytes);
+        if (!rle)
+            return rle.error();
+        decodedComposite = std::move(rle.value());
+        compositePlanes = decodedComposite;
+    } else if (compositeCompression == 2 || compositeCompression == 3) {
+        auto zip = decodeZipPlane(bytes.subspan(reader.position),
+                                  compositeByteCount.value(), limits.decodedBytes);
+        if (!zip)
+            return zip.error();
+        decodedComposite = std::move(zip.value());
+        if (compositeCompression == 3) {
+            auto predictionRows =
+                checkedMultiply(metadata.value().size.height, compositeChannels);
+            if (!predictionRows)
+                return predictionRows.error();
+            Result<void> prediction =
+                sampleBytes == 1
+                    ? undoZipPrediction8(decodedComposite, metadata.value().size.width,
+                                         predictionRows.value())
+                    : undoZipPrediction16(decodedComposite, metadata.value().size.width,
+                                          predictionRows.value());
+            if (!prediction)
+                return prediction.error();
+        }
+        compositePlanes = decodedComposite;
+    } else {
+        return error(ErrorCode::UnsupportedFeature, "psd.composite-compression");
+    }
 
     TileData composite;
     composite.width = std::uint32_t(metadata.value().size.width);
@@ -867,19 +910,19 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
 
     for (unsigned channel = 0; channel < compositeChannels; ++channel) {
         for (std::uint64_t pixel = 0; pixel < compositePixels.value(); ++pixel) {
-            const auto src = reader.position +
-                             std::size_t((std::uint64_t(channel) * compositePixels.value() +
-                                          pixel) * sampleBytes);
+            const auto src =
+                std::size_t((std::uint64_t(channel) * compositePixels.value() +
+                             pixel) * sampleBytes);
             const auto dst = std::size_t(pixel * compositeChannels * sampleBytes +
                                          std::uint64_t(channel) * sampleBytes);
             if (sampleBytes == 1) {
-                auto value = bytes[src];
+                auto value = compositePlanes[src];
                 if (compositeFormat.mode == ColorMode::CMYK && channel < baseChannels)
                     value = std::uint8_t(255u - value);
                 composite.bytes[dst] = value;
             } else {
                 auto value = std::uint16_t(
-                    (std::uint16_t(bytes[src]) << 8) | bytes[src + 1]);
+                    (std::uint16_t(compositePlanes[src]) << 8) | compositePlanes[src + 1]);
                 if (compositeFormat.mode == ColorMode::CMYK && channel < baseChannels)
                     value = std::uint16_t(65535u - value);
                 composite.bytes[dst] = std::uint8_t(value);
@@ -887,7 +930,6 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
             }
         }
     }
-    reader.position += std::size_t(compositeByteCount.value());
     decoded.composite = std::move(composite);
     return decoded;
 }
