@@ -386,6 +386,7 @@ Result<PhotoshopInfo> readPhotoshopHeader(std::span<const std::uint8_t> bytes,
         return error(ErrorCode::CorruptData, "psd.layer-count");
 
     const auto signedCount = std::int16_t(u16(bytes.data() + reader.position - 2));
+    out.signedLayerCount = signedCount;
     const int layerCount = signedCount < 0 ? -signedCount : signedCount;
     if (std::uint64_t(layerCount) > limits.nodes)
         return error(ErrorCode::BudgetExceeded, "psd.layer-count-limit");
@@ -830,10 +831,13 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
     if (reader.position == bytes.size())
         return decoded;
 
-    const bool compositeAlpha = metadata.value().channels == baseChannels + 1u;
-    if (metadata.value().channels != baseChannels &&
-        metadata.value().channels != baseChannels + 1u)
+    const bool hasExtraChannel = metadata.value().channels == baseChannels + 1u;
+    if (metadata.value().channels != baseChannels && !hasExtraChannel)
         return error(ErrorCode::UnsupportedFeature, "psd.composite-extra-channels");
+    if (hasExtraChannel && metadata.value().signedLayerCount &&
+        *metadata.value().signedLayerCount > 0)
+        return error(ErrorCode::UnsupportedFeature, "psd.composite-extra-channels");
+    const bool compositeAlpha = hasExtraChannel;
     PixelFormat compositeFormat{
         baseChannels == 3 ? ColorMode::RGB : ColorMode::CMYK,
         depth,
