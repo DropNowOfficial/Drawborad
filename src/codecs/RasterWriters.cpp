@@ -103,12 +103,20 @@ Result<Bytes> encodePng(const TileData& p,const RasterEncodingOptions& o) {
 #endif
     }
     png_text xmpText{};
+    std::string xmpStorage;
     if(o.metadata.preserveXmp && !o.metadata.xmp.empty()) {
+        if(std::find(o.metadata.xmp.begin(),o.metadata.xmp.end(),std::uint8_t(0))!=
+           o.metadata.xmp.end()) {
+            png_destroy_write_struct(&png,&info);
+            return error(ErrorCode::InvalidInput,"png.xmp-nul");
+        }
+        xmpStorage.assign(reinterpret_cast<const char*>(o.metadata.xmp.data()),
+                          o.metadata.xmp.size());
         xmpText.compression=PNG_ITXT_COMPRESSION_NONE;
         xmpText.key=const_cast<png_charp>("XML:com.adobe.xmp");
-        xmpText.text=reinterpret_cast<png_charp>(const_cast<std::uint8_t*>(o.metadata.xmp.data()));
-        xmpText.text_length=o.metadata.xmp.size();
-        xmpText.itxt_length=o.metadata.xmp.size();
+        xmpText.text=xmpStorage.data();
+        xmpText.text_length=xmpStorage.size();
+        xmpText.itxt_length=xmpStorage.size();
         png_set_text(png,info,&xmpText,1);
     }
     png_write_info(png,info);
