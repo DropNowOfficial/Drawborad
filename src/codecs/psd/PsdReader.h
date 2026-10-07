@@ -22,6 +22,7 @@ struct PhotoshopInfo {
     ImageFormat format{ImageFormat::Unknown};
     PixelSize size{};
     std::uint16_t channels{}, depth{}, colorMode{};
+    std::optional<std::int16_t> signedLayerCount;
     Bytes iccProfile;
     double ppi{};
     std::vector<PhotoshopLayerInfo> layers;
