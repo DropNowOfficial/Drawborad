@@ -166,6 +166,42 @@ TEST("C05 merged composite carries real pixels and alpha") {
     CHECK(decoded.value().composite->bytes==layer.pixels.bytes);
 }
 
+TEST("C05 alpha merged image uses negative PSD layer count"){
+    PsdWriteRequest q;
+    q.size={1,1};
+    q.format={ColorMode::RGB,Depth::U8,true};
+    PsdLayerPixels layer;
+    layer.name="Alpha";
+    layer.pixels.width=1;
+    layer.pixels.height=1;
+    layer.pixels.format=q.format;
+    layer.pixels.rowStride=4;
+    layer.pixels.bytes={12,34,56,78};
+    q.layers.push_back(layer);
+    q.merged=layer.pixels;
+    auto encoded=encodePsd(q);
+    CHECK(encoded);
+
+    const auto read32=[](const Bytes& bytes,std::size_t pos){
+        return (std::uint32_t(bytes[pos])<<24)|(std::uint32_t(bytes[pos+1])<<16)|
+               (std::uint32_t(bytes[pos+2])<<8)|bytes[pos+3];
+    };
+    std::size_t at=26;
+    for(int section=0;section<2;++section){
+        const auto length=read32(encoded.value(),at);
+        at+=4+length;
+    }
+    const auto layerMaskLength=read32(encoded.value(),at);
+    at+=4;
+    CHECK(layerMaskLength>=6);
+    const auto layerInfoLength=read32(encoded.value(),at);
+    at+=4;
+    CHECK(layerInfoLength>=2);
+    const auto rawCount=std::uint16_t(
+        (std::uint16_t(encoded.value()[at])<<8)|encoded.value()[at+1]);
+    CHECK(std::int16_t(rawCount)==-1);
+}
+
 
 namespace {
 std::uint32_t readBe32(const Bytes& bytes,std::size_t at){
