@@ -22,6 +22,18 @@ Result<ExportPlan> preflightExport(ColorMode mode,const ExportRequest&r){
         return error(ErrorCode::ConversionConsentRequired,"export.jpeg-matte");
     return p;
 }
+Result<ExportPlan> preflightExport(const DocumentSnapshot& document,const ExportRequest& request){
+    auto valid=validateSnapshot(document);
+    if(!valid)return valid.error();
+    if(request.size!=document.spec.pixelSize)
+        return error(ErrorCode::InvalidInput,"export.document-size-mismatch");
+    if(request.depth!=document.spec.colorSpec.format.depth)
+        return error(ErrorCode::UnsupportedFeature,"export.depth-conversion-unimplemented");
+    ExportRequest normalized=request;
+    if(normalized.profile.empty() && document.spec.colorSpec.format.mode==ColorMode::RGB)
+        normalized.profile=document.spec.colorSpec.profileId;
+    return preflightExport(document.spec.colorSpec.format.mode,normalized);
+}
 Result<ExportReport> writeRasterPlaceholder(const ExportPlan&p,std::span<const std::uint8_t> payload,std::stop_token st){
     if(st.stop_requested())return error(ErrorCode::Cancelled,"export.cancelled");
     if(p.request.path.empty())return error(ErrorCode::InvalidInput,"export.path");

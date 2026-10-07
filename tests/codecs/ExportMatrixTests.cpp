@@ -271,3 +271,22 @@ TEST("C06 GPS-bearing EXIF requires separate explicit consent") {
     auto allowed=encodeRaster(ExportFormat::Jpeg,pixels,options);
     CHECK(allowed);
 }
+
+
+#include "RenderFixture.h"
+TEST("C06 document preflight binds export dimensions and document color mode"){
+    auto s=fixture::snapshot(ColorMode::CMYK,Depth::U16,32,16);
+    ExportRequest r;
+    r.format=ExportFormat::Png;
+    r.path="x.png";
+    r.size=s.spec.pixelSize;
+    r.depth=Depth::U16;
+    r.conversionConsent=true;
+    r.profile.bytes[0]=2;
+    auto plan=preflightExport(s,r);
+    CHECK(plan);
+    CHECK(plan.value().request.size==s.spec.pixelSize);
+    CHECK(plan.value().requiresRgbConversion);
+    r.size={31,16};
+    CHECK(!preflightExport(s,r));
+}

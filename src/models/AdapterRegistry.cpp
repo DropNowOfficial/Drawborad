@@ -124,4 +124,11 @@ Result<CompatibilityReport> probeModel(const ModelManifest& m, DevicePreference 
         return CompatibilityReport{true,"cpu-fallback-explicit",m.ramBytes,0,device};
     return CompatibilityReport{true,"manifest-contract-valid",m.ramBytes,m.gpuBytes,device};
 }
+Result<CompatibilityReport> probeModel(const ModelRegistry& registry,ModelId id,
+                                       DevicePreference device,std::stop_token stop){
+    auto manifest=registry.manifest(id);
+    if(!manifest)return manifest.error();
+    return probeModel(manifest.value(),device,stop);
+}
+
 }

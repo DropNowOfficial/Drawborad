@@ -90,3 +90,11 @@ TEST("M05 SAM logical adapter exposes image prompts mask and int64 labels"){
     CHECK(a.value().inputs[4].name=="has_mask_input");
     CHECK(a.value().outputs.size()==2);
 }
+
+
+TEST("M05 registry-bound probe rejects unknown ModelId instead of bypassing registry"){
+    ModelRegistry registry;
+    auto result=probeModel(registry,Id::fromNumber(777),DevicePreference::CPU);
+    CHECK(!result);
+    CHECK(result.error().code==ErrorCode::InvalidInput);
+}
