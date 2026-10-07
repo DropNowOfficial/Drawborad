@@ -217,7 +217,8 @@ Result<std::optional<LayerInfoLocation>> locateLayerInfo(
 }
 
 Result<void> readLayerExtra(std::span<const std::uint8_t> bytes, std::size_t begin,
-                            std::size_t end, PhotoshopLayerInfo& layer) {
+                            std::size_t end, std::uint16_t version,
+                            PhotoshopLayerInfo& layer) {
     if (begin > end || end > bytes.size())
         return error(ErrorCode::CorruptData, "psd.extra-bounds");
     auto at = begin;
@@ -273,8 +274,13 @@ Result<void> readLayerExtra(std::span<const std::uint8_t> bytes, std::size_t beg
             std::memcmp(signature, "8B64", 4) != 0)
             break;
         const auto* key = signature + 4;
-        const auto blockLength = std::uint64_t(u32(signature + 8));
-        at += 12;
+        const auto keySpan = bytes.subspan(at + 4, 4);
+        const bool longLength = version == 2 && psbEightByteAdditionalLength(keySpan);
+        const std::size_t lengthBytes = longLength ? 8u : 4u;
+        if (end - at < 8 + lengthBytes)
+            return error(ErrorCode::CorruptData, "psd.additional-info-length");
+        const auto blockLength = sizedLength(bytes, at + 8, lengthBytes);
+        at += 8 + lengthBytes;
         if (blockLength > end - at)
             return error(ErrorCode::CorruptData, "psd.additional-info-bounds");
         if (std::memcmp(key, "luni", 4) == 0) {
@@ -428,7 +434,7 @@ Result<PhotoshopInfo> readPhotoshopHeader(std::span<const std::uint8_t> bytes,
             return error(ErrorCode::CorruptData, "psd.extra");
         const auto extraBegin = reader.position;
         const auto extraEnd = extraBegin + std::size_t(extra);
-        auto parsedExtra = readLayerExtra(bytes, extraBegin, extraEnd, layer);
+        auto parsedExtra = readLayerExtra(bytes, extraBegin, extraEnd, version, layer);
         if (!parsedExtra)
             return parsedExtra.error();
         reader.position = extraEnd;
@@ -670,7 +676,7 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
             return error(ErrorCode::CorruptData, "psd.decode-extra-bounds");
         const auto extraBegin = reader.position;
         const auto extraEnd = extraBegin + std::size_t(extra);
-        auto parsedExtra = readLayerExtra(bytes, extraBegin, extraEnd, record.info);
+        auto parsedExtra = readLayerExtra(bytes, extraBegin, extraEnd, version, record.info);
         if (!parsedExtra)
             return parsedExtra.error();
         reader.position = extraEnd;
