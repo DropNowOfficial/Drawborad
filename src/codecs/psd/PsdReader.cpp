@@ -426,6 +426,7 @@ Result<PhotoshopInfo> readPhotoshopHeader(std::span<const std::uint8_t> bytes,
 
         reader.position += 8;
         layer.opacity = bytes[reader.position];
+        layer.visible = (bytes[reader.position + 2] & 0x02u) == 0;
         reader.position += 4;
 
         const auto extra = std::uint64_t(u32(bytes.data() + reader.position));
@@ -667,6 +668,7 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
         else return error(ErrorCode::UnsupportedFeature, "psd.decode-blend-mode");
         reader.position += 8;
         record.info.opacity = bytes[reader.position];
+        record.info.visible = (bytes[reader.position + 2] & 0x02u) == 0;
         reader.position += 4;
         if (reader.position + 4 > layerInfoEnd)
             return error(ErrorCode::CorruptData, "psd.decode-extra-length");

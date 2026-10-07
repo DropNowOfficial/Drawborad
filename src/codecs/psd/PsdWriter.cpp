@@ -273,7 +273,7 @@ Result<Bytes> encodePsd(const PsdWriteRequest& request) {
         records.insert(records.end(), blendKey, blendKey + 4);
         records.push_back(layer.opacity);
         records.push_back(0);
-        records.push_back(0);
+        records.push_back(std::uint8_t(0x08u | (layer.visible ? 0u : 0x02u)));
         records.push_back(0);
 
         Bytes extra;
@@ -546,7 +546,7 @@ Result<void> writePsd(const PsdWriteRequest& request, std::stop_token stop,
         records.insert(records.end(), blendKey, blendKey + 4);
         records.push_back(layer.opacity);
         records.push_back(0);
-        records.push_back(0);
+        records.push_back(std::uint8_t(0x08u | (layer.visible ? 0u : 0x02u)));
         records.push_back(0);
 
         Bytes extra;

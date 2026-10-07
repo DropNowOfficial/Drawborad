@@ -9,6 +9,7 @@ struct PhotoshopLayerInfo {
     std::int32_t top{}, left{}, bottom{}, right{};
     std::uint16_t channels{};
     std::uint8_t opacity{};
+    bool visible{true};
     BlendMode blend{BlendMode::Normal};
     std::string name;
     Rect maskBounds{};

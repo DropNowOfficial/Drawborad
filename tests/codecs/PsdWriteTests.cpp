@@ -341,3 +341,22 @@ TEST("C04 Lr16 additional layer info is used when main 16-bit layer info is empt
     CHECK(decoded.value().layers.size()==1);
     CHECK(decoded.value().layers[0].pixels.bytes==layer.pixels.bytes);
 }
+
+
+TEST("C05 hidden layer visibility survives PSD roundtrip"){
+    PsdWriteRequest q;
+    q.size={1,1};
+    q.format={ColorMode::RGB,Depth::U8,true};
+    PsdLayerPixels layer;
+    layer.name="hidden";
+    layer.visible=false;
+    layer.pixels.width=1;layer.pixels.height=1;layer.pixels.format=q.format;
+    layer.pixels.rowStride=4;
+    layer.pixels.bytes={1,2,3,255};
+    q.layers.push_back(layer);
+    auto encoded=encodePsd(q);CHECK(encoded);
+    CodecLimits limits;
+    auto info=readPhotoshopHeader(encoded.value(),limits);CHECK(info);
+    CHECK(info.value().layers.size()==1);
+    CHECK(!info.value().layers[0].visible);
+}

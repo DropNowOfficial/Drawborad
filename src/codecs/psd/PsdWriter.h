@@ -7,6 +7,7 @@ struct PsdLayerPixels {
     std::string name;
     TileData pixels;
     std::uint8_t opacity{255};
+    bool visible{true};
     BlendMode blend{BlendMode::Normal};
     Bytes mask;
     Rect maskBounds{};
