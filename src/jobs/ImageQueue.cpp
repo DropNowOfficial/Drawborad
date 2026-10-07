@@ -30,5 +30,15 @@ Result<void> ImageQueue::finish(std::size_t i,bool success,Revision resultRevisi
     if(!success&&policy_.stopOnFailure)paused_=true;
     return{};
 }
-Result<void> ImageQueue::cancel(std::size_t i){if(i>=items_.size())return error(ErrorCode::InvalidInput,"queue.item");if(activeHeavy_&&*activeHeavy_==i)activeHeavy_.reset();items_[i].state=QueueState::Cancelled;return{};}
+Result<void> ImageQueue::cancel(std::size_t i){
+    if(i>=items_.size())
+        return error(ErrorCode::InvalidInput,"queue.item");
+    const auto state=items_[i].state;
+    if(state==QueueState::Done||state==QueueState::Failed||state==QueueState::Cancelled)
+        return error(ErrorCode::InvalidInput,"queue.terminal");
+    if(activeHeavy_&&*activeHeavy_==i)
+        activeHeavy_.reset();
+    items_[i].state=QueueState::Cancelled;
+    return{};
+}
 }
