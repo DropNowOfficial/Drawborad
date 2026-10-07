@@ -52,14 +52,38 @@ class JsonCursor {
         if(s_[p_]=='"'){auto v=str();if(!v)return v.error();return {};}
         if(s_[p_]=='{'){++p_;ws();if(p_<s_.size()&&s_[p_]=='}'){++p_;return{};}for(;;){auto k=str();if(!k)return k.error();ws();if(p_>=s_.size()||s_[p_++]!=':')return error(ErrorCode::CorruptData,"model.manifest-colon");auto v=skip(depth+1);if(!v)return v.error();ws();if(p_>=s_.size())return error(ErrorCode::CorruptData,"model.manifest-object-end");char c=s_[p_++];if(c=='}')return{};if(c!=',')return error(ErrorCode::CorruptData,"model.manifest-object-separator");}}
         if(s_[p_]=='['){++p_;ws();if(p_<s_.size()&&s_[p_]==']'){++p_;return{};}for(;;){auto v=skip(depth+1);if(!v)return v.error();ws();if(p_>=s_.size())return error(ErrorCode::CorruptData,"model.manifest-array-end");char c=s_[p_++];if(c==']')return{};if(c!=',')return error(ErrorCode::CorruptData,"model.manifest-array-separator");}}
-        const auto begin=p_;while(p_<s_.size()&&s_[p_]!=','&&s_[p_]!=']'&&s_[p_]!='}'&&!std::isspace(static_cast<unsigned char>(s_[p_])))++p_;auto token=s_.substr(begin,p_-begin);
+        const auto begin=p_;
+        while(p_<s_.size()&&s_[p_]!=','&&s_[p_]!=']'&&s_[p_]!='}'&&
+              !std::isspace(static_cast<unsigned char>(s_[p_])))++p_;
+        auto token=s_.substr(begin,p_-begin);
         if(token=="true"||token=="false"||token=="null")return{};
         if(token.empty())return error(ErrorCode::CorruptData,"model.manifest-token");
-        std::size_t q=0;if(token[q]=='-')++q;if(q>=token.size()||token[q]<'0'||token[q]>'9')return error(ErrorCode::CorruptData,"model.manifest-token");
-        for(;q<token.size();++q){
-            if((token[q]<'0'||token[q]>'9')&&token[q]!='.'&&token[q]!='e'&&token[q]!='E'&&token[q]!='+'&&token[q]!='-')
+        std::size_t q=0;
+        if(token[q]=='-')++q;
+        if(q>=token.size())return error(ErrorCode::CorruptData,"model.manifest-number");
+        if(token[q]=='0'){
+            ++q;
+            if(q<token.size()&&token[q]>='0'&&token[q]<='9')
                 return error(ErrorCode::CorruptData,"model.manifest-number");
+        }else if(token[q]>='1'&&token[q]<='9'){
+            while(q<token.size()&&token[q]>='0'&&token[q]<='9')++q;
+        }else{
+            return error(ErrorCode::CorruptData,"model.manifest-number");
         }
+        if(q<token.size()&&token[q]=='.'){
+            ++q;
+            const auto digits=q;
+            while(q<token.size()&&token[q]>='0'&&token[q]<='9')++q;
+            if(q==digits)return error(ErrorCode::CorruptData,"model.manifest-number");
+        }
+        if(q<token.size()&&(token[q]=='e'||token[q]=='E')){
+            ++q;
+            if(q<token.size()&&(token[q]=='+'||token[q]=='-'))++q;
+            const auto digits=q;
+            while(q<token.size()&&token[q]>='0'&&token[q]<='9')++q;
+            if(q==digits)return error(ErrorCode::CorruptData,"model.manifest-number");
+        }
+        if(q!=token.size())return error(ErrorCode::CorruptData,"model.manifest-number");
         return {};
     }
     Result<JsonAtom> atom(){
