@@ -46,6 +46,48 @@ Result<Hash> FileIO::hash(const fs::path& p, std::uint64_t maxBytes) const {
     return sha256(bytes.value());
 }
 Result<Bytes> NativeFileIO::read(const fs::path& p, std::uint64_t max) const {
+#ifdef _WIN32
+    HANDLE h = CreateFileW(wp(p).c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                           FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (h == INVALID_HANDLE_VALUE)
+        return ioerr("io.open");
+    BY_HANDLE_FILE_INFORMATION info{};
+    LARGE_INTEGER size{};
+    if (!GetFileInformationByHandle(h, &info) ||
+        (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) ||
+        !GetFileSizeEx(h, &size) || size.QuadPart < 0) {
+        CloseHandle(h);
+        return error(ErrorCode::PathEscape, "io.read-metadata");
+    }
+    const auto n = static_cast<std::uint64_t>(size.QuadPart);
+    if (n > max || n > SIZE_MAX) {
+        CloseHandle(h);
+        return error(ErrorCode::BudgetExceeded, "io.read-limit");
+    }
+    Bytes b;
+    try {
+        b.resize(static_cast<std::size_t>(n));
+    } catch (const std::bad_alloc&) {
+        CloseHandle(h);
+        return error(ErrorCode::BudgetExceeded, "io.read-allocation");
+    }
+    std::size_t pos = 0;
+    while (pos < b.size()) {
+        const auto chunk = DWORD(std::min<std::size_t>(b.size() - pos, 1u << 20));
+        DWORD got = 0;
+        if (!ReadFile(h, b.data() + pos, chunk, &got, nullptr) || got != chunk) {
+            CloseHandle(h);
+            return ioerr("io.short-or-growing-file");
+        }
+        pos += got;
+    }
+    LARGE_INTEGER after{};
+    const bool stable = GetFileSizeEx(h, &after) && after.QuadPart == size.QuadPart;
+    CloseHandle(h);
+    if (!stable)
+        return ioerr("io.short-or-growing-file");
+    return b;
+#else
     std::error_code ec;
     const auto n = fs::file_size(p, ec);
     if (ec)
@@ -61,8 +103,54 @@ Result<Bytes> NativeFileIO::read(const fs::path& p, std::uint64_t max) const {
     if (!f || f.peek() != std::char_traits<char>::eof())
         return ioerr("io.short-or-growing-file");
     return b;
+#endif
 }
 Result<Hash> NativeFileIO::hash(const fs::path& p, std::uint64_t maxBytes) const {
+#ifdef _WIN32
+    HANDLE h = CreateFileW(wp(p).c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                           FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (h == INVALID_HANDLE_VALUE)
+        return ioerr("io.open");
+    BY_HANDLE_FILE_INFORMATION info{};
+    LARGE_INTEGER size{};
+    if (!GetFileInformationByHandle(h, &info) ||
+        (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) ||
+        !GetFileSizeEx(h, &size) || size.QuadPart < 0) {
+        CloseHandle(h);
+        return error(ErrorCode::PathEscape, "io.hash-metadata");
+    }
+    const auto expected = static_cast<std::uint64_t>(size.QuadPart);
+    if (expected > maxBytes) {
+        CloseHandle(h);
+        return error(ErrorCode::BudgetExceeded, "io.hash-limit");
+    }
+    Sha256State state;
+    std::vector<std::uint8_t> buffer;
+    try {
+        buffer.resize(1024 * 1024);
+    } catch (const std::bad_alloc&) {
+        CloseHandle(h);
+        return error(ErrorCode::BudgetExceeded, "io.hash-buffer");
+    }
+    std::uint64_t total = 0;
+    while (total < expected) {
+        const auto request =
+            DWORD(std::min<std::uint64_t>(buffer.size(), expected - total));
+        DWORD got = 0;
+        if (!ReadFile(h, buffer.data(), request, &got, nullptr) || got != request) {
+            CloseHandle(h);
+            return ioerr("io.short-or-growing-file");
+        }
+        state.update(std::span<const std::uint8_t>(buffer.data(), got));
+        total += got;
+    }
+    LARGE_INTEGER after{};
+    const bool stable = GetFileSizeEx(h, &after) && after.QuadPart == size.QuadPart;
+    CloseHandle(h);
+    if (!stable)
+        return ioerr("io.short-or-growing-file");
+    return state.finish();
+#else
     std::error_code ec;
     const auto expected = fs::file_size(p, ec);
     if (ec)
@@ -92,6 +180,7 @@ Result<Hash> NativeFileIO::hash(const fs::path& p, std::uint64_t maxBytes) const
     if (in.peek() != std::char_traits<char>::eof())
         return ioerr("io.short-or-growing-file");
     return state.finish();
+#endif
 }
 Result<void> NativeFileIO::write(const fs::path& p, std::span<const std::uint8_t> bytes,
                                  bool exclusive) {
