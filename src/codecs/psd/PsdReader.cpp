@@ -147,6 +147,23 @@ bool supportedLayerChannelId(std::int16_t id, std::uint16_t colorMode) {
     return id == -2 || id == -1 || (id >= 0 && id < baseChannels);
 }
 
+bool unsupportedLayerFeatureKey(const std::uint8_t* key) {
+    static constexpr const char* keys[]{
+        "Alph","anFX","artb","artd","abdd",
+        "blwh","clbl","iOpa","infx","brit","brst","mixr","blnc","clrL","cinf",
+        "curv","lrFX","expA","FXid","FEid","FELS","FMsk","ffxi","frgb",
+        "GdFl","grdm","hue2","hue ","nvrt","knko","lmgm","levl",
+        "lfx2","lmfx","lfxs","PtFl","phfl","PxSc","PxSD","post","selc",
+        "SoCo","Txt2","thrs","tsly","LMsk","vmgm","vmsk","vsms","vogk",
+        "TySh","tySh","SoLE","SoLd","PlLd","plLd","lnk2","lnkD","lnk3","lnkE"
+    };
+    for (const char* candidate : keys) {
+        if (std::memcmp(key, candidate, 4) == 0)
+            return true;
+    }
+    return false;
+}
+
 bool psbEightByteAdditionalLength(std::span<const std::uint8_t> key) {
     if (key.size() != 4)
         return false;
@@ -317,16 +334,7 @@ Result<void> readLayerExtra(std::span<const std::uint8_t> bytes, std::size_t beg
             if (!decoded)
                 return decoded.error();
             layer.name = std::move(decoded.value());
-        } else if (std::memcmp(key, "TySh", 4) == 0 ||
-                   std::memcmp(key, "tySh", 4) == 0 ||
-                   std::memcmp(key, "SoLE", 4) == 0 ||
-                   std::memcmp(key, "SoLd", 4) == 0 ||
-                   std::memcmp(key, "PlLd", 4) == 0 ||
-                   std::memcmp(key, "plLd", 4) == 0 ||
-                   std::memcmp(key, "lnk2", 4) == 0 ||
-                   std::memcmp(key, "lnkD", 4) == 0 ||
-                   std::memcmp(key, "lnk3", 4) == 0 ||
-                   std::memcmp(key, "lnkE", 4) == 0) {
+        } else if (unsupportedLayerFeatureKey(key)) {
             return Error{ErrorCode::UnsupportedFeature, "psd.unsupported-layer-feature",
                          std::string(reinterpret_cast<const char*>(key), 4)};
         } else if (std::memcmp(key, "lsct", 4) == 0 ||
