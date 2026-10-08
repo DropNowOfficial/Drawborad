@@ -828,6 +828,14 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
     decoded.info = metadata.value();
     decoded.layers.reserve(records.size());
 
+    std::uint64_t retainedDecodedBytes = 0;
+    auto retainDecoded = [&](std::uint64_t amount) -> Result<void> {
+        if (amount > limits.decodedBytes - retainedDecodedBytes)
+            return error(ErrorCode::BudgetExceeded, "psd.decode-total-budget");
+        retainedDecodedBytes += amount;
+        return {};
+    };
+
     for (const auto& record : records) {
         if (record.info.right < record.info.left || record.info.bottom < record.info.top)
             return error(ErrorCode::CorruptData, "psd.decode-layer-rectangle");
@@ -847,6 +855,9 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
         if (!byteCount || byteCount.value() > limits.decodedBytes ||
             byteCount.value() > SIZE_MAX)
             return error(ErrorCode::BudgetExceeded, "psd.decode-layer-bytes");
+        auto retainedLayer = retainDecoded(byteCount.value());
+        if (!retainedLayer)
+            return retainedLayer.error();
 
         TileData tile;
         tile.format = format;
@@ -917,6 +928,9 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
             }
 
             if (maskChannel) {
+                auto retainedMask = retainDecoded(channelPixels.value());
+                if (!retainedMask)
+                    return retainedMask.error();
                 userMask.resize(std::size_t(channelPixels.value()));
                 for (std::uint64_t pixel = 0; pixel < channelPixels.value(); ++pixel) {
                     const auto src = std::size_t(pixel * sampleBytes);
@@ -991,6 +1005,9 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
     if (!compositeByteCount || compositeByteCount.value() > limits.decodedBytes ||
         compositeByteCount.value() > SIZE_MAX)
         return error(ErrorCode::BudgetExceeded, "psd.composite-budget");
+    auto retainedComposite = retainDecoded(compositeByteCount.value());
+    if (!retainedComposite)
+        return retainedComposite.error();
 
     Bytes decodedComposite;
     std::span<const std::uint8_t> compositePlanes;
