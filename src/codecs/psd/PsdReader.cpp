@@ -368,6 +368,9 @@ Result<PhotoshopInfo> readPhotoshopHeader(std::span<const std::uint8_t> bytes,
         return error(ErrorCode::CorruptData, "psd.header-values");
     if (out.colorMode != 3 && out.colorMode != 4)
         return error(ErrorCode::UnsupportedFeature, "psd.color-mode");
+    const auto baseChannels = out.colorMode == 3 ? 3u : 4u;
+    if (out.channels < baseChannels)
+        return error(ErrorCode::CorruptData, "psd.channel-count");
     const std::uint64_t dimensionLimit = version == 1 ? 30000ull : 300000ull;
     if (out.size.width > dimensionLimit || out.size.height > dimensionLimit)
         return error(ErrorCode::UnsupportedFeature, "psd.dimension-limit");
