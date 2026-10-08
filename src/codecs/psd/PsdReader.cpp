@@ -492,7 +492,10 @@ Result<PhotoshopInfo> readPhotoshopHeader(std::span<const std::uint8_t> bytes,
         layer.opacity = bytes[reader.position];
         if (bytes[reader.position + 1] != 0)
             return error(ErrorCode::UnsupportedFeature, "psd.layer-clipping");
-        layer.visible = (bytes[reader.position + 2] & 0x02u) == 0;
+        const auto layerFlags = bytes[reader.position + 2];
+        if ((layerFlags & 0x10u) != 0)
+            return error(ErrorCode::UnsupportedFeature, "psd.layer-flags");
+        layer.visible = (layerFlags & 0x02u) == 0;
         reader.position += 4;
 
         const auto extra = std::uint64_t(u32(bytes.data() + reader.position));
@@ -756,7 +759,10 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
         record.info.opacity = bytes[reader.position];
         if (bytes[reader.position + 1] != 0)
             return error(ErrorCode::UnsupportedFeature, "psd.layer-clipping");
-        record.info.visible = (bytes[reader.position + 2] & 0x02u) == 0;
+        const auto layerFlags = bytes[reader.position + 2];
+        if ((layerFlags & 0x10u) != 0)
+            return error(ErrorCode::UnsupportedFeature, "psd.layer-flags");
+        record.info.visible = (layerFlags & 0x02u) == 0;
         reader.position += 4;
         if (reader.position + 4 > layerInfoEnd)
             return error(ErrorCode::CorruptData, "psd.decode-extra-length");
