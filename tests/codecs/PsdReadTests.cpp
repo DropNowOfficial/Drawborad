@@ -557,6 +557,76 @@ TEST("C04 extra layer color channel is explicit unsupported instead of silently 
     CHECK(result.error().messageKey=="psd.unsupported-layer-channel");
 }
 
+namespace {
+std::size_t firstLayerFixedFields(Bytes& b){
+    const auto read32=[](const Bytes& bytes,std::size_t at){
+        return (std::uint32_t(bytes[at])<<24)|(std::uint32_t(bytes[at+1])<<16)|
+               (std::uint32_t(bytes[at+2])<<8)|bytes[at+3];
+    };
+    std::size_t at=26;
+    for(int section=0;section<2;++section){
+        const auto length=read32(b,at);
+        at+=4+length;
+    }
+    at+=4; // layer/mask length
+    at+=4; // layer-info length
+    at+=2; // layer count
+    at+=16; // layer rectangle
+    const auto channels=std::uint16_t(
+        (std::uint16_t(b[at])<<8)|b[at+1]);
+    at+=2+std::size_t(channels)*6u;
+    return at; // blend signature starts here
+}
+Bytes psdWithFirstLayerClipping(std::uint8_t clipping){
+    auto b=compressedLayerPsd(1);
+    const auto at=firstLayerFixedFields(b);
+    CHECK(at+12<=b.size());
+    b[at+9]=clipping;
+    return b;
+}
+Bytes maskedPsdWithFlags(std::uint8_t flags){
+    PsdWriteRequest q;
+    q.size={1,1};
+    q.format={ColorMode::RGB,Depth::U8,true};
+    PsdLayerPixels layer;
+    layer.name="Mask flags";
+    layer.pixels.width=1;
+    layer.pixels.height=1;
+    layer.pixels.format=q.format;
+    layer.pixels.rowStride=4;
+    layer.pixels.bytes={10,20,30,255};
+    layer.mask={255};
+    layer.maskBounds={0,0,1,1};
+    q.layers.push_back(layer);
+    auto encoded=encodePsd(q);
+    CHECK(encoded);
+    auto b=encoded.value();
+    const auto fixed=firstLayerFixedFields(b);
+    const auto extraLengthAt=fixed+12;
+    CHECK(extraLengthAt+8<=b.size());
+    const auto maskBody=extraLengthAt+4+4;
+    CHECK(maskBody+18<=b.size());
+    b[maskBody+17]=flags;
+    return b;
+}
+}
+
+TEST("C04 clipping layer semantics are explicit unsupported"){
+    CodecLimits limits;
+    auto result=readPhotoshopHeader(psdWithFirstLayerClipping(1),limits);
+    CHECK(!result);
+    CHECK(result.error().code==ErrorCode::UnsupportedFeature);
+    CHECK(result.error().messageKey=="psd.layer-clipping");
+}
+
+TEST("C04 nonzero user-mask flags are explicit unsupported"){
+    CodecLimits limits;
+    auto result=readPhotoshopHeader(maskedPsdWithFlags(1),limits);
+    CHECK(!result);
+    CHECK(result.error().code==ErrorCode::UnsupportedFeature);
+    CHECK(result.error().messageKey=="psd.mask-flags");
+}
+
 TEST("C04 file-level Photoshop import uses bounded decoder and marks imported source"){
     auto path=std::filesystem::temp_directory_path()/"drawborad-c04-file-import.psd";
     auto bytes=compressedLayerPsd(1);
