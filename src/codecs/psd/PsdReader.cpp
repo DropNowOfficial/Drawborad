@@ -857,8 +857,14 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
                 userMask.resize(std::size_t(channelPixels.value()));
                 for (std::uint64_t pixel = 0; pixel < channelPixels.value(); ++pixel) {
                     const auto src = std::size_t(pixel * sampleBytes);
-                    userMask[std::size_t(pixel)] =
-                        sampleBytes == 1 ? plane[src] : plane[src];
+                    if (sampleBytes == 1) {
+                        userMask[std::size_t(pixel)] = plane[src];
+                    } else {
+                        const auto value = std::uint16_t(
+                            (std::uint16_t(plane[src]) << 8) | plane[src + 1]);
+                        userMask[std::size_t(pixel)] = std::uint8_t(
+                            (std::uint32_t(value) + 128u) / 257u);
+                    }
                 }
             } else if (destination >= 0) {
                 for (std::uint64_t pixel = 0; pixel < pixels.value(); ++pixel) {
