@@ -128,7 +128,8 @@ if(DRAWBORAD_ONNXRUNTIME_ROOT)
 endif()
 
 add_library(drawborad_reconstruct STATIC
-  src/reconstruct/ReconstructionService.cpp src/reconstruct/EventWriter.cpp)
+  src/reconstruct/ReconstructionService.cpp src/reconstruct/EventWriter.cpp
+  src/reconstruct/ContourPlanner.cpp src/reconstruct/RegionPlanner.cpp src/reconstruct/StrokeScheduler.cpp)
 target_include_directories(drawborad_reconstruct PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(drawborad_reconstruct PUBLIC drawborad_models drawborad_color drawborad_core)
 
