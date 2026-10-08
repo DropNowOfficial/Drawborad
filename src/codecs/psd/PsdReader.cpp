@@ -164,7 +164,8 @@ bool psbEightByteAdditionalLength(std::span<const std::uint8_t> key) {
 
 Result<std::optional<LayerInfoLocation>> locateLayerInfo(
     std::span<const std::uint8_t> bytes, std::size_t sectionBegin,
-    std::size_t sectionEnd, std::uint16_t version, std::uint16_t depth) {
+    std::size_t sectionEnd, std::uint16_t version, std::uint16_t depth,
+    bool* mergedTransparencyTagged = nullptr) {
     if (sectionBegin > sectionEnd || sectionEnd > bytes.size())
         return error(ErrorCode::CorruptData, "psd.layer-mask-bounds");
     const std::size_t mainLengthBytes = version == 1 ? 4u : 8u;
@@ -209,6 +210,12 @@ Result<std::optional<LayerInfoLocation>> locateLayerInfo(
         const auto payload = at + 8 + lengthBytes;
         if (length > sectionEnd - payload)
             return error(ErrorCode::CorruptData, "psd.additional-layer-info-bounds");
+
+        if (mergedTransparencyTagged &&
+            (std::memcmp(key.data(), "Mtrn", 4) == 0 ||
+             std::memcmp(key.data(), "Mt16", 4) == 0)) {
+            *mergedTransparencyTagged = true;
+        }
 
         if (std::memcmp(key.data(), "lnk2", 4) == 0 ||
             std::memcmp(key.data(), "lnkD", 4) == 0 ||
@@ -408,7 +415,8 @@ Result<PhotoshopInfo> readPhotoshopHeader(std::span<const std::uint8_t> bytes,
 
     const auto sectionEnd = reader.position + std::size_t(total);
 
-    const auto located = locateLayerInfo(bytes, reader.position, sectionEnd, version, out.depth);
+    const auto located = locateLayerInfo(bytes, reader.position, sectionEnd, version,
+                                         out.depth, &out.mergedTransparencyTagged);
     if (!located)
         return located.error();
     if (!located.value())
@@ -912,7 +920,8 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
     if (metadata.value().channels != baseChannels && !hasExtraChannel)
         return error(ErrorCode::UnsupportedFeature, "psd.composite-extra-channels");
     if (hasExtraChannel && metadata.value().signedLayerCount &&
-        *metadata.value().signedLayerCount > 0)
+        *metadata.value().signedLayerCount > 0 &&
+        !metadata.value().mergedTransparencyTagged)
         return error(ErrorCode::UnsupportedFeature, "psd.composite-extra-channels");
     const bool compositeAlpha = hasExtraChannel;
     PixelFormat compositeFormat{
