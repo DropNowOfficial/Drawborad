@@ -97,6 +97,27 @@ TEST("C04 unsupported Photoshop color mode is rejected during header preflight")
     CHECK(result.error().messageKey=="psd.color-mode");
 }
 
+TEST("C04 Photoshop color modes require their base channel count"){
+    CodecLimits limits;
+    auto rgb=psd(1,1,1);
+    rgb[12]=0;
+    rgb[13]=2;
+    auto rgbResult=readPhotoshopHeader(rgb,limits);
+    CHECK(!rgbResult);
+    CHECK(rgbResult.error().code==ErrorCode::CorruptData);
+    CHECK(rgbResult.error().messageKey=="psd.channel-count");
+
+    auto cmyk=psd(1,1,1);
+    cmyk[12]=0;
+    cmyk[13]=3;
+    cmyk[24]=0;
+    cmyk[25]=4;
+    auto cmykResult=readPhotoshopHeader(cmyk,limits);
+    CHECK(!cmykResult);
+    CHECK(cmykResult.error().code==ErrorCode::CorruptData);
+    CHECK(cmykResult.error().messageKey=="psd.channel-count");
+}
+
 TEST("C04 RLE channel planes decode to exact interleaved RGBA pixels"){
     CodecLimits limits;
     auto decoded=decodePhotoshopLayers(compressedLayerPsd(1),ProfileId{},limits);
