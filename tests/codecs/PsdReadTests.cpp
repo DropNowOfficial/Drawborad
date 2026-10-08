@@ -415,6 +415,22 @@ TEST("C04 text layer data is rejected instead of silently claimed editable"){
     CHECK(result.error().messageKey=="psd.unsupported-layer-feature");
 }
 
+TEST("C04 legacy type tool layer data is rejected instead of silently claimed editable"){
+    CodecLimits limits;
+    auto result=readPhotoshopHeader(psdWithUnsupportedLayerTag("tySh"),limits);
+    CHECK(!result);
+    CHECK(result.error().code==ErrorCode::UnsupportedFeature);
+    CHECK(result.error().messageKey=="psd.unsupported-layer-feature");
+}
+
+TEST("C04 legacy placed layer data is rejected instead of silently claimed editable"){
+    CodecLimits limits;
+    auto result=readPhotoshopHeader(psdWithUnsupportedLayerTag("plLd"),limits);
+    CHECK(!result);
+    CHECK(result.error().code==ErrorCode::UnsupportedFeature);
+    CHECK(result.error().messageKey=="psd.unsupported-layer-feature");
+}
+
 TEST("C04 external linked layer data is rejected instead of silently claimed editable"){
     CodecLimits limits;
     auto result=readPhotoshopHeader(psdWithUnsupportedLayerTag("lnkE"),limits);
