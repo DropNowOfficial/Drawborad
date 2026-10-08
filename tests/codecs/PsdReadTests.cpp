@@ -221,6 +221,16 @@ TEST("C04 flattened PSD without layer section decodes raw merged composite"){
     checkFlatComposite(0);
 }
 
+TEST("C04 rejects nonzero reserved PSD header bytes"){
+    auto bytes=rgbFlatComposite(0);
+    bytes[6]=1;
+    CodecLimits limits;
+    auto result=readPhotoshopHeader(bytes,limits);
+    CHECK(!result);
+    CHECK(result.error().code==ErrorCode::CorruptData);
+    CHECK(result.error().messageKey=="psd.header-reserved");
+}
+
 TEST("C04 flattened PSD decodes RLE merged composite"){
     checkFlatComposite(1);
 }
@@ -452,6 +462,41 @@ TEST("C04 document linked-file info is rejected even when main layer info exists
     CHECK(!result);
     CHECK(result.error().code==ErrorCode::UnsupportedFeature);
     CHECK(result.error().messageKey=="psd.unsupported-document-feature");
+}
+
+namespace {
+Bytes psdWithDuplicateLayerChannelId(){
+    auto b=compressedLayerPsd(1);
+    const auto read32=[](const Bytes& bytes,std::size_t at){
+        return (std::uint32_t(bytes[at])<<24)|(std::uint32_t(bytes[at+1])<<16)|
+               (std::uint32_t(bytes[at+2])<<8)|bytes[at+3];
+    };
+    std::size_t at=26;
+    for(int section=0;section<2;++section){
+        const auto length=read32(b,at);
+        at+=4+length;
+    }
+    at+=4; // layer/mask length
+    at+=4; // layer-info length
+    at+=2; // layer count
+    at+=16; // first layer rectangle
+    at+=2; // channel count
+    const auto firstChannel=at;
+    const auto secondChannel=firstChannel+6;
+    CHECK(secondChannel+1<b.size());
+    b[secondChannel]=b[firstChannel];
+    b[secondChannel+1]=b[firstChannel+1];
+    return b;
+}
+}
+
+TEST("C04 duplicate layer channel IDs are corrupt"){
+    CodecLimits limits;
+    auto result=decodePhotoshopLayers(
+        psdWithDuplicateLayerChannelId(),ProfileId{},limits);
+    CHECK(!result);
+    CHECK(result.error().code==ErrorCode::CorruptData);
+    CHECK(result.error().messageKey=="psd.channel-duplicate");
 }
 
 TEST("C04 file-level Photoshop import uses bounded decoder and marks imported source"){
