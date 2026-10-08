@@ -127,6 +127,11 @@ if(DRAWBORAD_ONNXRUNTIME_ROOT)
   set(DRAWBORAD_HAS_ONNXRUNTIME TRUE)
 endif()
 
+add_library(drawborad_reconstruct STATIC
+  src/reconstruct/ReconstructionService.cpp src/reconstruct/EventWriter.cpp)
+target_include_directories(drawborad_reconstruct PUBLIC ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(drawborad_reconstruct PUBLIC drawborad_models drawborad_color drawborad_core)
+
 add_library(drawborad_render STATIC
   src/render/ReferenceRenderer.cpp src/render/CoverageRasterizer.cpp src/render/PixelBlend.cpp
   src/render/TileCache.cpp src/render/DisplayCache.cpp src/render/CacheEvictor.cpp
