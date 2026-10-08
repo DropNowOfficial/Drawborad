@@ -302,6 +302,8 @@ Result<void> readLayerExtra(std::span<const std::uint8_t> bytes, std::size_t beg
             right < std::int32_t(u32(bytes.data() + at + 4)))
             return error(ErrorCode::CorruptData, "psd.mask-rectangle");
         layer.maskDefault = bytes[at + 16];
+        if (layer.maskDefault != 0 && layer.maskDefault != 255)
+            return error(ErrorCode::CorruptData, "psd.mask-default");
         const auto maskFlags = bytes[at + 17];
         if (maskFlags != 0)
             return error(ErrorCode::UnsupportedFeature, "psd.mask-flags");
