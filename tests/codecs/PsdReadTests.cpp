@@ -1134,3 +1134,57 @@ TEST("C04 document user mask tag is explicit unsupported"){
     CHECK(result.error().code==ErrorCode::UnsupportedFeature);
     CHECK(result.error().messageKey=="psd.unsupported-document-feature");
 }
+
+
+namespace {
+std::uint32_t finalRead32(const Bytes& b,std::size_t at){
+    return (std::uint32_t(b[at])<<24)|(std::uint32_t(b[at+1])<<16)|
+           (std::uint32_t(b[at+2])<<8)|b[at+3];
+}
+void finalWrite32(Bytes& b,std::size_t at,std::uint32_t value){
+    b[at]=std::uint8_t(value>>24);b[at+1]=std::uint8_t(value>>16);
+    b[at+2]=std::uint8_t(value>>8);b[at+3]=std::uint8_t(value);
+}
+Bytes psdWithLayerBlendingRanges(){
+    PsdWriteRequest q;
+    q.size={1,1};q.format={ColorMode::RGB,Depth::U8,true};
+    PsdLayerPixels layer;
+    layer.name="Blend If";layer.pixels.width=1;layer.pixels.height=1;
+    layer.pixels.format=q.format;layer.pixels.rowStride=4;
+    layer.pixels.bytes={10,20,30,255};q.layers.push_back(layer);q.merged=layer.pixels;
+    auto encoded=encodePsd(q);CHECK(encoded);
+    auto b=encoded.value();
+    std::size_t at=26;
+    for(int section=0;section<2;++section){const auto n=finalRead32(b,at);at+=4+n;}
+    const auto layerMaskLengthAt=at;
+    at+=4;
+    const auto layerInfoLengthAt=at;
+    at+=4;
+    at+=2+16;
+    const auto channels=std::uint16_t((std::uint16_t(b[at])<<8)|b[at+1]);
+    at+=2+std::size_t(channels)*6u;
+    at+=12;
+    const auto extraLengthAt=at;
+    const auto extraLength=finalRead32(b,at);at+=4;
+    const auto maskLength=finalRead32(b,at);at+=4+maskLength;
+    const auto blendLengthAt=at;
+    CHECK(finalRead32(b,blendLengthAt)==0);
+    const Bytes ranges{32,32,220,220,0,0,255,255};
+    finalWrite32(b,blendLengthAt,std::uint32_t(ranges.size()));
+    b.insert(b.begin()+std::ptrdiff_t(blendLengthAt+4),ranges.begin(),ranges.end());
+    finalWrite32(b,extraLengthAt,extraLength+std::uint32_t(ranges.size()));
+    finalWrite32(b,layerInfoLengthAt,
+                 finalRead32(b,layerInfoLengthAt)+std::uint32_t(ranges.size()));
+    finalWrite32(b,layerMaskLengthAt,
+                 finalRead32(b,layerMaskLengthAt)+std::uint32_t(ranges.size()));
+    return b;
+}
+}
+
+TEST("C04 nonempty layer blending ranges are explicit unsupported"){
+    CodecLimits limits;
+    auto result=readPhotoshopHeader(psdWithLayerBlendingRanges(),limits);
+    CHECK(!result);
+    CHECK(result.error().code==ErrorCode::UnsupportedFeature);
+    CHECK(result.error().messageKey=="psd.layer-blending-ranges");
+}
