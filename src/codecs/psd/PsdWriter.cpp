@@ -33,6 +33,14 @@ std::uint16_t encodedLayerCount(std::size_t count, bool mergedTransparency) {
     return std::uint16_t(signedCount);
 }
 
+Bytes mergedTransparencyBlock(Depth depth) {
+    Bytes block{'8','B','I','M'};
+    const char* key = depth == Depth::U16 ? "Mt16" : "Mtrn";
+    block.insert(block.end(), key, key + 4);
+    put32(block, 0);
+    return block;
+}
+
 std::uint64_t whiteMatteSample(std::uint64_t value, std::uint64_t alpha,
                                std::uint64_t maximum) {
     if (alpha == 0 || alpha == maximum)
@@ -379,6 +387,10 @@ Result<Bytes> encodePsd(const PsdWriteRequest& request) {
     put32(layerMask, std::uint32_t(layerInfo.size()));
     layerMask.insert(layerMask.end(), layerInfo.begin(), layerInfo.end());
     put32(layerMask, 0);
+    if (request.format.alpha && request.layers.empty()) {
+        const auto transparency = mergedTransparencyBlock(request.format.depth);
+        layerMask.insert(layerMask.end(), transparency.begin(), transparency.end());
+    }
 
     if (layerMask.size() > UINT32_MAX)
         return error(ErrorCode::BudgetExceeded, "psd.layer-mask-size");
@@ -630,7 +642,14 @@ Result<void> writePsd(const PsdWriteRequest& request, std::stop_token stop,
         rawLayerInfo.value() + (rawLayerInfo.value() & 1u);
     if (layerInfoBytes > UINT32_MAX)
         return error(ErrorCode::BudgetExceeded, "psd.layer-info-size");
+    const auto transparencyBlock =
+        request.format.alpha && request.layers.empty()
+            ? mergedTransparencyBlock(request.format.depth)
+            : Bytes{};
     auto layerMaskBytes = checkedAdd(layerInfoBytes, 8);
+    if (!layerMaskBytes)
+        return layerMaskBytes.error();
+    layerMaskBytes = checkedAdd(layerMaskBytes.value(), transparencyBlock.size());
     if (!layerMaskBytes || layerMaskBytes.value() > UINT32_MAX)
         return error(ErrorCode::BudgetExceeded, "psd.layer-mask-size");
 
@@ -850,6 +869,11 @@ Result<void> writePsd(const PsdWriteRequest& request, std::stop_token stop,
     emitted = emit(globalMaskLength);
     if (!emitted)
         return emitted.error();
+    if (!transparencyBlock.empty()) {
+        emitted = emitBytes(transparencyBlock);
+        if (!emitted)
+            return emitted.error();
+    }
 
     emitted = emit(rawCompression);
     if (!emitted)
