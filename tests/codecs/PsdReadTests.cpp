@@ -1084,3 +1084,14 @@ TEST("C04 alpha identifier count cannot exceed extra channels"){
     CHECK(info.error().code==ErrorCode::CorruptData);
     CHECK(info.error().messageKey=="psd.alpha-identifiers-count");
 }
+
+
+TEST("C04 positive layer count still rejects identifier-zero saved channel without Mtrn"){
+    CodecLimits limits;
+    auto decoded=decodePhotoshopLayers(
+        withAlphaIdentifiers(layeredRgbCompositeWithLayerCount(1),{0}),
+        ProfileId{},limits);
+    CHECK(!decoded);
+    CHECK(decoded.error().code==ErrorCode::UnsupportedFeature);
+    CHECK(decoded.error().messageKey=="psd.composite-extra-channels");
+}
