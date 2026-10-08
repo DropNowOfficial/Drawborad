@@ -673,6 +673,13 @@ Bytes psdWithFirstLayerClipping(std::uint8_t clipping){
     b[at+9]=clipping;
     return b;
 }
+Bytes psdWithFirstLayerFlags(std::uint8_t flags){
+    auto b=compressedLayerPsd(1);
+    const auto at=firstLayerFixedFields(b);
+    CHECK(at+12<=b.size());
+    b[at+10]=flags;
+    return b;
+}
 Bytes maskedPsdWithFlags(std::uint8_t flags){
     PsdWriteRequest q;
     q.size={1,1};
@@ -738,6 +745,14 @@ TEST("C04 clipping layer semantics are explicit unsupported"){
     CHECK(!result);
     CHECK(result.error().code==ErrorCode::UnsupportedFeature);
     CHECK(result.error().messageKey=="psd.layer-clipping");
+}
+
+TEST("C04 pixel-data-irrelevant layer flag is explicit unsupported"){
+    CodecLimits limits;
+    auto result=readPhotoshopHeader(psdWithFirstLayerFlags(0x18),limits);
+    CHECK(!result);
+    CHECK(result.error().code==ErrorCode::UnsupportedFeature);
+    CHECK(result.error().messageKey=="psd.layer-flags");
 }
 
 TEST("C04 nonzero user-mask flags are explicit unsupported"){
