@@ -585,6 +585,18 @@ Result<void> undoZipPrediction16(Bytes& plane, std::uint64_t width, std::uint64_
     return {};
 }
 
+std::uint64_t removeWhiteMatteSample(std::uint64_t stored,
+                                     std::uint64_t alpha,
+                                     std::uint64_t maximum) {
+    if (alpha == 0 || alpha == maximum)
+        return stored;
+    const auto background = maximum - alpha;
+    if (stored <= background)
+        return 0;
+    const auto numerator = (stored - background) * maximum;
+    return std::min(maximum, (numerator + alpha / 2u) / alpha);
+}
+
 Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, ProfileId profile,
                                         const CodecLimits& limits) {
     auto metadata = readPhotoshopHeader(bytes, limits);
@@ -934,6 +946,36 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
             }
         }
     }
+    if (compositeFormat.mode == ColorMode::RGB && compositeAlpha) {
+        for (std::uint64_t pixel = 0; pixel < compositePixels.value(); ++pixel) {
+            const auto base = std::size_t(
+                pixel * compositeChannels * sampleBytes);
+            if (sampleBytes == 1) {
+                const auto alpha = composite.bytes[base + baseChannels];
+                for (unsigned channel = 0; channel < baseChannels; ++channel) {
+                    composite.bytes[base + channel] = std::uint8_t(
+                        removeWhiteMatteSample(
+                            composite.bytes[base + channel], alpha, 255u));
+                }
+            } else {
+                const auto alphaAt = base + std::size_t(baseChannels) * 2u;
+                const auto alpha = std::uint16_t(
+                    composite.bytes[alphaAt] |
+                    (std::uint16_t(composite.bytes[alphaAt + 1]) << 8));
+                for (unsigned channel = 0; channel < baseChannels; ++channel) {
+                    const auto at = base + std::size_t(channel) * 2u;
+                    const auto value = std::uint16_t(
+                        composite.bytes[at] |
+                        (std::uint16_t(composite.bytes[at + 1]) << 8));
+                    const auto straight = std::uint16_t(
+                        removeWhiteMatteSample(value, alpha, 65535u));
+                    composite.bytes[at] = std::uint8_t(straight);
+                    composite.bytes[at + 1] = std::uint8_t(straight >> 8);
+                }
+            }
+        }
+    }
+
     decoded.composite = std::move(composite);
     return decoded;
 }
