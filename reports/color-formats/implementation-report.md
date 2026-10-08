@@ -10,9 +10,9 @@ A red or green status from one environment must not be substituted for another.
 
 | Area | Status | Evidence |
 | --- | --- | --- |
-| Portable Debug suite | Pass locally | Current PSD hardening through `7ca31e57`: 34/34 CTest entries completed with 0 failures; F05.NativeTransport and F06 are designed skips |
-| C04/C05 Release | Pass locally | targeted C04/C05 2/2 |
-| C04/C05 ASan | Pass locally | targeted C04/C05 2/2 |
+| Portable Debug suite | Historical pass locally | Exact branch state through `7ca31e57`: 34/34 CTest entries completed with 0 failures; F05.NativeTransport and F06 are designed skips |
+| C04/C05 final-round targeted tests | Pass in archived-source repro | Final bounded patches: C04 17/17 cases and C05 20/20 cases, 0 failures |
+| Archived-source full regression | Qualified partial evidence | 34 CTest entries: C04/C05 pass; one old-snapshot M01 failure; F05.NativeTransport and F06 are designed skips |
 | GitHub-hosted CI | Blocked | latest Ubuntu and Windows jobs fail before any workflow step executes |
 | Independent PSD decoder cross-check | Supporting pass | ImageMagick 7.1.2-1 reads RGB8/16A and CMYK8/16A structures |
 | Adobe Photoshop reopen oracle | Blocked | Photoshop is not available in the current execution environment |
@@ -21,9 +21,7 @@ A red or green status from one environment must not be substituted for another.
 
 The branch checks are currently red. This is not described as green or ignored.
 
-For the latest checks at commit `7ca31e57`, both Windows and Ubuntu jobs again completed in roughly two seconds with `steps=[]`: checkout, configure, build, and CTest never started. Earlier failed runs were re-run and produced the
-same no-step failure; previous job inspection also reported no assigned runner and no
-downloadable job log.
+For the latest code checks at commit `fc0b7e1a`, both Windows and Ubuntu jobs again completed in roughly three seconds with `steps=[]`: checkout, configure, build, and CTest never started. Earlier failed runs were re-run and produced the same no-step failure; previous job inspection also reported no assigned runner and no downloadable job log.
 
 Therefore current GitHub status is **Blocked before test execution**, not a successful CI run
 and not evidence of a C++ test failure.
@@ -75,26 +73,56 @@ The following bugs were exposed by tests/spec-oracle review and fixed:
     and negative layer counts take precedence; a positive layer count remains authoritative
     unless an explicit merged-transparency tag is present. Saved alpha metadata therefore no
     longer turns a selection channel into document alpha.
+19. Non-empty global layer mask data and known document-scope visual mask/effect blocks
+    (`LMsk`, `FMsk`, `FXid`, `FEid`) now fail explicitly as `UnsupportedFeature` rather than
+    being skipped while the document is reported as faithfully editable.
+20. User-mask default values are validated against the PSD-defined 0/255 domain on both read
+    and write paths. Unsupported non-zero mask flags remain explicit `UnsupportedFeature`.
+21. PSD writer preflight now requires balanced Photoshop group section dividers in file order;
+    unmatched folder records or bounding dividers are rejected instead of emitting malformed
+    group structure.
+22. Layer blending ranges / Photoshop Blend If are no longer silently discarded. Canonical
+    full-range defaults are accepted, while non-default ranges that would alter compositing
+    fail explicitly as `UnsupportedFeature`. Malformed range lengths fail as corrupt data.
 
 The independent decoder check is intentionally not used as a substitute for Photoshop.
 See `tests/oracles/photoshop/README.md` for the remaining acceptance procedure.
 
+## Bounded final review and freeze
+
+The final C04/C05 review was deliberately limited to three high-impact areas: document-scope
+metadata that can change visual semantics, standard user-mask semantics, and writer-emitted
+group/mask structure. Only Critical/Important correctness issues entered the final fix pass.
+
+The one Important self-review finding was silent acceptance of non-default layer blending
+ranges (Photoshop Blend If). It was reproduced RED, changed to explicit unsupported while
+retaining canonical no-op defaults, and verified GREEN with the targeted C04/C05 tests.
+
+Fresh reproduction used the archived successful CI source snapshot at commit `65b9c0be` with
+only the final-round PSD patches applied. Targeted C04/C05 tests passed (17/17 and 20/20).
+The snapshot's full 34-entry CTest run has one known M01 malformed-number failure; that exact
+M01 defect is fixed later on this branch by commit `985efc4a`, so the archived full-suite run
+is not represented as an exact-current-HEAD result.
+
+**C04/C05 are now frozen for this implementation round.** Do not resume opportunistic PSD tag
+coverage. Reopen only for (a) a Photoshop oracle result, or (b) a concrete real-world fixture
+showing a Critical/Important corruption, visual-semantic error, or silent data loss.
+
 ## Remaining gates
 
 C04/C05 are not eligible for final product Pass until actual Photoshop reopen/save/reopen
-evidence is recorded. In addition, unsupported Photoshop structures must continue to fail
-explicitly rather than being silently reclassified as editable raster content.
+evidence is recorded. GitHub-hosted CI is independently blocked before workflow execution.
+Neither blocker is a reason to expand PSD feature scope.
 
-Next review focus:
+Deferred by explicit ruling for this round:
 
-- unknown additional-layer-info handling at document scope beyond the blocked linked/smart
-  object families;
-- remaining structurally incomplete records and unsupported extra/spot-channel preservation;
-- Photoshop-oracle confirmation that the documented 16-bit-to-8-bit user-mask quantization
-  policy is acceptable for product requirements; exact arbitrary 16-bit mask preservation is
-  not provided by the current 8-bit internal mask model;
-- Photoshop-generated fixture/oracle coverage for groups, masks, clipping rejection,
-  blend modes and CMYK.
+- non-zero user-mask flags (relative position, disabled/invert/rendered/parameterized masks)
+  remain `UnsupportedFeature`; they are not silently reinterpreted;
+- unknown or unsupported advanced Photoshop structures are not promoted to editable raster
+  semantics; known high-impact visual families are blocked explicitly;
+- exact arbitrary 16-bit user-mask preservation is outside the current 8-bit internal mask
+  model; import uses the documented full-range quantization policy;
+- Photoshop-generated reopen/save/reopen evidence remains the external acceptance gate.
 
 ## Evidence discipline
 
