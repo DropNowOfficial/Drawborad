@@ -355,6 +355,48 @@ TEST("C04 negative layer count marks merged transparency"){
     CHECK(decoded.value().composite->bytes==Bytes({10,20,30,255,40,50,60,128}));
 }
 
+namespace {
+Bytes withDocumentTag(Bytes b,const char key[5]){
+    const auto read32=[](const Bytes& bytes,std::size_t at){
+        return (std::uint32_t(bytes[at])<<24)|(std::uint32_t(bytes[at+1])<<16)|
+               (std::uint32_t(bytes[at+2])<<8)|bytes[at+3];
+    };
+    std::size_t at=26;
+    for(int section=0;section<2;++section){
+        const auto length=read32(b,at);
+        at+=4+length;
+    }
+    const auto lengthAt=at;
+    const auto total=read32(b,at);
+    const auto begin=at+4;
+    const auto end=begin+total;
+    CHECK(end<=b.size());
+    Bytes tag{'8','B','I','M'};
+    tag.insert(tag.end(),key,key+4);
+    p32(tag,0);
+    Bytes out;
+    out.insert(out.end(),b.begin(),b.begin()+std::ptrdiff_t(lengthAt));
+    p32(out,total+std::uint32_t(tag.size()));
+    out.insert(out.end(),b.begin()+std::ptrdiff_t(begin),
+               b.begin()+std::ptrdiff_t(end));
+    out.insert(out.end(),tag.begin(),tag.end());
+    out.insert(out.end(),b.begin()+std::ptrdiff_t(end),b.end());
+    return out;
+}
+}
+
+TEST("C04 Mtrn document tag marks merged transparency with positive layer count"){
+    CodecLimits limits;
+    auto decoded=decodePhotoshopLayers(
+        withDocumentTag(layeredRgbCompositeWithLayerCount(1),"Mtrn"),
+        ProfileId{},limits);
+    CHECK(decoded);
+    CHECK(decoded.value().info.mergedTransparencyTagged);
+    CHECK(decoded.value().composite.has_value());
+    CHECK(decoded.value().composite->format==PixelFormat{ColorMode::RGB,Depth::U8,true});
+    CHECK(decoded.value().composite->bytes==Bytes({10,20,30,255,40,50,60,128}));
+}
+
 
 namespace {
 Bytes rawCmykComposite(std::uint16_t depth,std::span<const std::uint8_t> planes){
