@@ -1074,3 +1074,13 @@ TEST("C04 Mtrn tag overrides saved-alpha identifier metadata"){
     CHECK(decoded.value().composite.has_value());
     CHECK(decoded.value().composite->format==PixelFormat{ColorMode::RGB,Depth::U8,true});
 }
+
+
+TEST("C04 alpha identifier count cannot exceed extra channels"){
+    CodecLimits limits;
+    auto info=readPhotoshopHeader(
+        withAlphaIdentifiers(rgbFlatComposite(0),{1,0}),limits);
+    CHECK(!info);
+    CHECK(info.error().code==ErrorCode::CorruptData);
+    CHECK(info.error().messageKey=="psd.alpha-identifiers-count");
+}
