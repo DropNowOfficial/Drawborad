@@ -441,6 +441,7 @@ Result<PhotoshopInfo> readPhotoshopHeader(std::span<const std::uint8_t> bytes,
     if (std::uint64_t(layerCount) > limits.nodes)
         return error(ErrorCode::BudgetExceeded, "psd.layer-count-limit");
 
+    std::uint64_t declaredChannelBytes = 0;
     for (int index = 0; index < layerCount; ++index) {
         if (reader.position + 18 > layerInfoEnd)
             return error(ErrorCode::CorruptData, "psd.layer-record");
@@ -462,9 +463,19 @@ Result<PhotoshopInfo> readPhotoshopHeader(std::span<const std::uint8_t> bytes,
         if (channelRecords > layerInfoEnd - reader.position)
             return error(ErrorCode::CorruptData, "psd.channel-records");
         std::array<std::int16_t, 56> channelIds{};
+        const std::size_t channelLengthBytes = descriptorSize - 2u;
         for (std::uint16_t channel = 0; channel < layer.channels; ++channel) {
-            const auto id = std::int16_t(u16(bytes.data() + reader.position +
-                                             std::size_t(channel) * descriptorSize));
+            const auto descriptorAt =
+                reader.position + std::size_t(channel) * descriptorSize;
+            const auto id = std::int16_t(u16(bytes.data() + descriptorAt));
+            const auto length =
+                sizedLength(bytes, descriptorAt + 2u, channelLengthBytes);
+            if (length < 2)
+                return error(ErrorCode::CorruptData, "psd.channel-length");
+            if (length > std::numeric_limits<std::uint64_t>::max() -
+                             declaredChannelBytes)
+                return error(ErrorCode::CorruptData, "psd.channel-data-bounds");
+            declaredChannelBytes += length;
             for (std::uint16_t previous = 0; previous < channel; ++previous) {
                 if (channelIds[previous] == id)
                     return error(ErrorCode::CorruptData, "psd.channel-duplicate");
@@ -510,6 +521,9 @@ Result<PhotoshopInfo> readPhotoshopHeader(std::span<const std::uint8_t> bytes,
         reader.position = extraEnd;
         out.layers.push_back(std::move(layer));
     }
+
+    if (declaredChannelBytes > layerInfoEnd - reader.position)
+        return error(ErrorCode::CorruptData, "psd.channel-data-bounds");
 
     return out;
 }
