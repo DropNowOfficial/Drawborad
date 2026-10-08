@@ -301,9 +301,11 @@ Result<void> readLayerExtra(std::span<const std::uint8_t> bytes, std::size_t beg
                 return decoded.error();
             layer.name = std::move(decoded.value());
         } else if (std::memcmp(key, "TySh", 4) == 0 ||
+                   std::memcmp(key, "tySh", 4) == 0 ||
                    std::memcmp(key, "SoLE", 4) == 0 ||
                    std::memcmp(key, "SoLd", 4) == 0 ||
                    std::memcmp(key, "PlLd", 4) == 0 ||
+                   std::memcmp(key, "plLd", 4) == 0 ||
                    std::memcmp(key, "lnk2", 4) == 0 ||
                    std::memcmp(key, "lnkD", 4) == 0 ||
                    std::memcmp(key, "lnk3", 4) == 0 ||
