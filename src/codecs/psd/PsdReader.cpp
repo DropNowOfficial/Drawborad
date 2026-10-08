@@ -216,6 +216,8 @@ Result<std::optional<LayerInfoLocation>> locateLayerInfo(
     at += 4;
     if (globalMaskLength > sectionEnd - at)
         return error(ErrorCode::CorruptData, "psd.global-mask-bounds");
+    if (globalMaskLength != 0)
+        return error(ErrorCode::UnsupportedFeature, "psd.global-layer-mask");
     at += std::size_t(globalMaskLength);
 
     while (at < sectionEnd) {
@@ -244,7 +246,11 @@ Result<std::optional<LayerInfoLocation>> locateLayerInfo(
         if (std::memcmp(key.data(), "lnk2", 4) == 0 ||
             std::memcmp(key.data(), "lnkD", 4) == 0 ||
             std::memcmp(key.data(), "lnk3", 4) == 0 ||
-            std::memcmp(key.data(), "lnkE", 4) == 0) {
+            std::memcmp(key.data(), "lnkE", 4) == 0 ||
+            std::memcmp(key.data(), "LMsk", 4) == 0 ||
+            std::memcmp(key.data(), "FMsk", 4) == 0 ||
+            std::memcmp(key.data(), "FXid", 4) == 0 ||
+            std::memcmp(key.data(), "FEid", 4) == 0) {
             return Error{ErrorCode::UnsupportedFeature,
                          "psd.unsupported-document-feature",
                          std::string(reinterpret_cast<const char*>(key.data()), 4)};
