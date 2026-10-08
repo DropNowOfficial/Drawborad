@@ -317,6 +317,8 @@ Result<void> readLayerExtra(std::span<const std::uint8_t> bytes, std::size_t beg
     at += 4;
     if (blendLength > end - at)
         return error(ErrorCode::CorruptData, "psd.blend-range-bounds");
+    if (blendLength != 0)
+        return error(ErrorCode::UnsupportedFeature, "psd.layer-blending-ranges");
     at += std::size_t(blendLength);
 
     if (at >= end)
