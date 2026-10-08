@@ -98,6 +98,13 @@ Result<void> readImageResources(std::span<const std::uint8_t> bytes,
         auto data = bytes.subspan(at, std::size_t(length));
         if (id == 1039) {
             out.iccProfile.assign(data.begin(), data.end());
+        } else if (id == 1053) {
+            if ((data.size() & 3u) != 0)
+                return error(ErrorCode::CorruptData, "psd.alpha-identifiers");
+            out.alphaIdentifiers.clear();
+            out.alphaIdentifiers.reserve(data.size() / 4u);
+            for (std::size_t pos = 0; pos < data.size(); pos += 4u)
+                out.alphaIdentifiers.push_back(u32(data.data() + pos));
         } else if (id == 1005) {
             if (data.size() < 16)
                 return error(ErrorCode::CorruptData, "psd.resolution-info");
@@ -985,9 +992,16 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
     const bool hasExtraChannel = metadata.value().channels == baseChannels + 1u;
     if (metadata.value().channels != baseChannels && !hasExtraChannel)
         return error(ErrorCode::UnsupportedFeature, "psd.composite-extra-channels");
+    const bool transparencyByIdentifier =
+        std::find(metadata.value().alphaIdentifiers.begin(),
+                  metadata.value().alphaIdentifiers.end(), 0u) !=
+        metadata.value().alphaIdentifiers.end();
+    if (hasExtraChannel && !metadata.value().alphaIdentifiers.empty() &&
+        !transparencyByIdentifier)
+        return error(ErrorCode::UnsupportedFeature, "psd.composite-extra-channels");
     if (hasExtraChannel && metadata.value().signedLayerCount &&
         *metadata.value().signedLayerCount > 0 &&
-        !metadata.value().mergedTransparencyTagged)
+        !metadata.value().mergedTransparencyTagged && !transparencyByIdentifier)
         return error(ErrorCode::UnsupportedFeature, "psd.composite-extra-channels");
     const bool compositeAlpha = hasExtraChannel;
     PixelFormat compositeFormat{
