@@ -76,6 +76,32 @@ TEST("C04 C05 user layer mask roundtrips as channel minus two"){
 }
 
 
+TEST("C04 C05 user mask preserves negative Photoshop offset"){
+    PsdWriteRequest q;
+    q.size={2,1};
+    q.format={ColorMode::RGB,Depth::U8,true};
+    PsdLayerPixels l;
+    l.name="Offset mask";
+    l.pixels.width=2;
+    l.pixels.height=1;
+    l.pixels.format=q.format;
+    l.pixels.rowStride=8;
+    l.pixels.bytes={10,20,30,255,40,50,60,255};
+    l.mask={17,231};
+    l.maskBounds={-1,0,2,1};
+    l.maskDefault=255;
+    q.layers.push_back(l);
+    auto encoded=encodePsd(q);
+    CHECK(encoded);
+    CodecLimits limits;
+    auto decoded=decodePhotoshopLayers(encoded.value(),ProfileId{},limits);
+    CHECK(decoded);
+    CHECK(decoded.value().layers.size()==1);
+    CHECK(decoded.value().layers[0].mask==l.mask);
+    CHECK(decoded.value().layers[0].info.maskBounds==l.maskBounds);
+}
+
+
 TEST("C04 C05 U16 layered PSD samples roundtrip byte-exact"){
     PsdWriteRequest q;
     q.size={1,1};
