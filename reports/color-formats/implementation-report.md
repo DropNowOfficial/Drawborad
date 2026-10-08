@@ -97,6 +97,9 @@ group/mask structure. Only Critical/Important correctness issues entered the fin
 The one Important self-review finding was silent acceptance of non-default layer blending
 ranges (Photoshop Blend If). It was reproduced RED, changed to explicit unsupported while
 retaining canonical no-op defaults, and verified GREEN with the targeted C04/C05 tests.
+No further Critical/Important finding remained within the deliberately bounded C04/C05 review
+scope after that fix pass. This was a self-review because no independent reviewer subagent was
+available in the current environment.
 
 Fresh reproduction used the archived successful CI source snapshot at commit `65b9c0be` with
 only the final-round PSD patches applied. Targeted C04/C05 tests passed (17/17 and 20/20).
