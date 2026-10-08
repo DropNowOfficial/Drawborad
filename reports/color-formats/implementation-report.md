@@ -10,7 +10,7 @@ A red or green status from one environment must not be substituted for another.
 
 | Area | Status | Evidence |
 | --- | --- | --- |
-| Portable Debug suite | Pass locally | Re-run after current PSD hardening through `5c924409`: 34/34 CTest entries completed with 0 failures; F05.NativeTransport and F06 are designed skips |
+| Portable Debug suite | Pass locally | Current PSD hardening through `7ca31e57`: 34/34 CTest entries completed with 0 failures; F05.NativeTransport and F06 are designed skips |
 | C04/C05 Release | Pass locally | targeted C04/C05 2/2 |
 | C04/C05 ASan | Pass locally | targeted C04/C05 2/2 |
 | GitHub-hosted CI | Blocked | latest Ubuntu and Windows jobs fail before any workflow step executes |
@@ -21,9 +21,7 @@ A red or green status from one environment must not be substituted for another.
 
 The branch checks are currently red. This is not described as green or ignored.
 
-For the latest workflow runs `37709589151` and `37709589043` at commit `5c924409`, both
-Windows and Ubuntu jobs completed in roughly three seconds with `steps=[]`: checkout,
-configure, build, and CTest never started. Earlier failed runs were re-run and produced the
+For the latest checks at commit `7ca31e57`, both Windows and Ubuntu jobs again completed in roughly two seconds with `steps=[]`: checkout, configure, build, and CTest never started. Earlier failed runs were re-run and produced the
 same no-step failure; previous job inspection also reported no assigned runner and no
 downloadable job log.
 
@@ -63,6 +61,20 @@ The following bugs were exposed by tests/spec-oracle review and fixed:
     8-bit mask representation: `(sample16 + 128) / 257`. Writer expansion remains `v*257`,
     so Drawborad-originated masks round-trip exactly at internal precision. Arbitrary external
     16-bit mask low bits are intentionally quantized rather than silently truncated.
+14. Section-divider blend metadata (`lsct`/`lsdk`) now overrides the layer-record blend for
+    the five supported modes; unsupported pass-through groups fail explicitly instead of
+    silently behaving as Normal.
+15. Truncated trailing additional-layer-info headers are rejected instead of being silently
+    treated as absent metadata.
+16. The decoded-byte budget is enforced cumulatively across retained layer pixels, masks and
+    merged composite data rather than independently per allocation.
+17. Image Resource 1053 (Alpha Identifiers) is parsed and used to distinguish saved alpha
+    channels/selections from actual merged transparency. Identifier counts are checked against
+    the number of extra document channels.
+18. Transparency evidence now follows Photoshop semantics: merged-transparency document tags
+    and negative layer counts take precedence; a positive layer count remains authoritative
+    unless an explicit merged-transparency tag is present. Saved alpha metadata therefore no
+    longer turns a selection channel into document alpha.
 
 The independent decoder check is intentionally not used as a substitute for Photoshop.
 See `tests/oracles/photoshop/README.md` for the remaining acceptance procedure.
@@ -77,7 +89,7 @@ Next review focus:
 
 - unknown additional-layer-info handling at document scope beyond the blocked linked/smart
   object families;
-- missing mandatory layer color-channel descriptors and other structurally incomplete records;
+- remaining structurally incomplete records and unsupported extra/spot-channel preservation;
 - Photoshop-oracle confirmation that the documented 16-bit-to-8-bit user-mask quantization
   policy is acceptable for product requirements; exact arbitrary 16-bit mask preservation is
   not provided by the current 8-bit internal mask model;
