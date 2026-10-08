@@ -10,7 +10,7 @@ ApplicationWindow {
     height: 800
     visible: true
     color: "#1c1c1e"
-    title: "Drawborad / Canvas R01-R06"
+    title: "Drawborad / Windows Alpha 0.1"
     property bool approvedClose: false
     onClosing: function(event) {
         if (studio.dirty && !approvedClose) { event.accepted = false; closeDialog.open() }
@@ -21,9 +21,13 @@ ApplicationWindow {
         RowLayout {
             anchors.fill: parent
             Label { text: "Drawborad"; color: "#fafafa"; font.pixelSize: 18; font.weight: Font.DemiBold }
-            Label { text: "CANVAS R01-R06"; color: "#aaaab0"; font.pixelSize: 11; Layout.leftMargin: 12 }
+            Label { text: "ALPHA 0.1  /  CANVAS TEST"; color: "#aaaab0"; font.pixelSize: 11; Layout.leftMargin: 12 }
             Item { Layout.fillWidth: true }
             Button { text: qsTr("New"); onClicked: newDialog.open() }
+            Button { text: qsTr("Import PNG/JPEG reference"); onClicked: {
+                if (studio.dirty) replaceWithReferenceDialog.open()
+                else referenceDialog.open()
+            } }
             Button { text: qsTr("Open project"); onClicked: { if (studio.dirty) replaceDialog.open(); else openDialog.open() } }
             Button { text: qsTr("Save"); enabled: studio.hasDocument; onClicked: saveDialog.open() }
         }
@@ -37,7 +41,18 @@ ApplicationWindow {
             Layout.minimumWidth: 600
             color: "#323235"
             radius: 10
-            NativeCanvas { objectName: "nativeCanvas"; anchors.fill: parent; anchors.margins: 24; visible: studio.hasDocument; bridge: studio }
+            NativeCanvas { id: nativeCanvas; objectName: "nativeCanvas"; anchors.fill: parent; anchors.margins: 24; visible: studio.hasDocument; bridge: studio }
+            Image {
+                id: referencePreview
+                anchors.fill: nativeCanvas
+                source: studio.referenceUrl
+                visible: studio.hasReference && showReference.checked && studio.hasDocument
+                opacity: referenceOpacity.value
+                fillMode: Image.PreserveAspectFit
+                asynchronous: true
+                cache: false
+                // A preview overlay. It is deliberately not rasterized into paint events.
+            }
             Label { anchors.centerIn: parent; visible: !studio.hasDocument; text: qsTr("Create a document to begin"); color: "#bcbcc4"; font.pixelSize: 18 }
         }
         ColumnLayout {
@@ -48,6 +63,13 @@ ApplicationWindow {
             Layout.alignment: Qt.AlignTop
             spacing: 18
             Label { text: qsTr("Document"); color: "#f5f5f7"; font.pixelSize: 23 }
+            Label { text: qsTr("ALPHA / not an AI reconstruction build"); color: "#d9c59e"; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Label { text: qsTr("Reference image is preview-only; .draw saves paint events, not the imported source image."); color: "#d6b1a6"; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Switch { id: showReference; text: qsTr("Show reference overlay"); checked: true; enabled: studio.hasReference }
+            Label { text: qsTr("Reference opacity"); color: "#b5b5bd"; visible: studio.hasReference }
+            Slider { id: referenceOpacity; from: 0; to: 0.75; value: 0.35; enabled: studio.hasReference; visible: studio.hasReference; Layout.fillWidth: true }
+            Label { text: studio.referenceFeedback; color: "#dbba98"; wrapMode: Text.Wrap; Layout.fillWidth: true; visible: studio.referenceFeedback.length > 0 }
+            Label { text: qsTr("Reference could not be displayed."); color: "#ffc2a1"; visible: studio.hasReference && referencePreview.status === Image.Error }
             Label { text: studio.dimensions; color: "#b5b5bd"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Label { text: qsTr("This build includes the native tiled canvas, mouse/tablet stroke input, replay core, DPI coordinates and cache recovery foundation."); color: "#a5a5ae"; wrapMode: Text.Wrap; Layout.fillWidth: true; lineHeight: 1.45 }
             Button { text: qsTr("Check native worker"); enabled: studio.hasDocument && !studio.busy; onClicked: studio.probeWorker() }
@@ -72,6 +94,14 @@ ApplicationWindow {
         Label { text: qsTr("Discard unsaved changes and choose another project?") }
         onAccepted: openDialog.open()
     }
+    Dialog {
+        id: replaceWithReferenceDialog; anchors.centerIn: parent; modal: true
+        title: qsTr("Replace current document?")
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        Label { text: qsTr("A reference with matching dimensions keeps the current strokes. A different size creates a new document and discards unsaved work."); wrapMode: Text.Wrap }
+        onAccepted: referenceDialog.open()
+    }
+    FileDialog { id: referenceDialog; title: qsTr("Import a PNG/JPEG reference (preview only)"); nameFilters: ["PNG/JPEG (*.png *.jpg *.jpeg)"]; onAccepted: studio.importReferenceUrl(selectedFile) }
     FileDialog { id: openDialog; title: qsTr("Open a Drawborad project"); nameFilters: ["Drawborad (*.draw)"]; onAccepted: studio.openUrl(selectedFile) }
     FileDialog { id: saveDialog; title: qsTr("Save a Drawborad project"); fileMode: FileDialog.SaveFile; defaultSuffix: "draw"; nameFilters: ["Drawborad (*.draw)"]; onAccepted: studio.saveUrl(selectedFile) }
     Dialog {

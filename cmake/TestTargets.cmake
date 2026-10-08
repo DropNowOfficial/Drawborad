@@ -19,6 +19,7 @@ set_tests_properties(F05.NativeTransport PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 
 add_test(NAME F05.ProcessProtocol COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/jobs/test_worker_process.py $<TARGET_FILE:DrawboradWorker>)
 
 native_task(F06.Controller tests/platform/NativeSmokeTests.cpp)
+native_task(U00.AlphaImport tests/studio/AlphaImportTests.cpp)
 
 if(DRAWBORAD_DESKTOP)
   add_test(NAME F06 COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/platform/test_native_smoke.py $<TARGET_FILE:Drawborad>)

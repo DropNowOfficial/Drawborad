@@ -5,15 +5,34 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: drawborad-windows-alpha-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
-  windows-runner-probe:
+  package-windows-alpha:
     runs-on: windows-2022
-    timeout-minutes: 5
+    timeout-minutes: 90
     steps:
-      - name: Verify Windows runner is available
+      - name: Checkout exactly the candidate source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install Qt 6.12 for MSVC 2022
+        uses: jurplel/install-qt-action@v4.2.0
+        with:
+          version: '6.12.0'
+          arch: win64_msvc2022_64
+          cache: false
+      - name: Build, deploy, validate and archive portable Alpha
         shell: pwsh
         run: |
-          Write-Output "RUNNER_READY"
-          Write-Output "OS=$env:RUNNER_OS"
-          Write-Output "ARCH=$env:RUNNER_ARCH"
-          [Environment]::OSVersion.VersionString
+          .\tools\windows\Build-Alpha.ps1 -QtRoot "$env:QT_ROOT_DIR"
+      - name: Upload versioned ZIP and checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: Drawborad-Windows-Alpha-${{ github.sha }}
+          path: |
+            out/alpha/Drawborad-Alpha-Win11-x64-*.zip
+            out/alpha/Drawborad-Alpha-Win11-x64-*.sha256.txt
+          if-no-files-found: error
+          retention-days: 14
