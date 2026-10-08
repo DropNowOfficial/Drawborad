@@ -24,6 +24,7 @@ struct PhotoshopInfo {
     std::uint16_t channels{}, depth{}, colorMode{};
     std::optional<std::int16_t> signedLayerCount;
     bool mergedTransparencyTagged{};
+    std::vector<std::uint32_t> alphaIdentifiers;
     Bytes iccProfile;
     double ppi{};
     std::vector<PhotoshopLayerInfo> layers;
