@@ -1,5 +1,6 @@
 #include "Test.h"
 #include "codecs/psd/PsdWriter.h"
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
