@@ -433,6 +433,21 @@ TEST("C05 file writer keeps internal staging buffer bounded") {
     std::filesystem::remove(request.path);
 }
 
+TEST("C05 streaming flattened alpha writes merged-transparency tag"){
+    auto request=flattenedAlphaRequest(Depth::U8);
+    request.path=std::filesystem::temp_directory_path()/"drawborad-c05-flat-alpha.psd";
+    request.overwrite=true;
+    PsdWriteStats stats;
+    auto written=writePsd(request,{},&stats);
+    CHECK(written);
+    std::ifstream in(request.path,std::ios::binary);
+    Bytes bytes((std::istreambuf_iterator<char>(in)),{});
+    in.close();
+    CHECK(stats.stagedBytes==bytes.size());
+    CHECK(hasDocumentAdditionalTag(bytes,"Mtrn"));
+    std::filesystem::remove(request.path);
+}
+
 
 TEST("C04 Lr16 additional layer info is used when main 16-bit layer info is empty"){
     auto read32=[](const Bytes& bytes,std::size_t at){
