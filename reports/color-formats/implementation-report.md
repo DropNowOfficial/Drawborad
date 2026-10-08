@@ -59,6 +59,10 @@ The following bugs were exposed by tests/spec-oracle review and fixed:
     count cannot encode transparency.
 12. The streamed writer path includes the same flattened-transparency tag in its exact byte
     accounting, and the local full portable suite passes after this change set.
+13. 16-bit Photoshop user masks now use an explicit full-range conversion to the internal
+    8-bit mask representation: `(sample16 + 128) / 257`. Writer expansion remains `v*257`,
+    so Drawborad-originated masks round-trip exactly at internal precision. Arbitrary external
+    16-bit mask low bits are intentionally quantized rather than silently truncated.
 
 The independent decoder check is intentionally not used as a substitute for Photoshop.
 See `tests/oracles/photoshop/README.md` for the remaining acceptance procedure.
@@ -74,7 +78,9 @@ Next review focus:
 - unknown additional-layer-info handling at document scope beyond the blocked linked/smart
   object families;
 - missing mandatory layer color-channel descriptors and other structurally incomplete records;
-- 16-bit user-mask preservation/quantization semantics;
+- Photoshop-oracle confirmation that the documented 16-bit-to-8-bit user-mask quantization
+  policy is acceptable for product requirements; exact arbitrary 16-bit mask preservation is
+  not provided by the current 8-bit internal mask model;
 - Photoshop-generated fixture/oracle coverage for groups, masks, clipping rejection,
   blend modes and CMYK.
 
