@@ -1,0 +1,19 @@
+name: Drawborad Windows Alpha portable
+on:
+  push:
+    branches: [alpha/windows-portable-20261008]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-runner-probe:
+    runs-on: windows-2022
+    timeout-minutes: 5
+    steps:
+      - name: Verify Windows runner is available
+        shell: pwsh
+        run: |
+          Write-Output "RUNNER_READY"
+          Write-Output "OS=$env:RUNNER_OS"
+          Write-Output "ARCH=$env:RUNNER_ARCH"
+          [Environment]::OSVersion.VersionString
