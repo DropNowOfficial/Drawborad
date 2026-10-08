@@ -49,3 +49,18 @@ must survive the round trip.
 GitHub-hosted CI is presently blocked before runner execution on this branch: the affected
 jobs complete with no executed steps. Local CTest results therefore remain separate evidence
 and must not be described as GitHub CI green.
+
+
+## Frozen implementation scope
+
+C04/C05 implementation review is frozen after the bounded final pass. The codec now either
+preserves the supported raster/group/mask semantics covered by tests or rejects known
+unsupported visual structures explicitly. Non-default layer blending ranges (Photoshop
+Blend If), non-zero user-mask flags, global layer masks, linked/smart-object families, and
+other blocked high-impact visual structures are not silently reclassified as ordinary
+editable raster content.
+
+Do not expand PSD tag coverage merely because another Photoshop tag exists. Reopen this
+implementation round only when the Photoshop reopen/save/reopen oracle or a concrete
+real-world fixture demonstrates a Critical/Important corruption, visual mismatch, or silent
+data-loss bug.
