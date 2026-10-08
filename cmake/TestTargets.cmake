@@ -106,6 +106,11 @@ feature_task(M03 tests/segmentation/ProposalTests.cpp)
 feature_task(M04 tests/review/MaskEditTests.cpp)
 feature_task(M05 tests/models/CustomAdapterTests.cpp)
 feature_task(M06 tests/jobs/QueueTests.cpp)
+add_executable(test_E01 ${PROJECT_SOURCE_DIR}/tests/support/TestMain.cpp ${PROJECT_SOURCE_DIR}/tests/reconstruct/ProvenanceTests.cpp)
+target_include_directories(test_E01 PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/tests/support ${PROJECT_SOURCE_DIR})
+target_link_libraries(test_E01 PRIVATE drawborad_reconstruct drawborad_render drawborad_models drawborad_core)
+add_test(NAME E01 COMMAND test_E01)
+set_tests_properties(E01 PROPERTIES TIMEOUT 60)
 
 feature_task(X13.Stress tests/stress/ColorModelStressTests.cpp)
 
