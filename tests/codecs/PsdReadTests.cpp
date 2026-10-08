@@ -1000,3 +1000,55 @@ TEST("C04 truncated layer additional-info header is corrupt"){
     CHECK(result.error().code==ErrorCode::CorruptData);
     CHECK(result.error().messageKey=="psd.additional-info-trailing");
 }
+
+
+namespace {
+Bytes withAlphaIdentifiers(Bytes b,std::initializer_list<std::uint32_t> ids){
+    const auto read32=[](const Bytes& bytes,std::size_t at){
+        return (std::uint32_t(bytes[at])<<24)|(std::uint32_t(bytes[at+1])<<16)|
+               (std::uint32_t(bytes[at+2])<<8)|bytes[at+3];
+    };
+    std::size_t at=26;
+    const auto colorModeLength=read32(b,at);
+    at+=4+colorModeLength;
+    const auto resourcesLengthAt=at;
+    const auto resourcesLength=read32(b,at);
+    const auto resourcesBegin=at+4;
+    const auto resourcesEnd=resourcesBegin+resourcesLength;
+    CHECK(resourcesEnd<=b.size());
+
+    Bytes resource{'8','B','I','M'};
+    p16(resource,1053);
+    resource.push_back(0);
+    resource.push_back(0);
+    p32(resource,std::uint32_t(ids.size()*4u));
+    for(const auto id:ids)p32(resource,id);
+
+    Bytes out;
+    out.insert(out.end(),b.begin(),b.begin()+std::ptrdiff_t(resourcesLengthAt));
+    p32(out,resourcesLength+std::uint32_t(resource.size()));
+    out.insert(out.end(),b.begin()+std::ptrdiff_t(resourcesBegin),
+               b.begin()+std::ptrdiff_t(resourcesEnd));
+    out.insert(out.end(),resource.begin(),resource.end());
+    out.insert(out.end(),b.begin()+std::ptrdiff_t(resourcesEnd),b.end());
+    return out;
+}
+}
+
+TEST("C04 saved alpha identifier is not treated as merged transparency"){
+    CodecLimits limits;
+    auto decoded=decodePhotoshopLayers(
+        withAlphaIdentifiers(rgbFlatComposite(0),{1}),ProfileId{},limits);
+    CHECK(!decoded);
+    CHECK(decoded.error().code==ErrorCode::UnsupportedFeature);
+    CHECK(decoded.error().messageKey=="psd.composite-extra-channels");
+}
+
+TEST("C04 zero alpha identifier marks the single extra channel as transparency"){
+    CodecLimits limits;
+    auto decoded=decodePhotoshopLayers(
+        withAlphaIdentifiers(rgbFlatComposite(0),{0}),ProfileId{},limits);
+    CHECK(decoded);
+    CHECK(decoded.value().composite.has_value());
+    CHECK(decoded.value().composite->format==PixelFormat{ColorMode::RGB,Depth::U8,true});
+}
