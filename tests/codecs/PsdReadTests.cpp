@@ -1145,7 +1145,7 @@ void finalWrite32(Bytes& b,std::size_t at,std::uint32_t value){
     b[at]=std::uint8_t(value>>24);b[at+1]=std::uint8_t(value>>16);
     b[at+2]=std::uint8_t(value>>8);b[at+3]=std::uint8_t(value);
 }
-Bytes psdWithLayerBlendingRanges(){
+Bytes psdWithLayerBlendingRanges(const Bytes& ranges){
     PsdWriteRequest q;
     q.size={1,1};q.format={ColorMode::RGB,Depth::U8,true};
     PsdLayerPixels layer;
@@ -1169,7 +1169,6 @@ Bytes psdWithLayerBlendingRanges(){
     const auto maskLength=finalRead32(b,at);at+=4+maskLength;
     const auto blendLengthAt=at;
     CHECK(finalRead32(b,blendLengthAt)==0);
-    const Bytes ranges{32,32,220,220,0,0,255,255};
     finalWrite32(b,blendLengthAt,std::uint32_t(ranges.size()));
     b.insert(b.begin()+std::ptrdiff_t(blendLengthAt+4),ranges.begin(),ranges.end());
     finalWrite32(b,extraLengthAt,extraLength+std::uint32_t(ranges.size()));
@@ -1183,8 +1182,18 @@ Bytes psdWithLayerBlendingRanges(){
 
 TEST("C04 nonempty layer blending ranges are explicit unsupported"){
     CodecLimits limits;
-    auto result=readPhotoshopHeader(psdWithLayerBlendingRanges(),limits);
+    auto result=readPhotoshopHeader(
+        psdWithLayerBlendingRanges(Bytes{32,32,220,220,0,0,255,255}),limits);
     CHECK(!result);
     CHECK(result.error().code==ErrorCode::UnsupportedFeature);
     CHECK(result.error().messageKey=="psd.layer-blending-ranges");
+}
+
+
+TEST("C04 canonical default layer blending ranges are accepted"){
+    CodecLimits limits;
+    const Bytes defaults{0,0,255,255,0,0,255,255};
+    auto result=readPhotoshopHeader(
+        psdWithLayerBlendingRanges(defaults),limits);
+    CHECK(result);
 }
