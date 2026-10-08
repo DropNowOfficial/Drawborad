@@ -515,6 +515,48 @@ TEST("C04 duplicate layer channel IDs are corrupt"){
     CHECK(result.error().messageKey=="psd.channel-duplicate");
 }
 
+namespace {
+Bytes psdWithFirstLayerChannelId(std::int16_t id){
+    auto b=compressedLayerPsd(1);
+    const auto read32=[](const Bytes& bytes,std::size_t at){
+        return (std::uint32_t(bytes[at])<<24)|(std::uint32_t(bytes[at+1])<<16)|
+               (std::uint32_t(bytes[at+2])<<8)|bytes[at+3];
+    };
+    std::size_t at=26;
+    for(int section=0;section<2;++section){
+        const auto length=read32(b,at);
+        at+=4+length;
+    }
+    at+=4; // layer/mask length
+    at+=4; // layer-info length
+    at+=2; // layer count
+    at+=16; // first layer rectangle
+    at+=2; // channel count
+    const auto encoded=std::uint16_t(id);
+    b[at]=std::uint8_t(encoded>>8);
+    b[at+1]=std::uint8_t(encoded);
+    return b;
+}
+}
+
+TEST("C04 real user mask channel is explicit unsupported instead of silently dropped"){
+    CodecLimits limits;
+    auto result=decodePhotoshopLayers(
+        psdWithFirstLayerChannelId(-3),ProfileId{},limits);
+    CHECK(!result);
+    CHECK(result.error().code==ErrorCode::UnsupportedFeature);
+    CHECK(result.error().messageKey=="psd.unsupported-layer-channel");
+}
+
+TEST("C04 extra layer color channel is explicit unsupported instead of silently dropped"){
+    CodecLimits limits;
+    auto result=decodePhotoshopLayers(
+        psdWithFirstLayerChannelId(7),ProfileId{},limits);
+    CHECK(!result);
+    CHECK(result.error().code==ErrorCode::UnsupportedFeature);
+    CHECK(result.error().messageKey=="psd.unsupported-layer-channel");
+}
+
 TEST("C04 file-level Photoshop import uses bounded decoder and marks imported source"){
     auto path=std::filesystem::temp_directory_path()/"drawborad-c04-file-import.psd";
     auto bytes=compressedLayerPsd(1);
