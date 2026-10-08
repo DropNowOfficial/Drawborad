@@ -10,7 +10,7 @@ A red or green status from one environment must not be substituted for another.
 
 | Area | Status | Evidence |
 | --- | --- | --- |
-| Portable Debug suite | Pass locally | 34/34 CTest entries passed; F05.NativeTransport and F06 are designed skips; 0 failures |
+| Portable Debug suite | Pass locally | Re-run after current PSD hardening through `5c924409`: 34/34 CTest entries completed with 0 failures; F05.NativeTransport and F06 are designed skips |
 | C04/C05 Release | Pass locally | targeted C04/C05 2/2 |
 | C04/C05 ASan | Pass locally | targeted C04/C05 2/2 |
 | GitHub-hosted CI | Blocked | latest Ubuntu and Windows jobs fail before any workflow step executes |
@@ -21,10 +21,11 @@ A red or green status from one environment must not be substituted for another.
 
 The branch checks are currently red. This is not described as green or ignored.
 
-For workflow runs `37702484908` and `37702484862`, the failed jobs complete within
-seconds without executing checkout, configure, build, or CTest. Re-running the failed jobs
-produced the same no-step failure. Previous job inspection also reported no assigned runner
-and no downloadable job log.
+For the latest workflow runs `37709589151` and `37709589043` at commit `5c924409`, both
+Windows and Ubuntu jobs completed in roughly three seconds with `steps=[]`: checkout,
+configure, build, and CTest never started. Earlier failed runs were re-run and produced the
+same no-step failure; previous job inspection also reported no assigned runner and no
+downloadable job log.
 
 Therefore current GitHub status is **Blocked before test execution**, not a successful CI run
 and not evidence of a C++ test failure.
@@ -45,6 +46,19 @@ The following bugs were exposed by tests/spec-oracle review and fixed:
    are stored matted against white. Writer now emits white-matted RGB preview samples and
    reader removes that matte; layer channel pixels remain unassociated.
 6. CMYK file polarity and 8/16-bit paths remain separately covered.
+7. Non-zero reserved PSD header bytes and duplicate layer channel IDs are rejected as corrupt
+   instead of being accepted into later decode stages.
+8. Unsupported layer channels (including real user mask `-3` and extra color/spot channels)
+   now fail explicitly instead of being decompressed and silently dropped.
+9. Legacy Photoshop advanced-layer tags `tySh` and `plLd` are rejected alongside their newer
+   `TySh` / `PlLd` counterparts so text/placed layers are not misreported as ordinary pixels.
+10. Layer clipping and non-zero user-mask flags are explicitly rejected until their rendering
+    semantics are implemented; neither is silently flattened into editable raster semantics.
+11. Flattened RGB(A) PSD output with zero layer records now emits Photoshop's merged
+    transparency tagged block (`Mtrn` for 8-bit, `Mt16` for 16-bit), where negative zero layer
+    count cannot encode transparency.
+12. The streamed writer path includes the same flattened-transparency tag in its exact byte
+    accounting, and the local full portable suite passes after this change set.
 
 The independent decoder check is intentionally not used as a substitute for Photoshop.
 See `tests/oracles/photoshop/README.md` for the remaining acceptance procedure.
@@ -57,11 +71,12 @@ explicitly rather than being silently reclassified as editable raster content.
 
 Next review focus:
 
-- linked/smart-object document tags such as `lnkE` and related linked-layer structures;
-- unknown additional-layer-info handling at document scope;
-- hostile/duplicate/missing layer channel descriptors;
-- 16-bit user-mask preservation semantics;
-- Photoshop-generated fixture/oracle coverage for groups, masks, blend modes and CMYK.
+- unknown additional-layer-info handling at document scope beyond the blocked linked/smart
+  object families;
+- missing mandatory layer color-channel descriptors and other structurally incomplete records;
+- 16-bit user-mask preservation/quantization semantics;
+- Photoshop-generated fixture/oracle coverage for groups, masks, clipping rejection,
+  blend modes and CMYK.
 
 ## Evidence discipline
 
