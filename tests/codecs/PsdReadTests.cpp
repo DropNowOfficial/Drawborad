@@ -16,7 +16,7 @@ Bytes psd(std::uint16_t version,std::uint32_t w,std::uint32_t h){
 }
 
 Bytes compressedLayerPsd(std::uint16_t compression){
-    const std::array<std::array<std::uint8_t,2>,4> planes{{{{10,147}},{{20,152}},{{30,157}},{{255,128}}}};
+    const std::array<std::array<std::uint8_t,2>,4> planes{{{{10,40}},{{20,50}},{{30,60}},{{255,128}}}};
     const std::array<std::array<std::uint8_t,10>,4> zip{{
         {{120,156,227,210,0,0,0,62,0,51}},
         {{120,156,19,49,2,0,0,92,0,71}},
