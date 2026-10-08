@@ -129,7 +129,8 @@ endif()
 
 add_library(drawborad_reconstruct STATIC
   src/reconstruct/ReconstructionService.cpp src/reconstruct/EventWriter.cpp
-  src/reconstruct/ContourPlanner.cpp src/reconstruct/RegionPlanner.cpp src/reconstruct/StrokeScheduler.cpp)
+  src/reconstruct/ContourPlanner.cpp src/reconstruct/RegionPlanner.cpp src/reconstruct/StrokeScheduler.cpp
+  src/reconstruct/PigmentRefiner.cpp src/reconstruct/TexturePlanner.cpp src/reconstruct/RegionBudget.cpp)
 target_include_directories(drawborad_reconstruct PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(drawborad_reconstruct PUBLIC drawborad_models drawborad_color drawborad_core)
 
@@ -141,6 +142,7 @@ add_library(drawborad_render STATIC
   src/view/Viewport.cpp src/view/HitTest.cpp src/platform/DeviceRecovery.cpp)
 target_include_directories(drawborad_render PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(drawborad_render PUBLIC drawborad_core)
+target_link_libraries(drawborad_reconstruct PUBLIC drawborad_render)
 if(WIN32)
   target_compile_definitions(drawborad_core PUBLIC _WIN32_WINNT=0x0A00)
   target_link_libraries(drawborad_core PUBLIC advapi32 bcrypt dxgi shell32)

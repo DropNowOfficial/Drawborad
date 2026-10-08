@@ -116,6 +116,11 @@ target_include_directories(test_E02 PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJECT_
 target_link_libraries(test_E02 PRIVATE drawborad_reconstruct drawborad_render drawborad_models drawborad_core)
 add_test(NAME E02 COMMAND test_E02)
 set_tests_properties(E02 PROPERTIES TIMEOUT 60)
+add_executable(test_E03 ${PROJECT_SOURCE_DIR}/tests/support/TestMain.cpp ${PROJECT_SOURCE_DIR}/tests/reconstruct/RefinementTests.cpp)
+target_include_directories(test_E03 PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/tests/support ${PROJECT_SOURCE_DIR})
+target_link_libraries(test_E03 PRIVATE drawborad_reconstruct drawborad_render drawborad_models drawborad_core)
+add_test(NAME E03 COMMAND test_E03)
+set_tests_properties(E03 PROPERTIES TIMEOUT 60)
 
 feature_task(X13.Stress tests/stress/ColorModelStressTests.cpp)
 
