@@ -593,6 +593,29 @@ Bytes psdWithDuplicateLayerChannelId(){
     b[secondChannel+1]=b[firstChannel+1];
     return b;
 }
+Bytes psdWithFirstLayerChannelLength(std::uint32_t length){
+    auto b=compressedLayerPsd(1);
+    const auto read32=[](const Bytes& bytes,std::size_t at){
+        return (std::uint32_t(bytes[at])<<24)|(std::uint32_t(bytes[at+1])<<16)|
+               (std::uint32_t(bytes[at+2])<<8)|bytes[at+3];
+    };
+    std::size_t at=26;
+    for(int section=0;section<2;++section){
+        const auto sectionLength=read32(b,at);
+        at+=4+sectionLength;
+    }
+    at+=4; // layer/mask length
+    at+=4; // layer-info length
+    at+=2; // layer count
+    at+=16; // first layer rectangle
+    at+=2; // channel count
+    at+=2; // first channel id
+    b[at]=std::uint8_t(length>>24);
+    b[at+1]=std::uint8_t(length>>16);
+    b[at+2]=std::uint8_t(length>>8);
+    b[at+3]=std::uint8_t(length);
+    return b;
+}
 }
 
 TEST("C04 duplicate layer channel IDs are corrupt"){
@@ -602,6 +625,23 @@ TEST("C04 duplicate layer channel IDs are corrupt"){
     CHECK(!result);
     CHECK(result.error().code==ErrorCode::CorruptData);
     CHECK(result.error().messageKey=="psd.channel-duplicate");
+}
+
+TEST("C04 header preflight rejects channel data shorter than compression word"){
+    CodecLimits limits;
+    auto result=readPhotoshopHeader(psdWithFirstLayerChannelLength(1),limits);
+    CHECK(!result);
+    CHECK(result.error().code==ErrorCode::CorruptData);
+    CHECK(result.error().messageKey=="psd.channel-length");
+}
+
+TEST("C04 header preflight rejects channel data beyond layer-info section"){
+    CodecLimits limits;
+    auto result=readPhotoshopHeader(
+        psdWithFirstLayerChannelLength(0xffffffffu),limits);
+    CHECK(!result);
+    CHECK(result.error().code==ErrorCode::CorruptData);
+    CHECK(result.error().messageKey=="psd.channel-data-bounds");
 }
 
 namespace {
