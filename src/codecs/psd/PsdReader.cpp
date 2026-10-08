@@ -488,22 +488,6 @@ Result<PhotoshopInfo> readPhotoshopHeader(std::span<const std::uint8_t> bytes,
         auto parsedExtra = readLayerExtra(bytes, extraBegin, extraEnd, version, layer);
         if (!parsedExtra)
             return parsedExtra.error();
-        const bool sectionDivider =
-            layer.sectionType && *layer.sectionType != 0;
-        if (!sectionDivider) {
-            for (unsigned required = 0; required < baseChannels; ++required) {
-                bool found = false;
-                for (std::uint16_t channel = 0; channel < layer.channels; ++channel) {
-                    if (channelIds[channel] == std::int16_t(required)) {
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found)
-                    return error(ErrorCode::CorruptData,
-                                 "psd.missing-color-channels");
-            }
-        }
         reader.position = extraEnd;
         out.layers.push_back(std::move(layer));
     }
@@ -769,22 +753,6 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
         auto parsedExtra = readLayerExtra(bytes, extraBegin, extraEnd, version, record.info);
         if (!parsedExtra)
             return parsedExtra.error();
-        const bool sectionDivider =
-            record.info.sectionType && *record.info.sectionType != 0;
-        if (!sectionDivider) {
-            const unsigned requiredChannels =
-                metadata.value().colorMode == 3 ? 3u : 4u;
-            for (unsigned required = 0; required < requiredChannels; ++required) {
-                const bool found = std::any_of(
-                    record.channels.begin(), record.channels.end(),
-                    [required](const ChannelRecord& channel) {
-                        return channel.id == std::int16_t(required);
-                    });
-                if (!found)
-                    return error(ErrorCode::CorruptData,
-                                 "psd.missing-color-channels");
-            }
-        }
         reader.position = extraEnd;
                 records.push_back(std::move(record));
             }
