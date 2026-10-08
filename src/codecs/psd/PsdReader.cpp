@@ -265,6 +265,9 @@ Result<void> readLayerExtra(std::span<const std::uint8_t> bytes, std::size_t beg
             right < std::int32_t(u32(bytes.data() + at + 4)))
             return error(ErrorCode::CorruptData, "psd.mask-rectangle");
         layer.maskDefault = bytes[at + 16];
+        const auto maskFlags = bytes[at + 17];
+        if (maskFlags != 0)
+            return error(ErrorCode::UnsupportedFeature, "psd.mask-flags");
         layer.hasUserMask = true;
         at = maskEnd;
     }
@@ -466,6 +469,8 @@ Result<PhotoshopInfo> readPhotoshopHeader(std::span<const std::uint8_t> bytes,
 
         reader.position += 8;
         layer.opacity = bytes[reader.position];
+        if (bytes[reader.position + 1] != 0)
+            return error(ErrorCode::UnsupportedFeature, "psd.layer-clipping");
         layer.visible = (bytes[reader.position + 2] & 0x02u) == 0;
         reader.position += 4;
 
@@ -728,6 +733,8 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
         else return error(ErrorCode::UnsupportedFeature, "psd.decode-blend-mode");
         reader.position += 8;
         record.info.opacity = bytes[reader.position];
+        if (bytes[reader.position + 1] != 0)
+            return error(ErrorCode::UnsupportedFeature, "psd.layer-clipping");
         record.info.visible = (bytes[reader.position + 2] & 0x02u) == 0;
         reader.position += 4;
         if (reader.position + 4 > layerInfoEnd)
