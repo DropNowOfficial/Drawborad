@@ -132,6 +132,13 @@ target_compile_definitions(test_E05 PRIVATE DRAWBORAD_STYLE_ROOT="${PROJECT_SOUR
 target_link_libraries(test_E05 PRIVATE drawborad_styles drawborad_render drawborad_core)
 add_test(NAME E05 COMMAND test_E05)
 set_tests_properties(E05 PROPERTIES TIMEOUT 60)
+add_executable(test_E06 ${PROJECT_SOURCE_DIR}/tests/support/TestMain.cpp ${PROJECT_SOURCE_DIR}/tests/integration/ReconstructionExportTests.cpp)
+target_include_directories(test_E06 PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/tests/support ${PROJECT_SOURCE_DIR})
+target_link_libraries(test_E06 PRIVATE drawborad_quality drawborad_core)
+add_test(NAME E06 COMMAND test_E06)
+set_tests_properties(E06 PROPERTIES TIMEOUT 60)
+add_test(NAME E06.Runner COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/qa/test_quality_runner.py $<TARGET_FILE:drawborad_quality_runner>)
+set_tests_properties(E06.Runner PROPERTIES TIMEOUT 20)
 
 feature_task(X13.Stress tests/stress/ColorModelStressTests.cpp)
 
