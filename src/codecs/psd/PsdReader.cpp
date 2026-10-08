@@ -317,8 +317,17 @@ Result<void> readLayerExtra(std::span<const std::uint8_t> bytes, std::size_t beg
     at += 4;
     if (blendLength > end - at)
         return error(ErrorCode::CorruptData, "psd.blend-range-bounds");
-    if (blendLength != 0)
-        return error(ErrorCode::UnsupportedFeature, "psd.layer-blending-ranges");
+    if (blendLength != 0) {
+        if ((blendLength % 8u) != 0)
+            return error(ErrorCode::CorruptData, "psd.blend-range-format");
+        for (std::uint64_t offset = 0; offset < blendLength; offset += 8u) {
+            const auto* range = bytes.data() + at + std::size_t(offset);
+            if (u16(range) != 0 || u16(range + 2) != 65535 ||
+                u16(range + 4) != 0 || u16(range + 6) != 65535)
+                return error(ErrorCode::UnsupportedFeature,
+                             "psd.layer-blending-ranges");
+        }
+    }
     at += std::size_t(blendLength);
 
     if (at >= end)
