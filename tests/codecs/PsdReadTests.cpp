@@ -1,5 +1,6 @@
 #include "Test.h"
 #include "codecs/psd/PsdReader.h"
+#include "codecs/psd/PsdWriter.h"
 #include <filesystem>
 #include <fstream>
 using namespace drawborad;
