@@ -140,6 +140,13 @@ std::uint64_t sizedLength(std::span<const std::uint8_t> bytes, std::size_t at,
                       : u64(bytes.data() + at);
 }
 
+bool supportedLayerChannelId(std::int16_t id, std::uint16_t colorMode) {
+    const int baseChannels = colorMode == 3 ? 3 : colorMode == 4 ? 4 : 0;
+    if (baseChannels == 0)
+        return true;
+    return id == -2 || id == -1 || (id >= 0 && id < baseChannels);
+}
+
 bool psbEightByteAdditionalLength(std::span<const std::uint8_t> key) {
     if (key.size() != 4)
         return false;
@@ -438,6 +445,9 @@ Result<PhotoshopInfo> readPhotoshopHeader(std::span<const std::uint8_t> bytes,
                 if (channelIds[previous] == id)
                     return error(ErrorCode::CorruptData, "psd.channel-duplicate");
             }
+            if (!supportedLayerChannelId(id, out.colorMode))
+                return error(ErrorCode::UnsupportedFeature,
+                             "psd.unsupported-layer-channel");
             channelIds[channel] = id;
         }
         reader.position += std::size_t(channelRecords);
@@ -700,6 +710,9 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
                                 return existing.id == id;
                             }))
                 return error(ErrorCode::CorruptData, "psd.channel-duplicate");
+            if (!supportedLayerChannelId(id, metadata.value().colorMode))
+                return error(ErrorCode::UnsupportedFeature,
+                             "psd.unsupported-layer-channel");
             record.channels.push_back({id, length});
         }
         if (reader.position + 12 > layerInfoEnd)
