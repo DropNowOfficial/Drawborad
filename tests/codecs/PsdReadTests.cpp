@@ -405,6 +405,54 @@ TEST("C04 text layer data is rejected instead of silently claimed editable"){
     CHECK(result.error().messageKey=="psd.unsupported-layer-feature");
 }
 
+TEST("C04 external linked layer data is rejected instead of silently claimed editable"){
+    CodecLimits limits;
+    auto result=readPhotoshopHeader(psdWithUnsupportedLayerTag("lnkE"),limits);
+    CHECK(!result);
+    CHECK(result.error().code==ErrorCode::UnsupportedFeature);
+    CHECK(result.error().messageKey=="psd.unsupported-layer-feature");
+}
+
+
+namespace {
+Bytes psdWithDocumentLinkedInfo(){
+    auto b=compressedLayerPsd(1);
+    const auto read32=[](const Bytes& bytes,std::size_t at){
+        return (std::uint32_t(bytes[at])<<24)|(std::uint32_t(bytes[at+1])<<16)|
+               (std::uint32_t(bytes[at+2])<<8)|bytes[at+3];
+    };
+    std::size_t at=26;
+    for(int section=0;section<2;++section){
+        const auto length=read32(b,at);
+        at+=4+length;
+    }
+    const auto layerMaskLengthOffset=at;
+    const auto layerMaskLength=read32(b,at);
+    const auto layerMaskBegin=at+4;
+    const auto layerMaskEnd=layerMaskBegin+layerMaskLength;
+    CHECK(layerMaskEnd<=b.size());
+
+    Bytes linked{'8','B','I','M','l','n','k','E'};
+    p32(linked,0);
+
+    Bytes out;
+    out.insert(out.end(),b.begin(),b.begin()+std::ptrdiff_t(layerMaskLengthOffset));
+    p32(out,layerMaskLength+std::uint32_t(linked.size()));
+    out.insert(out.end(),b.begin()+std::ptrdiff_t(layerMaskBegin),
+               b.begin()+std::ptrdiff_t(layerMaskEnd));
+    out.insert(out.end(),linked.begin(),linked.end());
+    out.insert(out.end(),b.begin()+std::ptrdiff_t(layerMaskEnd),b.end());
+    return out;
+}
+}
+
+TEST("C04 document linked-file info is rejected even when main layer info exists"){
+    CodecLimits limits;
+    auto result=readPhotoshopHeader(psdWithDocumentLinkedInfo(),limits);
+    CHECK(!result);
+    CHECK(result.error().code==ErrorCode::UnsupportedFeature);
+    CHECK(result.error().messageKey=="psd.unsupported-document-feature");
+}
 
 TEST("C04 file-level Photoshop import uses bounded decoder and marks imported source"){
     auto path=std::filesystem::temp_directory_path()/"drawborad-c04-file-import.psd";
