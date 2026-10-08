@@ -128,22 +128,28 @@ TEST("C04 C05 Photoshop section divider metadata roundtrips"){
     PsdWriteRequest q;
     q.size={1,1};
     q.format={ColorMode::RGB,Depth::U8,true};
-    PsdLayerPixels l;
-    l.name="Group";
-    l.pixels.width=1;
-    l.pixels.height=1;
-    l.pixels.format=q.format;
-    l.pixels.rowStride=4;
-    l.pixels.bytes={0,0,0,0};
-    l.sectionType=2;
-    q.layers.push_back(l);
+    PsdLayerPixels boundary;
+    boundary.name="</Layer group>";
+    boundary.pixels.width=1;
+    boundary.pixels.height=1;
+    boundary.pixels.format=q.format;
+    boundary.pixels.rowStride=4;
+    boundary.pixels.bytes={0,0,0,0};
+    boundary.sectionType=3;
+    PsdLayerPixels group=boundary;
+    group.name="Group";
+    group.sectionType=2;
+    q.layers.push_back(boundary);
+    q.layers.push_back(group);
+    q.merged=group.pixels;
     auto encoded=encodePsd(q);
     CHECK(encoded);
     CodecLimits limits;
     auto info=readPhotoshopHeader(encoded.value(),limits);
     CHECK(info);
-    CHECK(info.value().layers.size()==1);
-    CHECK(info.value().layers[0].sectionType==2u);
+    CHECK(info.value().layers.size()==2);
+    CHECK(info.value().layers[0].sectionType==3u);
+    CHECK(info.value().layers[1].sectionType==2u);
 }
 
 
@@ -608,4 +614,31 @@ TEST("C04 rejects invalid PSD layer-mask default value"){
     CHECK(!decoded);
     CHECK(decoded.error().code==ErrorCode::CorruptData);
     CHECK(decoded.error().messageKey=="psd.mask-default");
+}
+
+
+TEST("C05 rejects unmatched Photoshop group close marker"){
+    PsdWriteRequest q;
+    q.size={1,1};q.format={ColorMode::RGB,Depth::U8,true};
+    PsdLayerPixels l;
+    l.name="Group";l.pixels.width=1;l.pixels.height=1;l.pixels.format=q.format;
+    l.pixels.rowStride=4;l.pixels.bytes={0,0,0,0};l.sectionType=2;
+    q.layers.push_back(l);q.merged=l.pixels;
+    auto encoded=encodePsd(q);
+    CHECK(!encoded);
+    CHECK(encoded.error().code==ErrorCode::InvalidInput);
+    CHECK(encoded.error().messageKey=="psd.section-divider-balance");
+}
+
+TEST("C05 rejects unclosed Photoshop group boundary"){
+    PsdWriteRequest q;
+    q.size={1,1};q.format={ColorMode::RGB,Depth::U8,true};
+    PsdLayerPixels l;
+    l.name="</Layer group>";l.pixels.width=1;l.pixels.height=1;l.pixels.format=q.format;
+    l.pixels.rowStride=4;l.pixels.bytes={0,0,0,0};l.sectionType=3;
+    q.layers.push_back(l);q.merged=l.pixels;
+    auto encoded=encodePsd(q);
+    CHECK(!encoded);
+    CHECK(encoded.error().code==ErrorCode::InvalidInput);
+    CHECK(encoded.error().messageKey=="psd.section-divider-balance");
 }
