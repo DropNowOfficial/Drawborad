@@ -41,6 +41,20 @@ Bytes mergedTransparencyBlock(Depth depth) {
     return block;
 }
 
+bool psdRectFitsInt32(const Rect& rect) {
+    if (!rect.width || !rect.height ||
+        rect.x < std::numeric_limits<std::int32_t>::min() ||
+        rect.y < std::numeric_limits<std::int32_t>::min() ||
+        rect.x > std::numeric_limits<std::int32_t>::max() ||
+        rect.y > std::numeric_limits<std::int32_t>::max())
+        return false;
+    const auto maxXSpan = std::uint64_t(
+        std::int64_t(std::numeric_limits<std::int32_t>::max()) - rect.x);
+    const auto maxYSpan = std::uint64_t(
+        std::int64_t(std::numeric_limits<std::int32_t>::max()) - rect.y);
+    return rect.width <= maxXSpan && rect.height <= maxYSpan;
+}
+
 std::uint64_t whiteMatteSample(std::uint64_t value, std::uint64_t alpha,
                                std::uint64_t maximum) {
     if (alpha == 0 || alpha == maximum)
@@ -239,10 +253,7 @@ Result<Bytes> encodePsd(const PsdWriteRequest& request) {
 
         const bool hasMask = !layer.mask.empty();
         if (hasMask) {
-            if (!layer.maskBounds.width || !layer.maskBounds.height ||
-                layer.maskBounds.x < 0 || layer.maskBounds.y < 0 ||
-                std::uint64_t(layer.maskBounds.x) + layer.maskBounds.width > request.size.width ||
-                std::uint64_t(layer.maskBounds.y) + layer.maskBounds.height > request.size.height)
+            if (!psdRectFitsInt32(layer.maskBounds))
                 return error(ErrorCode::InvalidInput, "psd.mask-bounds");
             auto maskPixels = checkedMultiply(layer.maskBounds.width, layer.maskBounds.height);
             if (!maskPixels || maskPixels.value() != layer.mask.size())
@@ -537,12 +548,7 @@ Result<void> writePsd(const PsdWriteRequest& request, std::stop_token stop,
         const bool hasMask = !layer.mask.empty();
         std::uint64_t maskPayloadBytes = 0;
         if (hasMask) {
-            if (!layer.maskBounds.width || !layer.maskBounds.height ||
-                layer.maskBounds.x < 0 || layer.maskBounds.y < 0 ||
-                std::uint64_t(layer.maskBounds.x) + layer.maskBounds.width >
-                    request.size.width ||
-                std::uint64_t(layer.maskBounds.y) + layer.maskBounds.height >
-                    request.size.height)
+            if (!psdRectFitsInt32(layer.maskBounds))
                 return error(ErrorCode::InvalidInput, "psd.mask-bounds");
             auto maskPixels =
                 checkedMultiply(layer.maskBounds.width, layer.maskBounds.height);
