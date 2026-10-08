@@ -164,6 +164,22 @@ Result<void> appendUnicodeName(Bytes& extra, std::string_view name) {
 
 Result<void> preflightPsdOutputSize(const PsdWriteRequest& request) {
     constexpr std::uint64_t maxPsdBytes = 2 * GiB;
+    std::uint64_t groupDepth = 0;
+    for (const auto& layer : request.layers) {
+        if (!layer.sectionType || *layer.sectionType == 0)
+            continue;
+        if (*layer.sectionType > 3)
+            return error(ErrorCode::InvalidInput, "psd.section-divider-type");
+        if (*layer.sectionType == 3) {
+            ++groupDepth;
+        } else {
+            if (groupDepth == 0)
+                return error(ErrorCode::InvalidInput, "psd.section-divider-balance");
+            --groupDepth;
+        }
+    }
+    if (groupDepth != 0)
+        return error(ErrorCode::InvalidInput, "psd.section-divider-balance");
     const auto baseChannels = request.format.mode == ColorMode::RGB ? 3u : 4u;
     const auto channelCount = baseChannels + (request.format.alpha ? 1u : 0u);
     const auto sampleBytes = request.format.depth == Depth::U16 ? 2u : 1u;
