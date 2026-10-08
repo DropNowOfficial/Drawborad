@@ -153,7 +153,7 @@ TEST("C05 merged composite carries real pixels and alpha") {
     layer.pixels.height=1;
     layer.pixels.format=q.format;
     layer.pixels.rowStride=4;
-    layer.pixels.bytes={12,34,56,78};
+    layer.pixels.bytes={12,34,56,128};
     q.layers.push_back(layer);
     q.merged=layer.pixels;
     auto encoded=encodePsd(q);
@@ -236,6 +236,46 @@ PsdWriteRequest cmykRequest(Depth depth,Bytes pixel){
     q.merged=q.layers.front().pixels;
     return q;
 }
+}
+
+TEST("C05 RGB8 merged transparency preview is white-matted on disk"){
+    PsdWriteRequest q;
+    q.size={1,1};
+    q.format={ColorMode::RGB,Depth::U8,true};
+    PsdLayerPixels layer;
+    layer.name="Matte";
+    layer.pixels.width=1;layer.pixels.height=1;layer.pixels.format=q.format;
+    layer.pixels.rowStride=4;
+    layer.pixels.bytes={40,50,60,128};
+    q.layers.push_back(layer);
+    q.merged=layer.pixels;
+    auto encoded=encodePsd(q);CHECK(encoded);
+    const auto at=compositePayloadOffset(encoded.value());
+    CHECK(at!=SIZE_MAX);
+    CHECK(at+4<=encoded.value().size());
+    CHECK(Bytes(encoded.value().begin()+std::ptrdiff_t(at),
+                encoded.value().begin()+std::ptrdiff_t(at+4))==
+          Bytes({147,152,157,128}));
+}
+
+TEST("C05 RGB16 merged transparency preview is white-matted on disk"){
+    PsdWriteRequest q;
+    q.size={1,1};
+    q.format={ColorMode::RGB,Depth::U16,true};
+    PsdLayerPixels layer;
+    layer.name="Matte16";
+    layer.pixels.width=1;layer.pixels.height=1;layer.pixels.format=q.format;
+    layer.pixels.rowStride=8;
+    layer.pixels.bytes={0x00,0x40, 0x00,0x80, 0x00,0x20, 0x00,0x80};
+    q.layers.push_back(layer);
+    q.merged=layer.pixels;
+    auto encoded=encodePsd(q);CHECK(encoded);
+    const auto at=compositePayloadOffset(encoded.value());
+    CHECK(at!=SIZE_MAX);
+    CHECK(at+8<=encoded.value().size());
+    CHECK(Bytes(encoded.value().begin()+std::ptrdiff_t(at),
+                encoded.value().begin()+std::ptrdiff_t(at+8))==
+          Bytes({0x9f,0xff, 0xbf,0xff, 0x8f,0xff, 0x80,0x00}));
 }
 
 TEST("C05 CMYK8 PSD file planes use Photoshop inverted ink polarity"){
