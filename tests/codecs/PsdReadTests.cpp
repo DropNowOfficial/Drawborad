@@ -86,6 +86,17 @@ TEST("C04 accepts bounded PSD and PSB headers"){CodecLimits l;auto a=readPhotosh
 TEST("C04 rejects length sections outside file"){auto b=psd(1,32,16);b.resize(30);b[26]=0xff;b[27]=0xff;b[28]=0xff;b[29]=0xff;CodecLimits l;CHECK(!readPhotoshopHeader(b,l));}
 TEST("C04 PSD and PSB enforce format dimension limits"){CodecLimits l;CHECK(!readPhotoshopHeader(psd(1,30001,1),l));CHECK(!readPhotoshopHeader(psd(2,300001,1),l));}
 
+TEST("C04 unsupported Photoshop color mode is rejected during header preflight"){
+    auto bytes=psd(1,1,1);
+    bytes[24]=0;
+    bytes[25]=1; // grayscale
+    CodecLimits limits;
+    auto result=readPhotoshopHeader(bytes,limits);
+    CHECK(!result);
+    CHECK(result.error().code==ErrorCode::UnsupportedFeature);
+    CHECK(result.error().messageKey=="psd.color-mode");
+}
+
 TEST("C04 RLE channel planes decode to exact interleaved RGBA pixels"){
     CodecLimits limits;
     auto decoded=decodePhotoshopLayers(compressedLayerPsd(1),ProfileId{},limits);
