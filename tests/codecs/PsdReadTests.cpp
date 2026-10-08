@@ -1095,3 +1095,42 @@ TEST("C04 positive layer count still rejects identifier-zero saved channel witho
     CHECK(decoded.error().code==ErrorCode::UnsupportedFeature);
     CHECK(decoded.error().messageKey=="psd.composite-extra-channels");
 }
+
+
+namespace {
+Bytes finalDocumentScopePsd(std::span<const std::uint8_t> globalMask,
+                            const char* key=nullptr){
+    Bytes layerMask;
+    p32(layerMask,0);
+    p32(layerMask,std::uint32_t(globalMask.size()));
+    layerMask.insert(layerMask.end(),globalMask.begin(),globalMask.end());
+    if(key){
+        layerMask.insert(layerMask.end(),{'8','B','I','M'});
+        layerMask.insert(layerMask.end(),key,key+4);
+        p32(layerMask,0);
+    }
+    Bytes b{'8','B','P','S'};
+    p16(b,1);b.insert(b.end(),6,0);p16(b,3);p32(b,1);p32(b,1);p16(b,8);p16(b,3);
+    p32(b,0);p32(b,0);p32(b,std::uint32_t(layerMask.size()));
+    b.insert(b.end(),layerMask.begin(),layerMask.end());
+    return b;
+}
+}
+
+TEST("C04 global layer mask is explicit unsupported"){
+    CodecLimits limits;
+    Bytes globalMask(13,0);
+    globalMask[10]=0;globalMask[11]=100;globalMask[12]=128;
+    auto result=readPhotoshopHeader(finalDocumentScopePsd(globalMask),limits);
+    CHECK(!result);
+    CHECK(result.error().code==ErrorCode::UnsupportedFeature);
+    CHECK(result.error().messageKey=="psd.global-layer-mask");
+}
+
+TEST("C04 document user mask tag is explicit unsupported"){
+    CodecLimits limits;
+    auto result=readPhotoshopHeader(finalDocumentScopePsd({},"LMsk"),limits);
+    CHECK(!result);
+    CHECK(result.error().code==ErrorCode::UnsupportedFeature);
+    CHECK(result.error().messageKey=="psd.unsupported-document-feature");
+}
