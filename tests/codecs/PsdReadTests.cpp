@@ -610,6 +610,38 @@ Bytes maskedPsdWithFlags(std::uint8_t flags){
     b[maskBody+17]=flags;
     return b;
 }
+Bytes maskedPsdWith16BitSample(std::uint16_t sample){
+    const auto read32=[](const Bytes& bytes,std::size_t at){
+        return (std::uint32_t(bytes[at])<<24)|(std::uint32_t(bytes[at+1])<<16)|
+               (std::uint32_t(bytes[at+2])<<8)|bytes[at+3];
+    };
+    PsdWriteRequest q;
+    q.size={1,1};
+    q.format={ColorMode::RGB,Depth::U16,true};
+    PsdLayerPixels layer;
+    layer.name="Mask16";
+    layer.pixels.width=1;
+    layer.pixels.height=1;
+    layer.pixels.format=q.format;
+    layer.pixels.rowStride=8;
+    layer.pixels.bytes={0,0,0,0,0,0,0xff,0xff};
+    layer.mask={0};
+    layer.maskBounds={0,0,1,1};
+    q.layers.push_back(layer);
+    auto encoded=encodePsd(q);
+    CHECK(encoded);
+    auto b=encoded.value();
+    const auto fixed=firstLayerFixedFields(b);
+    const auto extraLengthAt=fixed+12;
+    CHECK(extraLengthAt+4<=b.size());
+    const auto extraLength=read32(b,extraLengthAt);
+    const auto channelData=extraLengthAt+4+extraLength;
+    const auto maskSample=channelData+4u*4u+2u;
+    CHECK(maskSample+2<=b.size());
+    b[maskSample]=std::uint8_t(sample>>8);
+    b[maskSample+1]=std::uint8_t(sample);
+    return b;
+}
 }
 
 TEST("C04 clipping layer semantics are explicit unsupported"){
@@ -626,6 +658,15 @@ TEST("C04 nonzero user-mask flags are explicit unsupported"){
     CHECK(!result);
     CHECK(result.error().code==ErrorCode::UnsupportedFeature);
     CHECK(result.error().messageKey=="psd.mask-flags");
+}
+
+TEST("C04 16-bit user mask quantizes full range to internal 8-bit"){
+    CodecLimits limits;
+    auto decoded=decodePhotoshopLayers(
+        maskedPsdWith16BitSample(0x0182),ProfileId{},limits);
+    CHECK(decoded);
+    CHECK(decoded.value().layers.size()==1);
+    CHECK(decoded.value().layers[0].mask==Bytes({2}));
 }
 
 TEST("C04 file-level Photoshop import uses bounded decoder and marks imported source"){
