@@ -236,6 +236,79 @@ PsdWriteRequest cmykRequest(Depth depth,Bytes pixel){
     q.merged=q.layers.front().pixels;
     return q;
 }
+bool hasDocumentAdditionalTag(const Bytes& bytes,const char key[5]){
+    if(bytes.size()<30)return false;
+    std::size_t pos=26;
+    for(int section=0;section<2;++section){
+        if(pos+4>bytes.size())return false;
+        const auto length=readBe32(bytes,pos);
+        pos+=4;
+        if(length>bytes.size()-pos)return false;
+        pos+=length;
+    }
+    if(pos+4>bytes.size())return false;
+    const auto total=readBe32(bytes,pos);
+    pos+=4;
+    if(total>bytes.size()-pos)return false;
+    const auto end=pos+total;
+    if(pos+4>end)return false;
+    const auto layerInfo=readBe32(bytes,pos);
+    pos+=4;
+    if(layerInfo>end-pos)return false;
+    pos+=layerInfo;
+    if(pos+4>end)return false;
+    const auto globalMask=readBe32(bytes,pos);
+    pos+=4;
+    if(globalMask>end-pos)return false;
+    pos+=globalMask;
+    while(pos<end){
+        if(end-pos<12)return false;
+        if(std::memcmp(bytes.data()+pos,"8BIM",4)!=0 &&
+           std::memcmp(bytes.data()+pos,"8B64",4)!=0)return false;
+        if(std::memcmp(bytes.data()+pos+4,key,4)==0)return true;
+        const auto length=readBe32(bytes,pos+8);
+        pos+=12;
+        if(length>end-pos)return false;
+        pos+=length;
+        if(length&1u){
+            if(pos>=end)return false;
+            ++pos;
+        }
+    }
+    return false;
+}
+PsdWriteRequest flattenedAlphaRequest(Depth depth){
+    PsdWriteRequest q;
+    q.size={1,1};
+    q.format={ColorMode::RGB,depth,true};
+    TileData merged;
+    merged.width=1;
+    merged.height=1;
+    merged.format=q.format;
+    if(depth==Depth::U8){
+        merged.rowStride=4;
+        merged.bytes={10,20,30,128};
+    }else{
+        merged.rowStride=8;
+        merged.bytes={0x00,0x10,0x00,0x20,0x00,0x30,0x00,0x80};
+    }
+    q.merged=merged;
+    return q;
+}
+}
+
+TEST("C05 flattened RGB8 alpha writes Mtrn merged-transparency tag"){
+    auto q=flattenedAlphaRequest(Depth::U8);
+    auto encoded=encodePsd(q);
+    CHECK(encoded);
+    CHECK(hasDocumentAdditionalTag(encoded.value(),"Mtrn"));
+}
+
+TEST("C05 flattened RGB16 alpha writes Mt16 merged-transparency tag"){
+    auto q=flattenedAlphaRequest(Depth::U16);
+    auto encoded=encodePsd(q);
+    CHECK(encoded);
+    CHECK(hasDocumentAdditionalTag(encoded.value(),"Mt16"));
 }
 
 TEST("C05 RGB8 merged transparency preview is white-matted on disk"){
