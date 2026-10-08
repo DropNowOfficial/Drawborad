@@ -1000,14 +1000,16 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
         metadata.value().alphaIdentifiers.end();
     const bool transparencyByLayerCount =
         metadata.value().signedLayerCount && *metadata.value().signedLayerCount < 0;
-    const bool explicitTransparency = metadata.value().mergedTransparencyTagged ||
-                                      transparencyByLayerCount ||
-                                      transparencyByIdentifier;
+    const bool positiveLayerCount =
+        metadata.value().signedLayerCount && *metadata.value().signedLayerCount > 0;
+    const bool explicitTransparency =
+        metadata.value().mergedTransparencyTagged || transparencyByLayerCount ||
+        (!positiveLayerCount && transparencyByIdentifier);
     if (hasExtraChannel && !metadata.value().alphaIdentifiers.empty() &&
         !explicitTransparency)
         return error(ErrorCode::UnsupportedFeature, "psd.composite-extra-channels");
-    if (hasExtraChannel && metadata.value().signedLayerCount &&
-        *metadata.value().signedLayerCount > 0 && !explicitTransparency)
+    if (hasExtraChannel && positiveLayerCount &&
+        !metadata.value().mergedTransparencyTagged)
         return error(ErrorCode::UnsupportedFeature, "psd.composite-extra-channels");
     const bool compositeAlpha = hasExtraChannel;
     PixelFormat compositeFormat{
