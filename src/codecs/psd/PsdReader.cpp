@@ -375,6 +375,8 @@ Result<void> readLayerExtra(std::span<const std::uint8_t> bytes, std::size_t beg
             ++at;
         }
     }
+    if (at != end)
+        return error(ErrorCode::CorruptData, "psd.additional-info-trailing");
     return {};
 }
 
