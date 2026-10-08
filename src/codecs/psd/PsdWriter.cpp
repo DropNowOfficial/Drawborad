@@ -33,6 +33,14 @@ std::uint16_t encodedLayerCount(std::size_t count, bool mergedTransparency) {
     return std::uint16_t(signedCount);
 }
 
+std::uint64_t whiteMatteSample(std::uint64_t value, std::uint64_t alpha,
+                               std::uint64_t maximum) {
+    if (alpha == 0 || alpha == maximum)
+        return value;
+    const auto numerator = value * alpha + maximum * (maximum - alpha);
+    return (numerator + maximum / 2u) / maximum;
+}
+
 void appendImageResource(Bytes& resources, std::uint16_t id,
                          std::span<const std::uint8_t> data) {
     resources.insert(resources.end(), {'8','B','I','M'});
@@ -405,6 +413,15 @@ Result<Bytes> encodePsd(const PsdWriteRequest& request) {
                     return error(ErrorCode::CorruptData, "psd.merged-pixel");
                 if (sampleBytes == 1) {
                     auto value = merged->bytes[offset];
+                    if (request.format.mode == ColorMode::RGB && request.format.alpha &&
+                        channel < baseChannels) {
+                        const auto alphaOffset = offset +
+                            std::size_t(baseChannels - channel);
+                        if (alphaOffset >= merged->bytes.size())
+                            return error(ErrorCode::CorruptData, "psd.merged-alpha");
+                        value = std::uint8_t(whiteMatteSample(
+                            value, merged->bytes[alphaOffset], 255u));
+                    }
                     if (request.format.mode == ColorMode::CMYK && channel < baseChannels)
                         value = std::uint8_t(255u - value);
                     output.push_back(value);
@@ -412,6 +429,17 @@ Result<Bytes> encodePsd(const PsdWriteRequest& request) {
                     auto value = std::uint16_t(
                         merged->bytes[offset] |
                         (std::uint16_t(merged->bytes[offset + 1]) << 8));
+                    if (request.format.mode == ColorMode::RGB && request.format.alpha &&
+                        channel < baseChannels) {
+                        const auto alphaOffset = offset +
+                            std::size_t(baseChannels - channel) * 2u;
+                        if (alphaOffset + 1 >= merged->bytes.size())
+                            return error(ErrorCode::CorruptData, "psd.merged-alpha");
+                        const auto alpha = std::uint16_t(
+                            merged->bytes[alphaOffset] |
+                            (std::uint16_t(merged->bytes[alphaOffset + 1]) << 8));
+                        value = std::uint16_t(whiteMatteSample(value, alpha, 65535u));
+                    }
                     if (request.format.mode == ColorMode::CMYK && channel < baseChannels)
                         value = std::uint16_t(65535u - value);
                     output.push_back(std::uint8_t(value >> 8));
@@ -706,7 +734,8 @@ Result<void> writePsd(const PsdWriteRequest& request, std::stop_token stop,
     const std::array<std::uint8_t, 2> rawCompression{0, 0};
 
     auto emitPixelChannels = [&](const TileData& pixels,
-                                 bool perChannelCompression) -> Result<void> {
+                                 bool perChannelCompression,
+                                 bool matteMergedPreview) -> Result<void> {
         for (unsigned channel = 0; channel < channelCount; ++channel) {
             if (perChannelCompression) {
                 auto compression = emit(rawCompression);
@@ -725,6 +754,16 @@ Result<void> writePsd(const PsdWriteRequest& request, std::stop_token stop,
                         return error(ErrorCode::CorruptData, "psd.pixel-layout");
                     if (sampleBytes == 1) {
                         auto value = pixels.bytes[offset];
+                        if (matteMergedPreview &&
+                            request.format.mode == ColorMode::RGB &&
+                            request.format.alpha && channel < baseChannels) {
+                            const auto alphaOffset = offset +
+                                std::size_t(baseChannels - channel);
+                            if (alphaOffset >= pixels.bytes.size())
+                                return error(ErrorCode::CorruptData, "psd.merged-alpha");
+                            value = std::uint8_t(whiteMatteSample(
+                                value, pixels.bytes[alphaOffset], 255u));
+                        }
                         if (request.format.mode == ColorMode::CMYK &&
                             channel < baseChannels)
                             value = std::uint8_t(255u - value);
@@ -733,6 +772,19 @@ Result<void> writePsd(const PsdWriteRequest& request, std::stop_token stop,
                         auto value = std::uint16_t(
                             pixels.bytes[offset] |
                             (std::uint16_t(pixels.bytes[offset + 1]) << 8));
+                        if (matteMergedPreview &&
+                            request.format.mode == ColorMode::RGB &&
+                            request.format.alpha && channel < baseChannels) {
+                            const auto alphaOffset = offset +
+                                std::size_t(baseChannels - channel) * 2u;
+                            if (alphaOffset + 1 >= pixels.bytes.size())
+                                return error(ErrorCode::CorruptData, "psd.merged-alpha");
+                            const auto alpha = std::uint16_t(
+                                pixels.bytes[alphaOffset] |
+                                (std::uint16_t(pixels.bytes[alphaOffset + 1]) << 8));
+                            value = std::uint16_t(
+                                whiteMatteSample(value, alpha, 65535u));
+                        }
                         if (request.format.mode == ColorMode::CMYK &&
                             channel < baseChannels)
                             value = std::uint16_t(65535u - value);
@@ -750,7 +802,7 @@ Result<void> writePsd(const PsdWriteRequest& request, std::stop_token stop,
     };
 
     for (const auto& layer : request.layers) {
-        auto pixels = emitPixelChannels(layer.pixels, true);
+        auto pixels = emitPixelChannels(layer.pixels, true, false);
         if (!pixels)
             return pixels.error();
         if (!layer.mask.empty()) {
@@ -802,7 +854,7 @@ Result<void> writePsd(const PsdWriteRequest& request, std::stop_token stop,
     emitted = emit(rawCompression);
     if (!emitted)
         return emitted.error();
-    auto composite = emitPixelChannels(*merged, false);
+    auto composite = emitPixelChannels(*merged, false, true);
     if (!composite)
         return composite.error();
 
