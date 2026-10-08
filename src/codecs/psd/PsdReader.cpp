@@ -439,6 +439,8 @@ Result<PhotoshopInfo> readPhotoshopHeader(std::span<const std::uint8_t> bytes,
     auto imageResources = readImageResources(bytes, resourcesBegin, resourcesEnd, out);
     if (!imageResources)
         return imageResources.error();
+    if (out.alphaIdentifiers.size() > std::size_t(out.channels - baseChannels))
+        return error(ErrorCode::CorruptData, "psd.alpha-identifiers-count");
     reader.position = resourcesEnd;
 
     const std::size_t lengthBytes = version == 1 ? 4u : 8u;
