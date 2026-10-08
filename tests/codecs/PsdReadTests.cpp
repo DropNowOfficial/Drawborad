@@ -514,6 +514,20 @@ TEST("C04 external linked layer data is rejected instead of silently claimed edi
     CHECK(result.error().messageKey=="psd.unsupported-layer-feature");
 }
 
+TEST("C04 visual advanced-layer tags are rejected instead of silently dropped"){
+    const char* keys[]={
+        "SoCo","GdFl","PtFl","levl","curv","lrFX","lfx2",
+        "vmsk","iOpa","knko","artb","PxSD"
+    };
+    CodecLimits limits;
+    for(const char* key:keys){
+        auto result=readPhotoshopHeader(psdWithUnsupportedLayerTag(key),limits);
+        CHECK(!result);
+        CHECK(result.error().code==ErrorCode::UnsupportedFeature);
+        CHECK(result.error().messageKey=="psd.unsupported-layer-feature");
+    }
+}
+
 
 namespace {
 Bytes psdWithDocumentLinkedInfo(){
