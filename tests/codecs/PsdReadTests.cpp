@@ -812,6 +812,31 @@ TEST("C04 16-bit user mask quantizes full range to internal 8-bit"){
     CHECK(decoded.value().layers[0].mask==Bytes({2}));
 }
 
+TEST("C04 decoded-byte budget is cumulative across retained layers"){
+    PsdWriteRequest q;
+    q.size={1,1};
+    q.format={ColorMode::RGB,Depth::U8,true};
+    for(int i=0;i<2;++i){
+        PsdLayerPixels layer;
+        layer.name="Budget";
+        layer.pixels.width=1;
+        layer.pixels.height=1;
+        layer.pixels.format=q.format;
+        layer.pixels.rowStride=4;
+        layer.pixels.bytes={std::uint8_t(10+i),20,30,255};
+        q.layers.push_back(layer);
+    }
+    q.merged=q.layers.front().pixels;
+    auto encoded=encodePsd(q);
+    CHECK(encoded);
+    CodecLimits limits;
+    limits.decodedBytes=7;
+    auto decoded=decodePhotoshopLayers(encoded.value(),ProfileId{},limits);
+    CHECK(!decoded);
+    CHECK(decoded.error().code==ErrorCode::BudgetExceeded);
+    CHECK(decoded.error().messageKey=="psd.decode-total-budget");
+}
+
 TEST("C04 file-level Photoshop import uses bounded decoder and marks imported source"){
     auto path=std::filesystem::temp_directory_path()/"drawborad-c04-file-import.psd";
     auto bytes=compressedLayerPsd(1);
