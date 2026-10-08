@@ -254,6 +254,8 @@ Result<Bytes> encodePsd(const PsdWriteRequest& request) {
 
         const bool hasMask = !layer.mask.empty();
         if (hasMask) {
+            if (layer.maskDefault != 0 && layer.maskDefault != 255)
+                return error(ErrorCode::InvalidInput, "psd.mask-default");
             if (!psdRectFitsInt32(layer.maskBounds))
                 return error(ErrorCode::InvalidInput, "psd.mask-bounds");
             auto maskPixels = checkedMultiply(layer.maskBounds.width, layer.maskBounds.height);
@@ -549,6 +551,8 @@ Result<void> writePsd(const PsdWriteRequest& request, std::stop_token stop,
         const bool hasMask = !layer.mask.empty();
         std::uint64_t maskPayloadBytes = 0;
         if (hasMask) {
+            if (layer.maskDefault != 0 && layer.maskDefault != 255)
+                return error(ErrorCode::InvalidInput, "psd.mask-default");
             if (!psdRectFitsInt32(layer.maskBounds))
                 return error(ErrorCode::InvalidInput, "psd.mask-bounds");
             auto maskPixels =
