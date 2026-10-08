@@ -16,7 +16,7 @@ Bytes psd(std::uint16_t version,std::uint32_t w,std::uint32_t h){
 }
 
 Bytes compressedLayerPsd(std::uint16_t compression){
-    const std::array<std::array<std::uint8_t,2>,4> planes{{{{10,40}},{{20,50}},{{30,60}},{{255,128}}}};
+    const std::array<std::array<std::uint8_t,2>,4> planes{{{{10,147}},{{20,152}},{{30,157}},{{255,128}}}};
     const std::array<std::array<std::uint8_t,10>,4> zip{{
         {{120,156,227,210,0,0,0,62,0,51}},
         {{120,156,19,49,2,0,0,92,0,71}},
@@ -185,25 +185,28 @@ Bytes rgbFlatComposite(std::uint16_t compression){
     p32(b,0);
     p16(b,compression);
     if(compression==0){
-        b.insert(b.end(),{10,40,20,50,30,60,255,128});
+        b.insert(b.end(),{10,147,20,152,30,157,255,128});
     }else if(compression==1){
         for(int row=0;row<4;++row)p16(b,3);
         const std::array<std::array<std::uint8_t,2>,4> rows{{
-            {{10,40}},{{20,50}},{{30,60}},{{255,128}}
+            {{10,147}},{{20,152}},{{30,157}},{{255,128}}
         }};
         for(const auto& row:rows){
             b.push_back(1);
             b.insert(b.end(),row.begin(),row.end());
         }
     }else if(compression==2){
-        b.insert(b.end(),{120,156,227,210,16,49,146,179,249,223,0,0,6,140,2,82});
+        b.insert(b.end(),{120,156,227,154,44,50,67,110,238,255,6,0,12,154,3,132});
     }else if(compression==3){
-        b.insert(b.end(),{120,156,227,146,19,145,147,147,251,223,8,0,5,137,2,23});
+        b.insert(b.end(),{120,156,227,234,20,105,145,171,255,223,8,0,11,151,3,73});
     }
     return b;
 }
 }
 
+// Photoshop stores RGB merged previews with transparency matted against white.
+// These fixture planes are the on-disk values for straight pixels
+// {10,20,30,255} and {40,50,60,128}; the decoder must remove that matte.
 void checkFlatComposite(std::uint16_t compression){
     CodecLimits limits;
     auto decoded=decodePhotoshopLayers(rgbFlatComposite(compression),ProfileId{},limits);
@@ -246,7 +249,7 @@ Bytes rgbFlatPsbRleComposite(){
     p16(b,1);
     for(int row=0;row<4;++row)p32(b,3);
     const std::array<std::array<std::uint8_t,2>,4> rows{{
-        {{10,40}},{{20,50}},{{30,60}},{{255,128}}
+        {{10,147}},{{20,152}},{{30,157}},{{255,128}}
     }};
     for(const auto& row:rows){
         b.push_back(1);
@@ -285,7 +288,7 @@ Bytes layeredRgbCompositeWithLayerCount(std::int16_t count){
         b[at]=std::uint8_t(encoded>>8);
         b[at+1]=std::uint8_t(encoded);
     }
-    b.insert(b.end(),{10,40,20,50,30,60,255,128});
+    b.insert(b.end(),{10,147,20,152,30,157,255,128});
     return b;
 }
 }
