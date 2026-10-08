@@ -72,7 +72,7 @@ foreach ($needed in @($exe,$worker,$token)) {
 if (Test-Path $folder) { Remove-Item -LiteralPath $folder -Recurse -Force }
 New-Item -ItemType Directory -Path $folder | Out-Null
 Copy-Item -LiteralPath $exe,$worker,$token -Destination $folder
-Run-Checked -Executable (Join-Path $QtRoot 'bin\windeployqt.exe') -Arguments @('--release','--qmldir',(Join-Path $repo 'ui'),'--dir',$folder,(Join-Path $folder 'Drawborad.exe'))
+Run-Checked -Executable (Join-Path $QtRoot 'bin\windeployqt.exe') -Arguments @('--release','--no-compiler-runtime','--qmldir',(Join-Path $repo 'ui'),'--dir',$folder,(Join-Path $folder 'Drawborad.exe'))
 
 foreach ($needed in @('Drawborad.exe','DrawboradWorker.exe','Qt6Core.dll','Qt6Qml.dll','Qt6Quick.dll','platforms\qwindows.dll','drawborad_build_token.txt')) {
     if (-not (Test-Path (Join-Path $folder $needed))) {
@@ -103,7 +103,8 @@ ALPHA LIMITS:
 - SAM/ONNX auto-segmentation, AI high-fidelity painting, full PSD export and
   Photoshop interoperability are NOT exposed in this Alpha UI.
 - Unofficial unsigned pre-release. Keep your original files and save test copies.
-- Qt libraries deployed using windeployqt; use the official Qt/Microsoft runtime licenses.
+- Qt deployed via windeployqt. Requires the official Microsoft Visual C++ 2015-2022 x64 Redistributable.
+Do not copy compiler runtime DLLs from a developer machine.
 
 Report an issue: record Windows version, GPU, exact operation, error message,
 and whether the .draw file was newly created or reopened.

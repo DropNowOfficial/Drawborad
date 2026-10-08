@@ -8,7 +8,7 @@ This is a **test build**, not a signed consumer release and **not** the full AI 
 2. Open [Windows Alpha workflow runs](https://github.com/DropNowOfficial/Drawborad/actions/workflows/windows-alpha-portable.yml) and select the **latest successful** run for `alpha/windows-portable-20261008`.
 3. In **Artifacts**, download the `Drawborad-Windows-Alpha-...` bundle containing the ZIP and `.sha256.txt`.
 4. Verify the checksum with `Get-FileHash .\Drawborad-Alpha-Win11-x64-*.zip -Algorithm SHA256` and compare against the checksum text.
-5. Extract the ZIP completely; run `Drawborad.exe` from the extracted `Drawborad-Alpha-Win11-x64` directory. Do **not** run as administrator. Keep the Qt DLLs and `platforms` folder alongside it.
+5. Extract the ZIP completely; run `Drawborad.exe` from the extracted `Drawborad-Alpha-Win11-x64` directory. Do **not** run as administrator. Keep the Qt DLLs and `platforms` folder alongside it. Install the **official Microsoft Visual C++ 2015–2022 x64 Redistributable** if the app reports a missing MSVC runtime. The portable packager deliberately does not redistribute Visual Studio compiler-runtime DLLs.
 
 **Build status gate:** a source commit or workflow that fails before any step executes does **not** create a working artifact. Do not advertise a download until a Windows build succeeds and the ZIP is present.
 
