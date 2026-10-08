@@ -1052,3 +1052,25 @@ TEST("C04 zero alpha identifier marks the single extra channel as transparency")
     CHECK(decoded.value().composite.has_value());
     CHECK(decoded.value().composite->format==PixelFormat{ColorMode::RGB,Depth::U8,true});
 }
+
+
+TEST("C04 negative layer count overrides saved-alpha identifier metadata"){
+    CodecLimits limits;
+    auto decoded=decodePhotoshopLayers(
+        withAlphaIdentifiers(layeredRgbCompositeWithLayerCount(-1),{1}),
+        ProfileId{},limits);
+    CHECK(decoded);
+    CHECK(decoded.value().composite.has_value());
+    CHECK(decoded.value().composite->format==PixelFormat{ColorMode::RGB,Depth::U8,true});
+}
+
+TEST("C04 Mtrn tag overrides saved-alpha identifier metadata"){
+    CodecLimits limits;
+    auto decoded=decodePhotoshopLayers(
+        withAlphaIdentifiers(
+            withDocumentTag(layeredRgbCompositeWithLayerCount(1),"Mtrn"),{1}),
+        ProfileId{},limits);
+    CHECK(decoded);
+    CHECK(decoded.value().composite.has_value());
+    CHECK(decoded.value().composite->format==PixelFormat{ColorMode::RGB,Depth::U8,true});
+}
