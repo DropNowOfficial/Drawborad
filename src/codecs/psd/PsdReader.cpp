@@ -169,15 +169,17 @@ Result<std::optional<LayerInfoLocation>> locateLayerInfo(
     at += mainLengthBytes;
     if (mainLength > sectionEnd - at)
         return error(ErrorCode::CorruptData, "psd.layer-info-bounds");
+
+    std::optional<LayerInfoLocation> selected;
     if (mainLength != 0) {
         if (mainLength < 2)
             return error(ErrorCode::CorruptData, "psd.layer-info-bounds");
-        return std::optional<LayerInfoLocation>{
-            LayerInfoLocation{at, at + std::size_t(mainLength)}};
+        selected = LayerInfoLocation{at, at + std::size_t(mainLength)};
     }
+    at += std::size_t(mainLength);
 
     if (sectionEnd - at < 4)
-        return std::optional<LayerInfoLocation>{};
+        return error(ErrorCode::CorruptData, "psd.global-mask-length");
     const auto globalMaskLength = std::uint64_t(u32(bytes.data() + at));
     at += 4;
     if (globalMaskLength > sectionEnd - at)
@@ -200,12 +202,22 @@ Result<std::optional<LayerInfoLocation>> locateLayerInfo(
         const auto payload = at + 8 + lengthBytes;
         if (length > sectionEnd - payload)
             return error(ErrorCode::CorruptData, "psd.additional-layer-info-bounds");
+
+        if (std::memcmp(key.data(), "lnk2", 4) == 0 ||
+            std::memcmp(key.data(), "lnkD", 4) == 0 ||
+            std::memcmp(key.data(), "lnk3", 4) == 0 ||
+            std::memcmp(key.data(), "lnkE", 4) == 0) {
+            return Error{ErrorCode::UnsupportedFeature,
+                         "psd.unsupported-document-feature",
+                         std::string(reinterpret_cast<const char*>(key.data()), 4)};
+        }
+
         if (depth == 16 && std::memcmp(key.data(), "Lr16", 4) == 0) {
             if (length < 2)
                 return error(ErrorCode::CorruptData, "psd.lr16-length");
-            return std::optional<LayerInfoLocation>{
-                LayerInfoLocation{payload, payload + std::size_t(length)}};
+            selected = LayerInfoLocation{payload, payload + std::size_t(length)};
         }
+
         at = payload + std::size_t(length);
         if ((length & 1u) != 0) {
             if (at >= sectionEnd)
@@ -213,7 +225,7 @@ Result<std::optional<LayerInfoLocation>> locateLayerInfo(
             ++at;
         }
     }
-    return std::optional<LayerInfoLocation>{};
+    return selected;
 }
 
 Result<void> readLayerExtra(std::span<const std::uint8_t> bytes, std::size_t begin,
@@ -294,7 +306,8 @@ Result<void> readLayerExtra(std::span<const std::uint8_t> bytes, std::size_t beg
                    std::memcmp(key, "PlLd", 4) == 0 ||
                    std::memcmp(key, "lnk2", 4) == 0 ||
                    std::memcmp(key, "lnkD", 4) == 0 ||
-                   std::memcmp(key, "lnk3", 4) == 0) {
+                   std::memcmp(key, "lnk3", 4) == 0 ||
+                   std::memcmp(key, "lnkE", 4) == 0) {
             return Error{ErrorCode::UnsupportedFeature, "psd.unsupported-layer-feature",
                          std::string(reinterpret_cast<const char*>(key), 4)};
         } else if (std::memcmp(key, "lsct", 4) == 0 ||
