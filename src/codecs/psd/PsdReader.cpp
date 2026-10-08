@@ -345,6 +345,28 @@ Result<void> readLayerExtra(std::span<const std::uint8_t> bytes, std::size_t beg
             if (type > 3)
                 return error(ErrorCode::UnsupportedFeature, "psd.section-divider-type");
             layer.sectionType = type;
+            if (blockLength > 4) {
+                if (blockLength < 12)
+                    return error(ErrorCode::CorruptData,
+                                 "psd.section-divider-blend-length");
+                if (std::memcmp(bytes.data() + at + 4, "8BIM", 4) != 0)
+                    return error(ErrorCode::CorruptData,
+                                 "psd.section-divider-blend-signature");
+                const auto* blendKey = bytes.data() + at + 8;
+                if (std::memcmp(blendKey, "norm", 4) == 0)
+                    layer.blend = BlendMode::Normal;
+                else if (std::memcmp(blendKey, "mul ", 4) == 0)
+                    layer.blend = BlendMode::Multiply;
+                else if (std::memcmp(blendKey, "scrn", 4) == 0)
+                    layer.blend = BlendMode::Screen;
+                else if (std::memcmp(blendKey, "dark", 4) == 0)
+                    layer.blend = BlendMode::Darken;
+                else if (std::memcmp(blendKey, "lite", 4) == 0)
+                    layer.blend = BlendMode::Lighten;
+                else
+                    return error(ErrorCode::UnsupportedFeature,
+                                 "psd.section-divider-blend-mode");
+            }
         }
         at += std::size_t(blockLength);
         if ((blockLength & 1u) != 0) {
