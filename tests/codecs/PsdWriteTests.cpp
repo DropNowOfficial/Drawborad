@@ -551,3 +551,61 @@ TEST("C05 hidden layer visibility survives PSD roundtrip"){
     CHECK(info.value().layers.size()==1);
     CHECK(!info.value().layers[0].visible);
 }
+
+
+namespace {
+PsdWriteRequest finalMaskedRequest(std::uint8_t defaultValue){
+    PsdWriteRequest q;
+    q.size={1,1};
+    q.format={ColorMode::RGB,Depth::U8,true};
+    PsdLayerPixels l;
+    l.name="Mask default";
+    l.pixels.width=1;l.pixels.height=1;l.pixels.format=q.format;
+    l.pixels.rowStride=4;l.pixels.bytes={10,20,30,255};
+    l.mask={255};l.maskBounds={0,0,1,1};l.maskDefault=defaultValue;
+    q.layers.push_back(l);q.merged=l.pixels;
+    return q;
+}
+std::size_t finalMaskDefaultOffset(const Bytes& b){
+    auto read32=[](const Bytes& bytes,std::size_t at){
+        return (std::uint32_t(bytes[at])<<24)|(std::uint32_t(bytes[at+1])<<16)|
+               (std::uint32_t(bytes[at+2])<<8)|bytes[at+3];
+    };
+    std::size_t at=26;
+    for(int section=0;section<2;++section){const auto n=read32(b,at);at+=4+n;}
+    at+=4;
+    at+=4;
+    at+=2;
+    at+=16;
+    const auto channels=std::uint16_t((std::uint16_t(b[at])<<8)|b[at+1]);
+    at+=2+std::size_t(channels)*6u;
+    at+=12;
+    at+=4;
+    const auto maskLength=read32(b,at);
+    CHECK(maskLength>=18);
+    return at+4+16;
+}
+}
+
+TEST("C05 rejects invalid PSD layer-mask default value"){
+    auto q=finalMaskedRequest(127);
+    auto encoded=encodePsd(q);
+    CHECK(!encoded);
+    CHECK(encoded.error().code==ErrorCode::InvalidInput);
+    CHECK(encoded.error().messageKey=="psd.mask-default");
+}
+
+TEST("C04 rejects invalid PSD layer-mask default value"){
+    auto q=finalMaskedRequest(255);
+    auto encoded=encodePsd(q);
+    CHECK(encoded);
+    auto bytes=encoded.value();
+    const auto at=finalMaskDefaultOffset(bytes);
+    CHECK(at<bytes.size());
+    bytes[at]=127;
+    CodecLimits limits;
+    auto decoded=readPhotoshopHeader(bytes,limits);
+    CHECK(!decoded);
+    CHECK(decoded.error().code==ErrorCode::CorruptData);
+    CHECK(decoded.error().messageKey=="psd.mask-default");
+}
