@@ -19,6 +19,12 @@ class AlphaPackagingContract(unittest.TestCase):
                      'windeployqt.exe','--qmldir','platforms\\qwindows.dll',
                      '--diagnostics','Get-FileHash','Compress-Archive','ALPHA_ZIP='):
             self.assertIn(item,s)
+    def test_reference_preview_applies_exif_orientation(self):
+        qml=(ROOT/'ui/Main.qml').read_text()
+        cpp=(ROOT/'apps/studio/QtBridge.cpp').read_text()
+        self.assertIn('reader.setAutoTransform(true)',cpp)
+        self.assertRegex(qml,r'(?s)id:\s*referencePreview.*?autoTransform:\s*true')
+
     def test_ui_labels_reference_as_preview_only(self):
         qml=(ROOT/'ui/Main.qml').read_text()
         cpp=(ROOT/'apps/studio/QtBridge.cpp').read_text()

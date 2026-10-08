@@ -46,6 +46,7 @@ ApplicationWindow {
                 id: referencePreview
                 anchors.fill: nativeCanvas
                 source: studio.referenceUrl
+                autoTransform: true
                 visible: studio.hasReference && showReference.checked && studio.hasDocument
                 opacity: referenceOpacity.value
                 fillMode: Image.PreserveAspectFit
