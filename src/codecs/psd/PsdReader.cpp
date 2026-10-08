@@ -339,6 +339,10 @@ Result<PhotoshopInfo> readPhotoshopHeader(std::span<const std::uint8_t> bytes,
     const auto version = u16(bytes.data() + 4);
     if (version != 1 && version != 2)
         return error(ErrorCode::UnsupportedFeature, "psd.version");
+    for (std::size_t index = 6; index < 12; ++index) {
+        if (bytes[index] != 0)
+            return error(ErrorCode::CorruptData, "psd.header-reserved");
+    }
 
     PhotoshopInfo out;
     out.format = version == 1 ? ImageFormat::Psd : ImageFormat::Psb;
@@ -424,6 +428,16 @@ Result<PhotoshopInfo> readPhotoshopHeader(std::span<const std::uint8_t> bytes,
         const auto channelRecords = std::uint64_t(layer.channels) * descriptorSize;
         if (channelRecords > layerInfoEnd - reader.position)
             return error(ErrorCode::CorruptData, "psd.channel-records");
+        std::array<std::int16_t, 56> channelIds{};
+        for (std::uint16_t channel = 0; channel < layer.channels; ++channel) {
+            const auto id = std::int16_t(u16(bytes.data() + reader.position +
+                                             std::size_t(channel) * descriptorSize));
+            for (std::uint16_t previous = 0; previous < channel; ++previous) {
+                if (channelIds[previous] == id)
+                    return error(ErrorCode::CorruptData, "psd.channel-duplicate");
+            }
+            channelIds[channel] = id;
+        }
         reader.position += std::size_t(channelRecords);
 
         if (reader.position + 16 > layerInfoEnd)
@@ -679,6 +693,11 @@ Result<PhotoshopDecoded> decodeRawLayers(std::span<const std::uint8_t> bytes, Pr
             reader.position += lengthBytes;
             if (length < 2)
                 return error(ErrorCode::CorruptData, "psd.decode-channel-length");
+            if (std::any_of(record.channels.begin(), record.channels.end(),
+                            [id](const ChannelRecord& existing) {
+                                return existing.id == id;
+                            }))
+                return error(ErrorCode::CorruptData, "psd.channel-duplicate");
             record.channels.push_back({id, length});
         }
         if (reader.position + 12 > layerInfoEnd)
