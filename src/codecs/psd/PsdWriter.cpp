@@ -5,6 +5,7 @@
 #include <chrono>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 namespace drawborad {
