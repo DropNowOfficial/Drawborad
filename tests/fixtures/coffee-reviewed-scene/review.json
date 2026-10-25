@@ -1,0 +1,57 @@
+{
+  "source_sha256": "cc02f8ca188b167c775a7101b5d767d1e71792cf762c33d6fa15a4599b5a8de7",
+  "width": 600,
+  "height": 400,
+  "regions": [
+    {
+      "name": "Table and backdrop (boundary review incomplete)",
+      "mask": "0.u8",
+      "sha256": "7cad8503712b27343bcbcc61c2120fb4d5eac0e1949189cffe94a2497523708b",
+      "pixels": 127872
+    },
+    {
+      "name": "Visible saucer",
+      "mask": "1.u8",
+      "sha256": "48ed1d3baa11d1a29fcde99aa6b4078a108185c9b0ab02241c821007a166dd5b",
+      "pixels": 54857
+    },
+    {
+      "name": "Visible cup body and handle",
+      "mask": "2.u8",
+      "sha256": "e7131e262733d7416ad34a1050d9b8b19f7033132773747d91faf7ccbf4f73db",
+      "pixels": 15945
+    },
+    {
+      "name": "Inner cup",
+      "mask": "3.u8",
+      "sha256": "d6d1fb49be544608b324c863bb9db5d85955d8e250457883e244141d0a71ed2e",
+      "pixels": 22554
+    },
+    {
+      "name": "Coffee surface",
+      "mask": "4.u8",
+      "sha256": "0fd98c461be2d6a62af75bdc51d970cbf61c9458a5f02206c7d9c60078b04e4d",
+      "pixels": 12177
+    },
+    {
+      "name": "Visible spoon fragments",
+      "mask": "5.u8",
+      "sha256": "ae3a5ffea235194dc31fdd63d5da9c7a323de7c9ebba5fd8bd3b3c15dac3c623",
+      "pixels": 6595
+    }
+  ],
+  "selected_union_pixels": 240000,
+  "overlap_pixels": 0,
+  "original_proposal_unassigned_pixels": 5940,
+  "segmentation_semantic_accuracy_verified": false,
+  "human_reviewed": false,
+  "operations": [
+    "Select actual cup candidate0, saucer2 and spoon2; retain actual automatic inner-cup3 and coffee5",
+    "Subtract nearer visible regions from lower ones in recorded spoon > coffee > inner cup > cup body > saucer order",
+    "Explicit source-alpha background complement: 5940 original unassigned edge/shadow pixels remain semantically uncertain"
+  ],
+  "limitations": [
+    "Binary boundaries retain model edge errors; no amodal fill, no spoon shaft bridge",
+    "Background includes uncertain reflective boundary/shadow gaps; 100% assignment is not semantic correctness or painted fidelity"
+  ]
+}

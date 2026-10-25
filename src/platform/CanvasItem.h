@@ -15,9 +15,16 @@ class CanvasItem : public QQuickItem {
     QPointer<QtBridge> bridge_;
     mutable std::mutex snapshotMutex_;
     std::optional<DocumentSnapshot> snapshot_;
+    std::uint64_t replayCount_{UINT64_MAX};
     ReferenceRenderer renderer_;
     BrushEngine brush_;
     std::vector<InputSample> stroke_;
+    struct StrokeTarget {
+        DocumentId document;
+        NodeId object, layer;
+        std::uint64_t generation{};
+    };
+    std::optional<StrokeTarget> strokeTarget_;
     bool tabletStroke_ = false;
     bool eraser_ = false;
     QObject* studio() const;

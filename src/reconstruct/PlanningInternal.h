@@ -1,6 +1,7 @@
 #pragma once
 #include "Planning.h"
 #include "render/ReferenceRenderer.h"
+#include "view/LayerTree.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -41,6 +42,21 @@ inline Result<void> checkRegion(const PlanningRegion& region,bool needSource) {
         return error(ErrorCode::BudgetExceeded,"reconstruct.planning-budget");
     if(total.value()!=region.reviewedMask.size())
         return error(ErrorCode::InvalidInput,"reconstruct.planning-mask-size");
+    if(region.clipToReviewedMask){
+        const auto object=region.snapshot.nodes->find(region.objectId);
+        const auto layer=region.snapshot.nodes->find(region.layerId);
+        if(object==region.snapshot.nodes->end() || object->second.kind!=NodeKind::Object ||
+           layer==region.snapshot.nodes->end() || layer->second.objectId!=region.objectId ||
+           region.bounds!=Rect{0,0,size.width,size.height} ||
+           !nativeLayerPaintable(region.snapshot,region.layerId))
+            return error(ErrorCode::InvalidInput,"reconstruct.planning-mask-clipping");
+        const auto mask=region.snapshot.resources->find(object->second.maskId);
+        if(mask==region.snapshot.resources->end() || mask->second.kind!=ResourceKind::Mask ||
+           mask->second.bytes->size()!=region.reviewedMask.size() ||
+           !std::equal(mask->second.bytes->begin(),mask->second.bytes->end(),region.reviewedMask.begin()) ||
+           !std::all_of(region.reviewedMask.begin(),region.reviewedMask.end(),[](auto a){return a==0 || a==255;}))
+            return error(ErrorCode::InvalidInput,"reconstruct.planning-mask-clipping");
+    }
     if(needSource){
         const auto* source=region.source;
         if(!source || source->width!=size.width || source->height!=size.height ||
@@ -65,6 +81,10 @@ inline Result<SafeRaster> makeSafe(const PlanningRegion& region,double strokeWid
     if(!base)return base.error();
     const int w=int(region.bounds.width),h=int(region.bounds.height);
     const int left=int(region.bounds.x),top=int(region.bounds.y);
+    if(region.clipToReviewedMask){
+        SafeRaster safe{left,top,w,h,std::vector<std::uint8_t>(region.reviewedMask.begin(),region.reviewedMask.end())};
+        return safe;
+    }
     const int pad=int(std::ceil(strokeWidth*.5+.5)); // Round nib + 0.5px coverage falloff.
     const std::size_t stride=std::size_t(w)+1;
     std::vector<std::uint32_t> prefix((std::size_t(h)+1)*stride,0);

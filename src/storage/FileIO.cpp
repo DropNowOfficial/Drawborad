@@ -247,13 +247,18 @@ Result<void> NativeFileIO::flush(const fs::path& p) {
     return {};
 }
 Result<void> NativeFileIO::replace(const fs::path& a, const fs::path& b) {
+#ifdef _WIN32
+    const fs::path destination{wp(b)};
+#else
+    const auto& destination = b;
+#endif
     std::error_code ec;
-    if (fs::is_symlink(fs::symlink_status(b, ec)))
+    if (fs::is_symlink(fs::symlink_status(destination, ec)))
         return error(ErrorCode::PathEscape, "io.symlink");
 #ifdef _WIN32
-    BOOL ok = fs::exists(b)
-                  ? ReplaceFileW(wp(b).c_str(), wp(a).c_str(), nullptr, 0, nullptr, nullptr)
-                  : MoveFileExW(wp(a).c_str(), wp(b).c_str(), MOVEFILE_WRITE_THROUGH);
+    BOOL ok = fs::exists(destination)
+                  ? ReplaceFileW(destination.c_str(), wp(a).c_str(), nullptr, 0, nullptr, nullptr)
+                  : MoveFileExW(wp(a).c_str(), destination.c_str(), MOVEFILE_WRITE_THROUGH);
     if (!ok)
         return ioerr("io.atomic-replace");
 #else

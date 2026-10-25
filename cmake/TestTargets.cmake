@@ -30,6 +30,43 @@ set_tests_properties(F06 PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
 if(WIN32 AND DRAWBORAD_DESKTOP)
   get_filename_component(_drawborad_qt_prefix "${Qt6_DIR}/../../.." ABSOLUTE)
   set_tests_properties(F06 PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_drawborad_qt_prefix}/bin")
+  find_package(Qt6 6.12 REQUIRED COMPONENTS Test)
+  qt_add_executable(test_U01.Layers
+    ${PROJECT_SOURCE_DIR}/tests/studio/LayerUiTests.cpp
+    ${PROJECT_SOURCE_DIR}/apps/studio/QtBridge.cpp
+    ${PROJECT_SOURCE_DIR}/apps/studio/QtBridge.h
+    ${PROJECT_SOURCE_DIR}/src/ui/WorkflowController.cpp
+    ${PROJECT_SOURCE_DIR}/src/ui/WorkflowController.h
+    ${PROJECT_SOURCE_DIR}/src/platform/CanvasItem.cpp
+    ${PROJECT_SOURCE_DIR}/src/platform/CanvasItem.h)
+  target_include_directories(test_U01.Layers PRIVATE ${PROJECT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/src)
+  target_compile_definitions(test_U01.Layers PRIVATE
+    DRAWBORAD_HAS_QT DRAWBORAD_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+  target_link_libraries(test_U01.Layers PRIVATE drawborad_workflow drawborad_core drawborad_render
+    Qt6::Quick Qt6::QuickControls2 Qt6::Test d3d11 dxgi)
+  set_target_properties(test_U01.Layers PROPERTIES WIN32_EXECUTABLE FALSE)
+  add_test(NAME U01.Layers COMMAND test_U01.Layers
+    -o "${CMAKE_BINARY_DIR}/ui-test-results.txt,txt" -o "-,txt")
+  set_tests_properties(U01.Layers PROPERTIES TIMEOUT 90
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_drawborad_qt_prefix}/bin"
+    ENVIRONMENT "DRAWBORAD_TEST_ARTIFACT_DIR=${CMAKE_BINARY_DIR}/ui-artifacts")
+  if(DRAWBORAD_HAS_ONNXRUNTIME AND DRAWBORAD_TEST_COFFEE_IMAGE AND DRAWBORAD_TEST_COFFEE_PACKAGE)
+    qt_add_executable(test_U04.RealImageReview
+      ${PROJECT_SOURCE_DIR}/tests/studio/RealImageReviewTests.cpp
+      ${PROJECT_SOURCE_DIR}/apps/studio/QtBridge.cpp ${PROJECT_SOURCE_DIR}/apps/studio/QtBridge.h
+      ${PROJECT_SOURCE_DIR}/src/ui/WorkflowController.cpp ${PROJECT_SOURCE_DIR}/src/ui/WorkflowController.h
+      ${PROJECT_SOURCE_DIR}/src/platform/CanvasItem.cpp ${PROJECT_SOURCE_DIR}/src/platform/CanvasItem.h)
+    target_include_directories(test_U04.RealImageReview PRIVATE ${PROJECT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/src)
+    target_compile_definitions(test_U04.RealImageReview PRIVATE DRAWBORAD_HAS_QT DRAWBORAD_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    target_link_libraries(test_U04.RealImageReview PRIVATE drawborad_workflow drawborad_render Qt6::Quick Qt6::QuickControls2 Qt6::Test d3d11 dxgi)
+    set_target_properties(test_U04.RealImageReview PROPERTIES WIN32_EXECUTABLE FALSE)
+    add_dependencies(test_U04.RealImageReview DrawboradWorker)
+    add_test(NAME U04.RealImageReview COMMAND test_U04.RealImageReview
+      -o "${CMAKE_BINARY_DIR}/real-image-ui-results.txt,txt" -o "-,txt")
+    set_tests_properties(U04.RealImageReview PROPERTIES TIMEOUT 700
+      ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_drawborad_qt_prefix}/bin"
+      ENVIRONMENT "DRAWBORAD_COFFEE_PACKAGE=${DRAWBORAD_TEST_COFFEE_PACKAGE};DRAWBORAD_COFFEE_IMAGE=${DRAWBORAD_TEST_COFFEE_IMAGE};DRAWBORAD_COFFEE_MASKS=${PROJECT_SOURCE_DIR}/tests/fixtures/coffee-native;DRAWBORAD_TEST_ARTIFACT_DIR=${CMAKE_BINARY_DIR}/real-image-ui-artifacts")
+  endif()
 endif()
 
 add_test(NAME F01.Runner COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/build/test_task_runner.py)
@@ -104,6 +141,25 @@ feature_task(C07.Fuzz tests/fuzz/CodecFuzz.cpp)
 feature_task(M01 tests/models/PackageTests.cpp)
 feature_task(M02 tests/models/ProviderParityTests.cpp)
 feature_task(M03 tests/segmentation/ProposalTests.cpp)
+set(DRAWBORAD_TEST_COFFEE_REFERENCE "" CACHE PATH "Developer-only real coffee/SAM reference directory")
+if(DRAWBORAD_HAS_ONNXRUNTIME AND DRAWBORAD_TEST_COFFEE_REFERENCE)
+  feature_task(M03.Coffee tests/models/CoffeeRuntimeTests.cpp)
+  if(WIN32)
+    add_custom_command(TARGET test_M03.Coffee POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${DRAWBORAD_ONNXRUNTIME_ROOT}/lib/onnxruntime.dll" "$<TARGET_FILE_DIR:test_M03.Coffee>/onnxruntime.dll")
+  endif()
+  set_tests_properties(M03.Coffee PROPERTIES TIMEOUT 180
+    ENVIRONMENT "DRAWBORAD_COFFEE_PACKAGE=${DRAWBORAD_TEST_COFFEE_PACKAGE};DRAWBORAD_COFFEE_IMAGE=${DRAWBORAD_TEST_COFFEE_IMAGE};DRAWBORAD_COFFEE_REFERENCE=${DRAWBORAD_TEST_COFFEE_REFERENCE};DRAWBORAD_COFFEE_OUTPUT=${CMAKE_BINARY_DIR}/coffee-native")
+  if(WIN32 AND DRAWBORAD_TEST_COFFEE_AUTO_REFERENCE)
+    feature_task(M03.CoffeeAutomatic tests/models/CoffeeAutomaticTests.cpp)
+    add_custom_command(TARGET test_M03.CoffeeAutomatic POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${DRAWBORAD_ONNXRUNTIME_ROOT}/lib/onnxruntime.dll" "$<TARGET_FILE_DIR:test_M03.CoffeeAutomatic>/onnxruntime.dll")
+    set_tests_properties(M03.CoffeeAutomatic PROPERTIES TIMEOUT 1200
+      ENVIRONMENT "DRAWBORAD_COFFEE_PACKAGE=${DRAWBORAD_TEST_COFFEE_PACKAGE};DRAWBORAD_COFFEE_IMAGE=${DRAWBORAD_TEST_COFFEE_IMAGE};DRAWBORAD_COFFEE_AUTO_REFERENCE=${DRAWBORAD_TEST_COFFEE_AUTO_REFERENCE};DRAWBORAD_COFFEE_OUTPUT=${CMAKE_BINARY_DIR}/coffee-native")
+  endif()
+endif()
 feature_task(M04 tests/review/MaskEditTests.cpp)
 feature_task(M05 tests/models/CustomAdapterTests.cpp)
 feature_task(M06 tests/jobs/QueueTests.cpp)
@@ -142,6 +198,19 @@ add_test(NAME E06.Runner COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/too
 set_tests_properties(E06.Runner PROPERTIES TIMEOUT 20)
 
 feature_task(X13.Stress tests/stress/ColorModelStressTests.cpp)
+if(DRAWBORAD_DESKTOP AND DRAWBORAD_TEST_COFFEE_IMAGE)
+  feature_task(E08.FullScene tests/reconstruct/FullSceneWorkflowTests.cpp)
+  target_link_libraries(test_E08.FullScene PRIVATE drawborad_workflow)
+  if(DRAWBORAD_TEST_FULL_SCENE_REFERENCE)
+    target_compile_definitions(test_E08.FullScene PRIVATE DRAWBORAD_FULL_SCENE_REAL_REFERENCE)
+    set_tests_properties(E08.FullScene PROPERTIES TIMEOUT 300
+      ENVIRONMENT "DRAWBORAD_COFFEE_IMAGE=${DRAWBORAD_TEST_COFFEE_IMAGE};DRAWBORAD_COFFEE_PACKAGE=${DRAWBORAD_TEST_COFFEE_PACKAGE};DRAWBORAD_FULL_SCENE_REFERENCE=${DRAWBORAD_TEST_FULL_SCENE_REFERENCE}")
+  endif()
+  feature_task(E07.RealReconstruction tests/reconstruct/RealImageReconstructionTests.cpp)
+  target_link_libraries(test_E07.RealReconstruction PRIVATE drawborad_workflow)
+  set_tests_properties(E07.RealReconstruction PROPERTIES TIMEOUT 300
+    ENVIRONMENT "DRAWBORAD_COFFEE_IMAGE=${DRAWBORAD_TEST_COFFEE_IMAGE};DRAWBORAD_COFFEE_MASKS=${PROJECT_SOURCE_DIR}/tests/fixtures/coffee-native")
+endif()
 
 if(DRAWBORAD_HAS_ONNXRUNTIME AND DRAWBORAD_TEST_ONNX_MODEL)
   add_executable(test_M02.Runtime

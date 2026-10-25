@@ -3,6 +3,7 @@
 #include "reconstruct/Planning.h"
 #include "render/ReferenceRenderer.h"
 #include "core/Commands.h"
+#include "view/LayerTree.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -94,6 +95,34 @@ TEST("E02 base pigment uses long connected strokes and never draws outside revie
     CHECK(validateReconstructionBatch(pigment.value()));
     assertNoLeak(pigment.value(),c);
 }
+TEST("E02 persisted mask clipping covers frame edges thin regions and transparent holes"){
+    Context c;c.mask.assign(4096,255);
+    for(unsigned y=20;y<44;++y)for(unsigned x=20;x<44;++x)c.mask[y*64+x]=0;
+    for(unsigned y=0;y<64;++y)for(unsigned x=0;x<5;++x)c.mask[y*64+x]=0;
+    for(unsigned y=0;y<64;++y)c.mask[y*64+63]=0; // Trailing empty run after a visible span.
+    c.source.bytes.resize(c.source.bytes.size()+4); // Valid extra buffer capacity; no out-of-range read can mask the geometry defect.
+    for(unsigned y=8;y<56;++y)c.mask[y*64+1]=255; // One-pixel-wide visible fragment.
+    c.mask[2*64+3]=255; // Visible island between the ordinary sweep rows.
+    auto resources=std::make_shared<ResourceMap>(*c.snapshot.resources);
+    Resource mask{sha256(c.mask),ResourceKind::Mask,std::make_shared<const Bytes>(c.mask),{}};resources->emplace(mask.id,mask);c.snapshot.resources=resources;
+    auto nodes=std::make_shared<NodeMap>(*c.snapshot.nodes);nodes->at(c.region.objectId).maskId=mask.id;c.snapshot.nodes=nodes;
+    c.region.snapshot=c.snapshot;c.region.reviewedMask=c.mask;c.region.clipToReviewedMask=true;
+    // A four-pixel round nib at two-pixel spacing covers the stamp
+    // rasterizer's half-pixel falloff without scalloped translucent edges.
+    const auto paint=planBasePigment(c.region,StyleSettings{"marker",4,2,1,0});CHECK(paint);
+    for(const auto& event:paint.value().events)for(const auto& point:event.geometry)CHECK(point.x>=0 && point.y>=0 && point.x<64 && point.y<64);
+    auto snapshot=fixture::withEvents(c.snapshot,paint.value().events);ReferenceRenderer renderer;
+    const auto raw=renderer.renderRegion(snapshot,c.region.layerId,{0,0,64,64},{snapshot.revision});CHECK(raw);
+    const auto clipped=nativeMaskedTile(snapshot,c.region.layerId,raw.value(),0,0);CHECK(clipped);
+    unsigned missing=0;
+    for(unsigned p=0;p<4096;++p)if(clipped.value().bytes[p*4+3]!=c.mask[p]){
+        if(missing<8)std::cout<<"mask clipping mismatch x="<<p%64<<" y="<<p/64<<" alpha="<<unsigned(clipped.value().bytes[p*4+3])<<" expected="<<unsigned(c.mask[p])<<'\n';
+        ++missing;
+    }
+    CHECK(missing==0);
+    CHECK(paint.value().events.size()<100);
+    c.region.snapshot.resources=std::make_shared<const ResourceMap>();CHECK(!planBasePigment(c.region,StyleSettings{}));
+}
 TEST("E02 base follows source gradient tangents and samples native colors"){
     Context c;
     StyleSettings style;style.spacing=6;
@@ -124,6 +153,25 @@ TEST("E02 CMYKA16 pigment preserves native channels and profile"){
         CHECK(e.color.alpha>=0.0 && e.color.alpha<=1.0);
     }
     assertNoLeak(pigment.value(),c);
+}
+TEST("E02 adaptive pigment follows source color boundaries with coherent bounded strokes"){
+    Context c;
+    for(unsigned y=0;y<64;++y)for(unsigned x=0;x<64;++x){
+        const auto at=std::size_t(y*64+x)*4;c.source.bytes[at]=x<32?std::uint8_t(20):std::uint8_t(220);
+        c.source.bytes[at+1]=std::uint8_t(y*4);c.source.bytes[at+2]=100;
+    }
+    StyleSettings style;style.maxColorVariation=.06;
+    const auto generated=planBasePigment(c.region,style);CHECK(generated);
+    CHECK(generated.value().events==planBasePigment(c.region,style).value().events);
+    CHECK(generated.value().events.size()<80);
+    for(const auto& event:generated.value().events){
+        CHECK(std::hypot(event.geometry.back().x-event.geometry.front().x,event.geometry.back().y-event.geometry.front().y)>=3);
+        CHECK(std::abs(event.color.channels[0]-20.0/255)<.001 || std::abs(event.color.channels[0]-220.0/255)<.001);
+        for(const auto& point:event.geometry)CHECK((point.x<32)==(event.color.channels[0]<.5));
+    }
+    assertNoLeak(generated.value(),c);
+    style.maxColorVariation=std::numeric_limits<double>::quiet_NaN();CHECK(!planBasePigment(c.region,style));
+    style.maxColorVariation=.06;c.region.maxEvents=1;CHECK(!planBasePigment(c.region,style));
 }
 TEST("E02 schedule orders contour before base within each region and stays deterministic"){
     Context c;

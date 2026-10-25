@@ -141,7 +141,12 @@ WinWorkerHost::WinWorkerHost(std::filesystem::path p)
     : impl_(std::make_unique<Impl>(std::move(p))) {}
 WinWorkerHost::~WinWorkerHost() = default;
 Result<void> WinWorkerHost::start(const JobRequest& r) {
-    if (r.task != "native.smoke")
+    if (r.task != "native.smoke"
+#ifdef DRAWBORAD_HAS_REVIEW_WORKER
+        && r.task != "image.review.sam21"
+        && r.task != "image.reconstruct.v1" && r.task != "image.refine.v1"
+#endif
+        )
         return error(ErrorCode::UnsupportedFeature, "worker.task-not-implemented");
     if (r.id.empty() || r.nonce.empty() || r.snapshotBytes.size() > MaxSnapshotMappingBytes ||
         impl_->jobs.contains(r.id) || !impl_->exe.is_absolute() ||
@@ -234,6 +239,11 @@ Result<void> WinWorkerHost::start(const JobRequest& r) {
     std::wstring cmd = L"\"" + impl_->exe.native() + L"\" --pipe \"" + name + L"\" --mapping " +
                        std::to_wstring(reinterpret_cast<std::uintptr_t>(w->readMap.h)) + L" --id " +
                        ident(r.id) + L" --nonce " + ident(r.nonce);
+#ifdef DRAWBORAD_HAS_REVIEW_WORKER
+    if(r.task=="image.review.sam21")cmd+=L" --task image.review.sam21";
+    if(r.task=="image.reconstruct.v1")cmd+=L" --task image.reconstruct.v1";
+    if(r.task=="image.refine.v1")cmd+=L" --task image.refine.v1";
+#endif
     PROCESS_INFORMATION pi{};
     BOOL started =
         updated

@@ -2,6 +2,18 @@
 #include "jobs/Protocol.h"
 #include <cstring>
 #include <iostream>
+#include <mutex>
+#ifdef DRAWBORAD_HAS_REVIEW_WORKER
+#include "ui/ReviewJob.h"
+#include "ui/ReconstructionJob.h"
+#include "storage/ProjectCodec.h"
+#include <QSaveFile>
+#include <QDir>
+#include <atomic>
+#include <chrono>
+#include <thread>
+#include <mutex>
+#endif
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
@@ -24,7 +36,13 @@ static Id parseId(const std::string& s) {
     return id;
 }
 static int pipeWorker(int argc, char** argv) {
-    if (argc != 9)
+    bool reviewTask=false;
+    bool paintTask=false;
+#ifdef DRAWBORAD_HAS_REVIEW_WORKER
+    reviewTask=argc==11 && std::string(argv[9])=="--task" && std::string(argv[10])=="image.review.sam21";
+    paintTask=argc==11 && std::string(argv[9])=="--task" && (std::string(argv[10])=="image.reconstruct.v1" || std::string(argv[10])=="image.refine.v1");
+#endif
+    if (argc != 9 && !reviewTask && !paintTask)
         return 2;
     std::string pipename = argv[2];
     if (pipename.rfind("\\\\.\\pipe\\Drawborad-", 0) != 0 || std::string(argv[3]) != "--mapping" ||
@@ -47,6 +65,10 @@ static int pipeWorker(int argc, char** argv) {
         return 3;
     }
     Hash digest = sha256({static_cast<const std::uint8_t*>(memory) + 8, std::size_t(n)});
+#ifdef DRAWBORAD_HAS_REVIEW_WORKER
+    Bytes snapshotBytes(static_cast<const std::uint8_t*>(memory)+8,
+                        static_cast<const std::uint8_t*>(memory)+8+std::size_t(n));
+#endif
     UnmapViewOfFile(memory);
     CloseHandle(mapping);
     HANDLE pipe = CreateFileA(pipename.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
@@ -55,7 +77,9 @@ static int pipeWorker(int argc, char** argv) {
         return 3;
     DWORD mode = PIPE_READMODE_MESSAGE;
     SetNamedPipeHandleState(pipe, &mode, nullptr, nullptr);
+    std::mutex sendMutex;
     auto send = [&](MessageKind kind, Bytes payload) {
+        std::lock_guard lock(sendMutex);
         auto b = encodeMessage({ProtocolVersion, kind, id, nonce, std::move(payload)});
         if (!b)
             return false;
@@ -67,6 +91,68 @@ static int pipeWorker(int argc, char** argv) {
         CloseHandle(pipe);
         return 3;
     }
+#ifdef DRAWBORAD_HAS_REVIEW_WORKER
+    auto snapshot=decodeDelta(snapshotBytes,DocumentSnapshot{});
+    std::optional<QJsonObject> request;
+    if((reviewTask || paintTask) && snapshot){
+        const auto verified=jobRequestMetadata(snapshot.value(),paintTask?ReconstructionRequestType:ReviewRequestType);
+        if(verified)request=verified.value();
+    }
+    if((reviewTask || paintTask) && !request){send(MessageKind::Failure,{});CloseHandle(pipe);return 3;}
+    if(paintTask && request->value("mode").toString()!=(std::string(argv[10])=="image.refine.v1"?"refine":"reconstruct")){send(MessageKind::Failure,{});CloseHandle(pipe);return 3;}
+    if((reviewTask || paintTask) && request){
+        const auto directory=request->value("outputDirectory").toString();
+        if(directory.isEmpty() || !QDir(directory).exists()){CloseHandle(pipe);return 3;}
+        std::atomic<bool> done=false;
+        std::jthread analysis([&](std::stop_token stop){
+            auto failure=[&](const std::string& key){send(MessageKind::Failure,Bytes(key.begin(),key.end()));};
+            try{
+                auto progress=[&](unsigned completed,unsigned total){
+                    Bytes payload(8);
+                    for(unsigned i=0;i<4;++i){payload[i]=std::uint8_t(completed>>(i*8));payload[4+i]=std::uint8_t(total>>(i*8));}
+                    if(!send(MessageKind::Progress,std::move(payload))) throw std::runtime_error("review.progress-pipe");
+                };
+                auto delta=paintTask?runReconstructionJob(snapshot.value(),stop,progress):runImageReviewJob(snapshot.value(),stop,progress);
+                if(!stop.stop_requested()){
+                    if(!delta) failure(delta.error().messageKey);
+                    else if(delta.value().size()>MaxSnapshotMappingBytes) failure("review.delta-limit");
+                    else{
+                        QSaveFile file(QDir(directory).filePath("review.delta"));
+                        if(!file.open(QIODevice::WriteOnly) ||
+                           file.write(reinterpret_cast<const char*>(delta.value().data()),qint64(delta.value().size()))!=qint64(delta.value().size()) || !file.commit())
+                            failure("review.staged-write");
+                        else if(!stop.stop_requested()){
+                            const auto hash=sha256(delta.value());
+                            send(MessageKind::Result,Bytes(hash.bytes.begin(),hash.bytes.end()));
+                        }
+                    }
+                }
+            }catch(const std::exception&){if(!stop.stop_requested())failure("review.worker-exception");}
+            done.store(true,std::memory_order_release);
+        });
+        Bytes buffer(MaxControlBytes);
+        while(!done.load(std::memory_order_acquire)){
+            DWORD available=0;
+            if(!PeekNamedPipe(pipe,nullptr,0,nullptr,&available,nullptr)){
+                analysis.request_stop();analysis.join();CloseHandle(pipe);return 3;
+            }
+            if(available){
+                DWORD read=0;
+                if(!ReadFile(pipe,buffer.data(),DWORD(buffer.size()),&read,nullptr)){
+                    analysis.request_stop();analysis.join();CloseHandle(pipe);return 3;
+                }
+                const auto message=decodeMessage(std::span(buffer).first(read));
+                if(!message || message.value().id!=id || message.value().nonce!=nonce || message.value().kind!=MessageKind::Cancel){
+                    analysis.request_stop();analysis.join();CloseHandle(pipe);return 3;
+                }
+                analysis.request_stop();analysis.join();
+                const auto sent=send(MessageKind::Cancelled,{});CloseHandle(pipe);return sent?0:3;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        analysis.join();CloseHandle(pipe);return 0;
+    }
+#endif
     Bytes buffer(MaxControlBytes);
     for (;;) {
         DWORD read = 0;

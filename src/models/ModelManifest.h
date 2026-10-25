@@ -2,13 +2,14 @@
 #include "core/Digest.h"
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <optional>
 #include <stop_token>
 namespace drawborad {
 using PackagePath = std::filesystem::path;
 enum class TrustDecision { TrustedSignature, UserAcceptedUntrusted };
 enum class DevicePreference { CUDA, CPU };
-struct TensorSpec { std::string name; std::string dtype; std::vector<std::int64_t> shape; std::uint64_t byteLimit{}; };
+struct TensorSpec { std::string name; std::string dtype; std::vector<std::int64_t> shape; std::uint64_t byteLimit{}; bool operator==(const TensorSpec&) const = default; };
 struct ModelManifest {
     std::uint32_t schema{1};
     std::string taskId;
@@ -24,6 +25,7 @@ struct ModelManifest {
     std::string license;
     std::uint64_t gpuBytes{}, ramBytes{};
     bool signedPackage{};
+    bool operator==(const ModelManifest&) const = default;
 };
 struct InferenceRequest { ModelId modelId{}; std::vector<Bytes> tensorRefs; DevicePreference device{DevicePreference::CPU}; };
 struct InferenceOutput { std::vector<Bytes> tensorRefs; std::uint64_t elapsedUs{}, peakBytes{}; };
@@ -43,10 +45,12 @@ class ModelRegistry {
     Result<void> retain(ModelId);
     void release(ModelId);
 };
+struct OrtSessionState;
 class OrtSession {
     ModelManifest manifest_;
+    std::shared_ptr<OrtSessionState> state_;
   public:
-    explicit OrtSession(ModelManifest m):manifest_(std::move(m)){}
+    explicit OrtSession(ModelManifest);
     Result<InferenceOutput> run(const InferenceRequest&, std::stop_token = {}) const;
     bool runtimeAvailable() const;
 };

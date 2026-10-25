@@ -1,5 +1,6 @@
 #include "core/Digest.h"
 #include "jobs/WinWorkerHost.h"
+#include "storage/ProjectCodec.h"
 #include <chrono>
 #include <iostream>
 #include <thread>
@@ -15,12 +16,22 @@ int main(int argc, char** argv) {
         std::cerr << "worker path required\n";
         return 2;
     }
+    NewDocumentRequest dimensions;dimensions.dimensions={1,1,Unit::Px,300};
+    const auto spec=validateDocument(dimensions,{});if(!spec)return 1;
+    auto document=Document::create(spec.value(),Id::fromNumber(100));if(!document)return 1;
+    const std::string metadata=R"({"type":"drawborad.review-request.v1","image":"missing.png","package":"missing","outputDirectory":"."})";
+    const Bytes metadataBytes(metadata.begin(),metadata.end());
+    Resource reference{sha256(metadataBytes),ResourceKind::Reference,std::make_shared<const Bytes>(metadataBytes),{}};
+    if(!document.value().apply(Command{InstallResource{reference}},0))return 1;
+    const auto sealed=encodeDelta({},document.value().snapshot());if(!sealed)return 1;
+    // Untrusted project metadata alone must not dispatch an inference task.
+    for(const auto& payload:std::vector<Bytes>{{1,2,3,4,5},sealed.value()}){
     WinWorkerHost host(std::filesystem::absolute(argv[1]));
     JobRequest r;
     r.id = Id::fromNumber(12);
     r.nonce = Id::fromNumber(78);
     r.task = "native.smoke";
-    r.snapshotBytes = Bytes{1, 2, 3, 4, 5};
+    r.snapshotBytes = payload;
     auto start = host.start(r);
     if (!start)
         return 1;
@@ -48,6 +59,7 @@ int main(int argc, char** argv) {
     host.terminate(r.id);
     if (!hello || !ack)
         return 1;
+    }
     std::cout << "PASS: native read-only snapshot hash, nonce and cooperative cancellation\n";
     return 0;
 #endif

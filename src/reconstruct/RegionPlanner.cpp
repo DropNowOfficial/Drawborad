@@ -1,4 +1,5 @@
 #include "PlanningInternal.h"
+#include <functional>
 
 namespace drawborad {
 Result<EventBatch> planBasePigment(const PlanningRegion& region,const StyleSettings& style) {
@@ -8,7 +9,8 @@ Result<EventBatch> planBasePigment(const PlanningRegion& region,const StyleSetti
        style.toolId!="colored-pencil" && style.toolId!="highlight")
         return error(ErrorCode::UnsupportedFeature,"reconstruct.base-tool");
     if(!std::isfinite(style.spacing) || style.spacing<1 || style.spacing>128 ||
-       !std::isfinite(style.opacity) || style.opacity<=0 || style.opacity>1)
+       !std::isfinite(style.opacity) || style.opacity<=0 || style.opacity>1 ||
+       !std::isfinite(style.maxColorVariation) || style.maxColorVariation<0 || style.maxColorVariation>1)
         return error(ErrorCode::InvalidInput,"reconstruct.base-style");
     auto raster=planning::makeSafe(region,style.width);
     if(!raster)return raster.error();
@@ -43,26 +45,73 @@ Result<EventBatch> planBasePigment(const PlanningRegion& region,const StyleSetti
     brush.width=style.width;brush.opacity=style.opacity;brush.hardness=1;
     EventBatch batch{region.snapshot.revision,region.objectId,region.layerId,{}};
     std::uint64_t totalSamples=0,time=100;
-    for(int minor=minorStart+step/2;minor<minorEnd;minor+=step){
+    auto covered=safe;std::fill(covered.pixels.begin(),covered.pixels.end(),std::uint8_t{0});
+    // The second pass only visits visible fragments outside the conservative
+    // opaque core of the long sweep strokes. It fixes thin disconnected mask
+    // edges without printing a per-pixel residual image.
+    for(int pass=0;pass<(region.clipToReviewedMask?2:1);++pass)
+    for(int minor=pass?minorStart:minorStart+step/2;minor<minorEnd;minor+=pass?1:step){
         if(region.stop.stop_requested())
             return error(ErrorCode::Cancelled,"reconstruct.planning-cancelled");
         int major=majorStart;
         while(major<majorEnd){
-            const auto at=[&](int m){return vertical?safe.at(minor,m):safe.at(m,minor);};
+            const auto at=[&](int m){const int x=vertical?minor:m,y=vertical?m:minor;
+                return safe.at(x,y) && (!pass || !covered.at(x,y));};
             while(major<majorEnd && !at(major))++major;
             const int begin=major;
             while(major<majorEnd && at(major))++major;
             const int end=major;
-            if(end-begin<minRun)continue;
-            std::vector<std::pair<int,int>> path;
-            const auto append=[&](int m){path.emplace_back(vertical?minor:m,vertical?m:minor);};
-            append(begin);
-            for(int m=begin+pathStep;m+1<end;m+=pathStep)append(m);
-            append(end-1);
-            const int center=(begin+end-1)/2;
-            const int cx=vertical?minor:center,cy=vertical?center:minor;
-            auto added=planning::addEvent(batch,region,brush,style.toolId,
-                         planning::colorAt(region,cx,cy),path,2,totalSamples,time);
+            if(end==begin)continue;
+            // A narrow visible fragment still needs a connected stroke or a
+            // single nib dab. Adaptive color splitting keeps the longer-run
+            // minimum; this does not turn the image into per-pixel events.
+            if(end-begin<minRun && !region.clipToReviewedMask)continue;
+            std::function<Result<void>(int,int)> emitRun=[&](int first,int last)->Result<void>{
+                if(region.stop.stop_requested())return error(ErrorCode::Cancelled,"reconstruct.planning-cancelled");
+                const int center=(first+last-1)/2;
+                auto color=planning::colorAt(region,vertical?minor:center,vertical?center:minor);
+                if(style.maxColorVariation>0){
+                    std::array<double,4> sum{};
+                    for(int m=first;m<last;++m){
+                        const auto sample=planning::colorAt(region,vertical?minor:m,vertical?m:minor);
+                        for(unsigned c=0;c<color.activeChannels;++c)sum[c]+=sample.channels[c];
+                    }
+                    for(unsigned c=0;c<color.activeChannels;++c)color.channels[c]=sum[c]/double(last-first);
+                    double variation=0,boundaryScore=0;int split=(first+last)/2;
+                    auto previous=planning::colorAt(region,vertical?minor:first,vertical?first:minor);
+                    for(int m=first;m<last;++m){
+                        const auto sample=planning::colorAt(region,vertical?minor:m,vertical?m:minor);
+                        double edge=0;
+                        for(unsigned c=0;c<color.activeChannels;++c){
+                            variation=std::max(variation,std::abs(sample.channels[c]-color.channels[c]));
+                            edge=std::max(edge,std::abs(sample.channels[c]-previous.channels[c]));
+                        }
+                        if(m-first>=minRun && last-m>=minRun && edge>boundaryScore){boundaryScore=edge;split=m;}
+                        previous=sample;
+                    }
+                    if(variation>style.maxColorVariation && last-first>=2*minRun){
+                        if(boundaryScore<style.maxColorVariation*.5)split=(first+last)/2;
+                        auto left=emitRun(first,split);if(!left)return left.error();return emitRun(split,last);
+                    }
+                }
+                std::vector<std::pair<int,int>> path;
+                const auto append=[&](int m){path.emplace_back(vertical?minor:m,vertical?m:minor);};
+                append(first);for(int m=first+pathStep;m+1<last;m+=pathStep)append(m);append(last-1);
+                auto added=planning::addEvent(batch,region,brush,style.toolId,color,path,2,totalSamples,time);
+                if(!added)return added.error();
+                if(region.clipToReviewedMask){
+                    const auto core=std::clamp(int(std::floor(style.width*.5-1)),0,8);
+                    for(int n=minor-core;n<=minor+core;++n)for(int m=first-core;m<last+core;++m){
+                        const auto beyond=std::max({first-m,0,m-(last-1)});
+                        if(beyond+std::abs(n-minor)>core)continue;
+                        const int x=vertical?n:m,y=vertical?m:n;
+                        if(x>=covered.left && y>=covered.top && x<covered.left+covered.width && y<covered.top+covered.height)
+                            covered.pixels[std::size_t(y-covered.top)*std::size_t(covered.width)+std::size_t(x-covered.left)]=1;
+                    }
+                }
+                return {};
+            };
+            auto added=emitRun(begin,end);
             if(!added)return added.error();
         }
     }

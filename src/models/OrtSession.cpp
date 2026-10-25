@@ -5,11 +5,25 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <mutex>
 #ifdef DRAWBORAD_HAS_ONNXRUNTIME
 #include <onnxruntime_cxx_api.h>
 #endif
 
 namespace drawborad {
+struct OrtSessionState {
+    std::mutex mutex;
+#ifdef DRAWBORAD_HAS_ONNXRUNTIME
+    std::unique_ptr<Ort::Session> encoder, decoder;
+    DevicePreference device{DevicePreference::CPU};
+    Bytes image;
+    std::vector<Ort::Value> features;
+#endif
+};
+
+OrtSession::OrtSession(ModelManifest manifest)
+    : manifest_(std::move(manifest)), state_(std::make_shared<OrtSessionState>()) {}
+
 #ifdef DRAWBORAD_HAS_ONNXRUNTIME
 namespace {
 
@@ -257,22 +271,31 @@ Result<InferenceOutput> runSingle(Ort::Env& env, const ModelManifest& manifest,
 }
 
 Result<InferenceOutput> runSam21(Ort::Env& env, const ModelManifest& manifest,
-                                 const InferenceRequest& request, std::stop_token stop) {
+                                 const InferenceRequest& request, std::stop_token stop,
+                                 OrtSessionState& state) {
     if (manifest.resolvedDecoderWeights.empty())
         return error(ErrorCode::InvalidInput, "model.sam-decoder-path");
     if (manifest.inputs.size() != 5 || manifest.outputs.size() != 2 ||
         request.tensorRefs.size() != 5)
         return error(ErrorCode::InvalidInput, "model.sam-logical-contract");
 
-    Ort::SessionOptions options;
-    options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
-    options.SetIntraOpNumThreads(1);
-    options.SetInterOpNumThreads(1);
-    auto provider = configureProvider(options, manifest, request.device);
-    if (!provider)
-        return provider.error();
-    Ort::Session encoder(env, manifest.resolvedWeights.c_str(), options);
-    Ort::Session decoder(env, manifest.resolvedDecoderWeights.c_str(), options);
+    if (!state.encoder || !state.decoder || state.device != request.device) {
+        Ort::SessionOptions options;
+        options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+        options.SetIntraOpNumThreads(1);
+        options.SetInterOpNumThreads(1);
+        auto provider = configureProvider(options, manifest, request.device);
+        if (!provider) return provider.error();
+        auto encoder = std::make_unique<Ort::Session>(env, manifest.resolvedWeights.c_str(), options);
+        auto decoder = std::make_unique<Ort::Session>(env, manifest.resolvedDecoderWeights.c_str(), options);
+        state.encoder = std::move(encoder);
+        state.decoder = std::move(decoder);
+        state.device = request.device;
+        state.features.clear();
+        state.image.clear();
+    }
+    auto& encoder = *state.encoder;
+    auto& decoder = *state.decoder;
     Ort::AllocatorWithDefaultOptions allocator;
     auto memoryInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
 
@@ -310,9 +333,17 @@ Result<InferenceOutput> runSam21(Ort::Env& env, const ModelManifest& manifest,
         return error(ErrorCode::Cancelled, "model.cancelled");
     const auto begin = std::chrono::steady_clock::now();
     Ort::RunOptions encoderOptions;
-    auto features = encoder.Run(encoderOptions, encoderInputNames, &imageValue.value(), 1,
-                                encoderOutputs, 3);
-    for (const auto& feature : features) {
+    std::stop_callback cancelEncoder(stop, [&] { encoderOptions.SetTerminate(); });
+    if (state.features.empty() || state.image != request.tensorRefs[0]) {
+        // Compare owned bytes, not a caller-supplied revision/hash. A changed
+        // image must never reuse the previous image's encoded features.
+        Bytes nextImage = request.tensorRefs[0];
+        auto features = encoder.Run(encoderOptions, encoderInputNames, &imageValue.value(), 1,
+                                    encoderOutputs, 3);
+        state.features = std::move(features);
+        state.image.swap(nextImage);
+    }
+    for (const auto& feature : state.features) {
         auto size = tensorBytes(feature);
         if (!size)
             return size.error();
@@ -345,8 +376,15 @@ Result<InferenceOutput> runSam21(Ort::Env& env, const ModelManifest& manifest,
 
     std::vector<Ort::Value> decoderInputs;
     decoderInputs.reserve(7);
-    for (auto& feature : features)
-        decoderInputs.push_back(std::move(feature));
+    for (const auto& feature : state.features) {
+        const auto info = feature.GetTensorTypeAndShapeInfo();
+        if (info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
+            return error(ErrorCode::UnsupportedFeature, "model.sam-feature-dtype");
+        const auto shape = info.GetShape();
+        decoderInputs.push_back(Ort::Value::CreateTensor<float>(memoryInfo,
+            const_cast<float*>(feature.GetTensorData<float>()), info.GetElementCount(),
+            shape.data(), shape.size()));
+    }
     for (std::size_t logical = 1; logical < 5; ++logical) {
         const auto decoderIndex = logical + 2;
         auto typeInfo = decoder.GetInputTypeInfo(decoderIndex);
@@ -367,6 +405,7 @@ Result<InferenceOutput> runSam21(Ort::Env& env, const ModelManifest& manifest,
         outputNames[i] = decoderOutputNames[i].data();
 
     Ort::RunOptions decoderOptions;
+    std::stop_callback cancelDecoder(stop, [&] { decoderOptions.SetTerminate(); });
     auto outputs = decoder.Run(decoderOptions, decoderNames.data(), decoderInputs.data(),
                                decoderInputs.size(), outputNames.data(), outputNames.size());
     const auto end = std::chrono::steady_clock::now();
@@ -418,10 +457,13 @@ Result<InferenceOutput> OrtSession::run(const InferenceRequest& request,
 #ifdef DRAWBORAD_HAS_ONNXRUNTIME
     try {
         static Ort::Env env(ORT_LOGGING_LEVEL_WARNING, "drawborad");
+        std::lock_guard lock(state_->mutex);
         if (!manifest_.resolvedDecoderWeights.empty() || manifest_.inputs.size() == 5)
-            return runSam21(env, manifest_, request, stop);
+            return runSam21(env, manifest_, request, stop, *state_);
         return runSingle(env, manifest_, request, stop);
     } catch (const Ort::Exception& ex) {
+        if (stop.stop_requested())
+            return error(ErrorCode::Cancelled, "model.cancelled");
         if (request.device == DevicePreference::CUDA)
             return Error{ErrorCode::UnsupportedFeature, "model.cuda-provider-load-failed", ex.what()};
         return Error{ErrorCode::CorruptData, "model.onnxruntime-error", ex.what()};

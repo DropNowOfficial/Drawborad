@@ -18,6 +18,9 @@ struct PlanningRegion {
     std::uint64_t maxEvents{4096};
     std::uint64_t maxSamples{250000};
     std::stop_token stop{};
+    // Only for a matching persisted native binary object mask. The renderer
+    // clips brush footprints; ordinary planning retains conservative erosion.
+    bool clipToReviewedMask{};
 };
 
 struct StyleSettings {
@@ -25,6 +28,9 @@ struct StyleSettings {
     double width{2.0};
     double spacing{5.0};
     double opacity{1.0};
+    // Zero retains the original long-stroke behavior. Positive values bound
+    // within-stroke source color variation by splitting coherent sweep runs.
+    double maxColorVariation{};
 };
 
 struct SchedulePolicy {

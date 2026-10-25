@@ -1,6 +1,8 @@
 #include "ReviewSession.h"
 #include <algorithm>
 #include <cmath>
+#include <limits>
+#include <set>
 
 namespace drawborad {
 namespace {
@@ -78,6 +80,8 @@ Result<void> ReviewSession::apply(const MaskEdit& e){
         if(locked_[e.secondaryIndex])
             return error(ErrorCode::Locked,"review.merge-locked");
     }
+    if(e.operation==MaskEditOp::SubtractMask && (e.secondaryIndex>=masks_.fullResolutionMasks.size() || e.secondaryIndex==e.objectIndex))
+        return error(ErrorCode::InvalidInput,"review.subtract-object");
 
     undo_.push_back({proposals_,masks_,locked_});
 
@@ -157,6 +161,9 @@ Result<void> ReviewSession::apply(const MaskEdit& e){
         locked_.erase(locked_.begin()+std::ptrdiff_t(eraseIndex));
         if(eraseIndex<proposals_.candidates.size())
             proposals_.candidates.erase(proposals_.candidates.begin()+std::ptrdiff_t(eraseIndex));
+    } else if(e.operation==MaskEditOp::SubtractMask){
+        const auto& other=masks_.fullResolutionMasks[e.secondaryIndex];
+        for(std::size_t i=0;i<m.size();++i)m[i]=std::uint8_t((unsigned(m[i])*(255u-other[i])+127)/255);
     } else if(e.operation==MaskEditOp::Split){
         if(!e.region.width||!e.region.height){
             undo_.pop_back();
@@ -194,6 +201,45 @@ Result<void> ReviewSession::apply(const MaskEdit& e){
     return{};
 }
 
+Result<void> ReviewSession::appendProposals(const ProposalSet& proposals,const MaskSet& masks,Revision expected,bool prepend){
+    if(expected!=revision_)return error(ErrorCode::StaleRevision,"review.revision");
+    const auto pixels=checkedMultiply(masks_.dimensions.width,masks_.dimensions.height);
+    if(!pixels || masks.dimensions!=masks_.dimensions || proposals.sourceSize!=masks_.dimensions ||
+       proposals.candidates.empty() || proposals.candidates.size()!=masks.fullResolutionMasks.size())return error(ErrorCode::InvalidInput,"review.append-layout");
+    const auto count=masks_.fullResolutionMasks.size()+masks.fullResolutionMasks.size();
+    if(count>256 || pixels.value()>56*1024*1024/(count+1) || revision_==std::numeric_limits<Revision>::max())return error(ErrorCode::BudgetExceeded,"review.append-budget");
+    for(const auto& mask:masks.fullResolutionMasks)if(mask.size()!=pixels.value())return error(ErrorCode::InvalidInput,"review.append-layout");
+    auto nextProposals=proposals_;auto nextMasks=masks_;auto nextLocked=locked_;
+    auto incoming=proposals.candidates;std::set<Id> ids;std::uint64_t ordinal=1;
+    for(const auto& candidate:proposals_.candidates)ids.insert(candidate.id);
+    for(auto& candidate:incoming){
+        if(candidate.id.empty() || ids.contains(candidate.id)){while(ids.contains(Id::fromNumber(ordinal)))++ordinal;candidate.id=Id::fromNumber(ordinal++);}
+        ids.insert(candidate.id);
+    }
+    nextProposals.candidates.insert(prepend?nextProposals.candidates.begin():nextProposals.candidates.end(),incoming.begin(),incoming.end());
+    nextMasks.fullResolutionMasks.insert(prepend?nextMasks.fullResolutionMasks.begin():nextMasks.fullResolutionMasks.end(),masks.fullResolutionMasks.begin(),masks.fullResolutionMasks.end());
+    nextLocked.insert(prepend?nextLocked.begin():nextLocked.end(),incoming.size(),false);recomputeUnassigned(nextMasks);
+    undo_.push_back({proposals_,masks_,locked_});proposals_=std::move(nextProposals);masks_=std::move(nextMasks);locked_=std::move(nextLocked);++revision_;return {};
+}
+Result<void> ReviewSession::addBackground(std::span<const std::size_t> selected,std::span<const std::uint8_t> alpha,Revision expected){
+    if(expected!=revision_)return error(ErrorCode::StaleRevision,"review.revision");
+    const auto pixels=checkedMultiply(masks_.dimensions.width,masks_.dimensions.height);
+    if(!pixels || selected.empty() || (!alpha.empty() && alpha.size()!=pixels.value()))return error(ErrorCode::InvalidInput,"review.background-source");
+    if(pixels.value()>56*1024*1024/(masks_.fullResolutionMasks.size()+2))return error(ErrorCode::BudgetExceeded,"review.append-budget");
+    for(const auto index:selected)if(index>=masks_.fullResolutionMasks.size())return error(ErrorCode::InvalidInput,"review.background-selection");
+    const auto binary=[](auto value){return value==0 || value==255;};
+    if(!std::all_of(alpha.begin(),alpha.end(),binary))return error(ErrorCode::UnsupportedFeature,"review.background-binary-alpha");
+    Bytes background(std::size_t(pixels.value()),255);if(!alpha.empty())std::copy(alpha.begin(),alpha.end(),background.begin());
+    for(const auto index:selected){
+        const auto& foreground=masks_.fullResolutionMasks[index];
+        if(!std::all_of(foreground.begin(),foreground.end(),binary))return error(ErrorCode::UnsupportedFeature,"review.background-binary-mask");
+        for(std::size_t p=0;p<background.size();++p)if(foreground[p])background[p]=0;
+    }
+    if(std::none_of(background.begin(),background.end(),[](auto value){return value!=0;}))return error(ErrorCode::InvalidInput,"review.background-empty");
+    ProposalSet p;p.sourceSize=masks_.dimensions;ProposalCandidate candidate;candidate.bounds={0,0,p.sourceSize.width,p.sourceSize.height};p.candidates.push_back(candidate);
+    MaskSet m;m.dimensions=masks_.dimensions;m.fullResolutionMasks.push_back(std::move(background));
+    return appendProposals(p,m,expected,true);
+}
 Result<void> ReviewSession::undo(){
     if(undo_.empty())
         return error(ErrorCode::InvalidInput,"review.undo-empty");

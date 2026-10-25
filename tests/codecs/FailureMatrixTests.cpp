@@ -215,25 +215,36 @@ TEST("C07 cancelled staged export publishes no destination") {
 #ifdef _WIN32
 TEST("C07 Windows Unicode emoji and long paths survive atomic write") {
     auto root=std::filesystem::temp_directory_path()/L"drawborad-\x4e2d\x6587-\U0001f3a8";
+    const std::filesystem::path extendedRoot{extendedTestPath(root)};
     std::error_code ec;
-    std::filesystem::remove_all(root,ec);
+    std::filesystem::remove_all(extendedRoot,ec);
+    CHECK(!ec);
     auto dir=root;
     for(int i=0;i<9;++i) dir/=L"0123456789012345678901234567890123456789";
     CHECK(createExtendedDirectories(dir));
     auto path=dir/L"\x7ed3\x679c-\U0001f3a8.bin";
+    CHECK(path.native().size()>MAX_PATH);
     NativeFileIO io;
     Bytes expected{9,8,7,6,5};
     CHECK(atomicWrite(io,path,expected));
     auto read=io.read(path,1024);
     CHECK(read);
     CHECK(read.value()==expected);
-    std::filesystem::remove_all(root,ec);
+    const Bytes replacement{1,3,5,7,9,11};
+    CHECK(atomicWrite(io,path,replacement));
+    read=io.read(path,1024);
+    CHECK(read);
+    CHECK(read.value()==replacement);
+    std::filesystem::remove_all(extendedRoot,ec);
+    CHECK(!ec);
+    CHECK(!std::filesystem::exists(extendedRoot));
 }
 
 TEST("C07 Windows locked destination cannot be replaced") {
     auto root=std::filesystem::temp_directory_path()/"drawborad-c07-lock";
     std::error_code ec;
     std::filesystem::remove_all(root,ec);
+    CHECK(!ec);
     std::filesystem::create_directories(root);
     auto destination=root/"locked.bin";
     auto stagedPath=root/"staged.bin";
@@ -253,5 +264,6 @@ TEST("C07 Windows locked destination cannot be replaced") {
     CHECK(existing);
     CHECK(existing.value()==oldBytes);
     std::filesystem::remove_all(root,ec);
+    CHECK(!ec);
 }
 #endif

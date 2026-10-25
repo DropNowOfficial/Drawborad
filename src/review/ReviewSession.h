@@ -3,7 +3,7 @@
 #include <limits>
 #include <functional>
 namespace drawborad {
-enum class MaskEditOp { AddBrush, SubtractBrush, Feather, Grow, Shrink, Merge, Split, Transform, Lock, Unlock };
+enum class MaskEditOp { AddBrush, SubtractBrush, Feather, Grow, Shrink, Merge, Split, Transform, Lock, Unlock, SubtractMask };
 struct MaskEdit {
     MaskEditOp operation{MaskEditOp::AddBrush};
     std::size_t objectIndex{};
@@ -28,6 +28,8 @@ class ReviewSession {
                                         RefineRunner = {});
     Result<void> apply(const MaskEdit&);
     Result<void> undo();
+    Result<void> appendProposals(const ProposalSet&,const MaskSet&,Revision,bool prepend=false);
+    Result<void> addBackground(std::span<const std::size_t>,std::span<const std::uint8_t>,Revision);
     Result<ProposalSet> refine(const PromptSet&,std::stop_token={}) const;
     Result<ReviewedObjects> accept(Revision) const;
     const MaskSet& masks() const{return masks_;}

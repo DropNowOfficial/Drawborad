@@ -160,7 +160,7 @@ TEST("E03 staged strokes replay identically after source pixels are removed"){
 }
 TEST("E03 fully transparent target is converged and does not synthesize fake strokes"){
     Context c;
-    std::fill(c.source.bytes.begin(),c.source.bytes.end(),0);
+    std::fill(c.source.bytes.begin(),c.source.bytes.end(),std::uint8_t{0});
     auto progress=measureRegionProgress(c.request);CHECK(progress);
     CHECK(progress.value().status==QualityStatus::Converged);
     auto result=refineRegion(c.request);CHECK(result);
@@ -168,7 +168,7 @@ TEST("E03 fully transparent target is converged and does not synthesize fake str
 }
 TEST("E03 prioritizes a localized red fine fold over zero-error background"){
     Context c;
-    std::fill(c.source.bytes.begin(),c.source.bytes.end(),0);
+    std::fill(c.source.bytes.begin(),c.source.bytes.end(),std::uint8_t{0});
     for(int y=28;y<36;++y)for(int x=30;x<35;++x){
         const auto at=std::size_t(y)*c.source.rowStride+x*4;
         c.source.bytes[at]=255;c.source.bytes[at+3]=255;
