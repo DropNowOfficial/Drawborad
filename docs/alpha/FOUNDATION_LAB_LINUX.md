@@ -1,3 +1,9 @@
+# ARCHIVED: semantic object separation failed (2026-10-26)
+
+> **Do not treat this 4-mask GrabCut probe as correct semantic separation.** The red cup body and handle were mistakenly included in the saucer layer, despite 4 disjoint mask files and source-free replay. See [Semantic layer correction](SEMANTIC_LAYER_CORRECTION_20261026.md) for the independent wood/saucer/cup/spoon regrouping of six recorded scene masks and regression tests. The correction still does not prove live model recognition, inpainting or painting quality.
+
+---
+
 # Linux foundation probe: segmentation -> layers -> brushstroke replay
 
 **Scope:** isolated executable laboratory probe, **not** the native Drawborad editor, SAM 2.1/3.x, a semantic recognition model, or shipping application code.
