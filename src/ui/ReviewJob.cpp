@@ -2,6 +2,7 @@
 #include "codecs/ImageReader.h"
 #include "core/Commands.h"
 #include "storage/ProjectCodec.h"
+#include "models/AdapterRegistry.h"
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -63,6 +64,35 @@ Result<std::optional<PromptSet>> reviewPromptRequest(const QJsonObject& object,P
     if(prompts.points.empty() && prompts.boxes.empty())return error(ErrorCode::InvalidInput,"review.prompt-required");
     return std::optional<PromptSet>{std::move(prompts)};
 }
+Result<Bytes> runModelPreflightJob(const DocumentSnapshot& input,std::stop_token stop,AnalysisProgress progress) {
+    const auto request=jobRequestMetadata(input,ModelPreflightRequestType);if(!request)return request.error();
+    const auto package=request.value().value("package").toString();
+    if(progress)progress(0,1);
+    const auto checked=preflightModelPackage(std::filesystem::path(package.toStdWString()),DevicePreference::CPU,stop);
+    if(!checked)return checked.error();
+    const auto& report=checked.value();const auto state=modelReadinessStateName(report.state);
+    QJsonObject result{{"type",ModelPreflightResultType},{"receiptVersion",1},{"package",package},
+        {"state",QString::fromUtf8(state.data(),qsizetype(state.size()))},
+        {"messageKey",QString::fromStdString(report.messageKey)},{"diagnostic",QString::fromStdString(report.diagnostic)},
+        {"provider",report.device==DevicePreference::CPU?"CPU":"CUDA"},{"probeKind",QString::fromStdString(report.probeKind)},
+        {"elapsedUs",QString::number(report.elapsedUs)},{"observedTensorBytes",QString::number(report.observedTensorBytes)}};
+    if(report.manifest){
+        const auto& model=*report.manifest;
+        result.insert("manifestHash",QString::fromStdString(model.manifestSha256.hex()));
+        result.insert("encoderHash",QString::fromStdString(model.sha256.hex()));
+        result.insert("decoderHash",QString::fromStdString(model.decoderSha256.hex()));
+        result.insert("task",QString::fromStdString(model.taskId));result.insert("abi",QString::fromStdString(model.abi));
+        result.insert("declaredProvider",QString::fromStdString(model.provider));result.insert("license",QString::fromStdString(model.license));
+        result.insert("source",QString::fromStdString(model.source));result.insert("sourceCommit",QString::fromStdString(model.sourceCommit));
+        result.insert("checkpointSha256",QString::fromStdString(model.checkpointSha256));result.insert("variant",QString::fromStdString(model.variant));
+        result.insert("networkAccess",model.networkAccess);
+    }
+    if(stop.stop_requested())return error(ErrorCode::Cancelled,"model.cancelled");
+    auto resources=std::make_shared<ResourceMap>(*input.resources);const auto metadata=jsonResource(result);resources->emplace(metadata.id,metadata);
+    auto output=input;output.resources=std::move(resources);output.revision=input.revision+1;
+    if(progress)progress(1,1);
+    return encodeDelta(input,output);
+}
 Result<Bytes> runImageReviewJob(const DocumentSnapshot& input,std::stop_token stop,AnalysisProgress progress) {
     const auto metadata=jobRequestMetadata(input,ReviewRequestType);
     if(!metadata)return metadata.error();
@@ -73,6 +103,14 @@ Result<Bytes> runImageReviewJob(const DocumentSnapshot& input,std::stop_token st
         return error(ErrorCode::BudgetExceeded,"review.image-limit");
     auto model=validatePackage(std::filesystem::path(package.toStdWString()));
     if(!model) return model.error();
+    const auto receipt=metadata.value().value("modelReadiness").toObject();
+    if(receipt.value("state").toString()!="Ready" || receipt.value("receiptVersion").toInt()!=1 ||
+       receipt.value("provider").toString()!="CPU" || receipt.value("probeKind").toString()!="deterministic-smoke" ||
+       receipt.value("package").toString()!=package ||
+       receipt.value("manifestHash").toString().toStdString()!=model.value().manifestSha256.hex() ||
+       receipt.value("encoderHash").toString().toStdString()!=model.value().sha256.hex() ||
+       receipt.value("decoderHash").toString().toStdString()!=model.value().decoderSha256.hex())
+        return error(ErrorCode::InvalidInput,"review.model-preflight-required-or-stale");
     if(stop.stop_requested()) return error(ErrorCode::Cancelled,"review.cancelled");
     auto image=decodeImage(std::filesystem::path(path.toStdWString()),{},stop);
     if(!image) return image.error();
@@ -116,6 +154,7 @@ Result<Bytes> runImageReviewJob(const DocumentSnapshot& input,std::stop_token st
     auto source=jsonResource({{"type",SourceReferenceType},{"image",path},
         {"sourceHash",QString::fromStdString(image.value().info.sourceHash.hex())},
         {"modelHash",QString::fromStdString(model.value().sha256.hex())},
+        {"modelReadiness",receipt},
         {"width",qint64(size.width)},{"height",qint64(size.height)}});
     resources->emplace(source.id,source);
     QJsonArray candidates;

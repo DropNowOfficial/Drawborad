@@ -1,0 +1,14 @@
+Historical RED capture from tool chunk 9f6af9 (new provenance fields declared, before parsing/preservation).
+Command:
+g++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -pthread -Isrc -Itests/support tests/support/TestMain.cpp tests/models/ModelReadinessTests.cpp src/models/AdapterRegistry.cpp src/models/PackageVerifier.cpp src/models/ModelRegistry.cpp src/models/OrtSession.cpp src/core/Digest.cpp src/core/DocumentSpec.cpp src/storage/FileIO.cpp -o /tmp/drawborad-model-readiness-tests/readiness && /tmp/drawborad-model-readiness-tests/readiness
+Exit code: 1
+
+RUN readiness rejects a nonstring provider instead of silently choosing CPU
+PASS readiness rejects a nonstring provider instead of silently choosing CPU
+RUN readiness rejects a nonstring ABI instead of silently choosing the SAM adapter
+PASS readiness rejects a nonstring ABI instead of silently choosing the SAM adapter
+RUN readiness rejects a nonboolean network policy
+PASS readiness rejects a nonboolean network policy
+RUN verified packages preserve provenance and bind the exact manifest contents
+ASSERT_FAIL verified packages preserve provenance and bind the exact manifest contents: tests/models/ModelReadinessTests.cpp:78 CHECK(manifest.source == "facebookresearch/sam2")
+4 cases, 1 failures

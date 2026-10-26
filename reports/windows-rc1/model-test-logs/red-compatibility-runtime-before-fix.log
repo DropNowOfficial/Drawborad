@@ -1,0 +1,14 @@
+Historical RED capture from tool chunk b7ebdc, with pinned Linux ONNX Runtime 1.23.2 and generated canonical-shape ONNX fixtures. OrtSession encoder-feature finite validation was unchanged from the base at this run.
+Command:
+DRAWBORAD_TEST_PROBE_ENCODER=/workspace/scratch/f80809aed485/Drawborad/out/rc1-runtime-fixtures/sam-probe-encoder.onnx DRAWBORAD_TEST_PROBE_DECODER=/workspace/scratch/f80809aed485/Drawborad/out/rc1-runtime-fixtures/sam-probe-decoder.onnx /tmp/drawborad-model-readiness-tests/ort-build/compatibility_runtime
+Exit code: 1
+
+RUN M05 resolved compatible model must pass an isolated runtime probe
+PASS M05 resolved compatible model must pass an isolated runtime probe
+RUN M05 CUDA compatibility probe fails closed when runtime has no CUDA EP
+PASS M05 CUDA compatibility probe fails closed when runtime has no CUDA EP
+RUN M05 package preflight reaches Ready only after a real two-stage deterministic smoke
+PASS M05 package preflight reaches Ready only after a real two-stage deterministic smoke
+RUN M05 runtime rejects nonfinite encoder features even when decoder output is finite
+ASSERT_FAIL M05 runtime rejects nonfinite encoder features even when decoder output is finite: /workspace/scratch/f80809aed485/Drawborad/tests/models/CompatibilityRuntimeTests.cpp:138 CHECK(!result)
+4 cases, 1 failures

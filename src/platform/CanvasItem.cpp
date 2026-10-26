@@ -5,6 +5,7 @@
 #include "view/LayerTree.h"
 #include <QInputDevice>
 #include <QMouseEvent>
+#include <QWheelEvent>
 #include <QSGSimpleRectNode>
 #include <QSGSimpleTextureNode>
 #include <QSGOpacityNode>
@@ -15,12 +16,14 @@
 #include <QQuickWindow>
 #include <QUuid>
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <functional>
 namespace drawborad {
 CanvasItem::CanvasItem(QQuickItem* parent) : QQuickItem(parent) {
     setFlag(ItemHasContents, true);
-    setAcceptedMouseButtons(Qt::LeftButton);
+    setAcceptedMouseButtons(Qt::LeftButton | Qt::MiddleButton);
+    setClip(true);
 }
 QObject* CanvasItem::studio() const { return bridge_; }
 void CanvasItem::setStudio(QObject* value) {
@@ -43,13 +46,18 @@ void CanvasItem::refreshSnapshot() {
         strokeTarget_.reset();
         tabletStroke_ = false;
     }
-    std::lock_guard lock(snapshotMutex_);
-    if (snapshot_ && next && snapshot_->documentId == next->documentId &&
-        snapshot_->revision == next->revision && snapshot_->nodes == next->nodes &&
-        snapshot_->eventIndex == next->eventIndex && replayCount_==nextCount) return;
-    snapshot_ = next;
-    replayCount_=nextCount;
-    update();
+    {
+        std::lock_guard lock(snapshotMutex_);
+        if (snapshot_ && next && snapshot_->documentId == next->documentId &&
+            snapshot_->revision == next->revision && snapshot_->nodes == next->nodes &&
+            snapshot_->eventIndex == next->eventIndex && replayCount_==nextCount) return;
+        if(!snapshot_ || !next || snapshot_->documentId!=next->documentId || snapshot_->spec.pixelSize!=next->spec.pixelSize){
+            zoom_=1;pan_={};panGesture_.reset();
+        }
+        snapshot_ = next;
+        replayCount_=nextCount;
+    }
+    update();emit viewChanged();
 }
 std::optional<std::pair<NodeId, NodeId>> CanvasItem::paintTarget(const DocumentSnapshot& s) const {
     if (bridge_)
@@ -57,13 +65,62 @@ std::optional<std::pair<NodeId, NodeId>> CanvasItem::paintTarget(const DocumentS
             return std::pair{s.nodes->at(*id).objectId, *id};
     return std::nullopt;
 }
+QTransform CanvasItem::documentTransform(const DocumentSnapshot& snapshot,double magnification,QPointF offset) const {
+    const auto size=snapshot.spec.pixelSize;
+    const double scale=std::min(width()/double(size.width),height()/double(size.height))*magnification;
+    QTransform transform;
+    transform.translate((width()-double(size.width)*scale)*.5+offset.x(),
+                        (height()-double(size.height)*scale)*.5+offset.y());
+    transform.scale(scale,scale);return transform;
+}
+QPointF CanvasItem::boundedPan(const DocumentSnapshot& snapshot,double magnification,QPointF offset) const {
+    const auto rect=documentTransform(snapshot,magnification,{}).mapRect(QRectF(0,0,double(snapshot.spec.pixelSize.width),double(snapshot.spec.pixelSize.height)));
+    // Leave part of the document reachable even after repeated pan gestures.
+    const auto maxX=std::max(0.0,(rect.width()-width())*.5)+width()*.4;
+    const auto maxY=std::max(0.0,(rect.height()-height())*.5)+height()*.4;
+    return {std::clamp(offset.x(),-maxX,maxX),std::clamp(offset.y(),-maxY,maxY)};
+}
+double CanvasItem::zoom() const {std::lock_guard lock(snapshotMutex_);return zoom_;}
+QRectF CanvasItem::documentRect() const {
+    std::lock_guard lock(snapshotMutex_);if(!snapshot_)return {};
+    return documentTransform(*snapshot_,zoom_,pan_).mapRect(QRectF(0,0,double(snapshot_->spec.pixelSize.width),double(snapshot_->spec.pixelSize.height)));
+}
+bool CanvasItem::zoomAt(double factor,double x,double y){
+    if(!std::isfinite(factor) || factor<=0 || !std::isfinite(x) || !std::isfinite(y))return false;
+    {
+        std::lock_guard lock(snapshotMutex_);if(!snapshot_ || width()<=0 || height()<=0)return false;
+        const auto next=std::clamp(zoom_*factor,.25,16.0);
+        const QPointF anchor{x-width()*.5,y-height()*.5};
+        pan_=boundedPan(*snapshot_,next,anchor-(anchor-pan_)*(next/zoom_));zoom_=next;
+    }
+    stroke_.clear();strokeTarget_.reset();tabletStroke_=false;
+    update();emit viewChanged();return true;
+}
+bool CanvasItem::panBy(double x,double y){
+    if(!std::isfinite(x) || !std::isfinite(y))return false;
+    {
+        std::lock_guard lock(snapshotMutex_);if(!snapshot_)return false;
+        pan_=boundedPan(*snapshot_,zoom_,pan_+QPointF{x,y});
+    }
+    stroke_.clear();strokeTarget_.reset();tabletStroke_=false;
+    update();emit viewChanged();return true;
+}
+void CanvasItem::fitDocument(){
+    {std::lock_guard lock(snapshotMutex_);zoom_=1;pan_={};}
+    stroke_.clear();strokeTarget_.reset();tabletStroke_=false;panGesture_.reset();
+    update();emit viewChanged();
+}
+void CanvasItem::geometryChange(const QRectF& next,const QRectF& previous){
+    QQuickItem::geometryChange(next,previous);
+    {std::lock_guard lock(snapshotMutex_);if(snapshot_)pan_=boundedPan(*snapshot_,zoom_,pan_);}
+    update();emit viewChanged();
+}
 std::optional<DocumentPoint> CanvasItem::itemToDocument(const QPointF& p,const DocumentSnapshot& s) const {
-    if (width() <= 0 || height() <= 0) return std::nullopt;
-    const double scale = std::min(width()/double(s.spec.pixelSize.width),height()/double(s.spec.pixelSize.height));
-    if (!(scale > 0)) return std::nullopt;
-    const double ox=(width()-double(s.spec.pixelSize.width)*scale)*.5;
-    const double oy=(height()-double(s.spec.pixelSize.height)*scale)*.5;
-    DocumentPoint docPoint{(p.x()-ox)/scale,(p.y()-oy)/scale};
+    if(width()<=0 || height()<=0)return std::nullopt;
+    double viewZoom;QPointF panOffset;{std::lock_guard lock(snapshotMutex_);viewZoom=zoom_;panOffset=pan_;}
+    bool invertible=false;const auto inverse=documentTransform(s,viewZoom,panOffset).inverted(&invertible);
+    if(!invertible)return std::nullopt;const auto point=inverse.map(p);
+    DocumentPoint docPoint{point.x(),point.y()};
     if(docPoint.x<0||docPoint.y<0||docPoint.x>=double(s.spec.pixelSize.width)||docPoint.y>=double(s.spec.pixelSize.height))return std::nullopt;
     return docPoint;
 }
@@ -116,9 +173,23 @@ void CanvasItem::finishStroke(){
         (void)bridge_->commitStroke(event.value());
     }
 }
-void CanvasItem::mousePressEvent(QMouseEvent* e){const auto s=bridge_?bridge_->canvasSnapshot():std::nullopt;if(tabletStroke_||!s||!itemToDocument(e->position(),*s)){e->ignore();return;}beginSample(mouseSample(e),false,false);e->accept();}
-void CanvasItem::mouseMoveEvent(QMouseEvent* e){const auto s=bridge_?bridge_->canvasSnapshot():std::nullopt;if(!tabletStroke_&&!stroke_.empty()&&s&&itemToDocument(e->position(),*s))appendSample(mouseSample(e));e->accept();}
-void CanvasItem::mouseReleaseEvent(QMouseEvent* e){if(!tabletStroke_&&!stroke_.empty()){const auto s=bridge_?bridge_->canvasSnapshot():std::nullopt;if(s&&itemToDocument(e->position(),*s))appendSample(mouseSample(e));finishStroke();}e->accept();}
+void CanvasItem::mousePressEvent(QMouseEvent* e){
+    if(e->button()==Qt::MiddleButton){panGesture_=e->position();e->accept();return;}
+    const auto s=bridge_?bridge_->canvasSnapshot():std::nullopt;if(tabletStroke_||!s||!itemToDocument(e->position(),*s)){e->ignore();return;}beginSample(mouseSample(e),false,false);e->accept();
+}
+void CanvasItem::mouseMoveEvent(QMouseEvent* e){
+    if(panGesture_){const auto delta=e->position()-*panGesture_;panGesture_=e->position();(void)panBy(delta.x(),delta.y());e->accept();return;}
+    const auto s=bridge_?bridge_->canvasSnapshot():std::nullopt;if(!tabletStroke_&&!stroke_.empty()&&s&&itemToDocument(e->position(),*s))appendSample(mouseSample(e));e->accept();
+}
+void CanvasItem::mouseReleaseEvent(QMouseEvent* e){
+    if(e->button()==Qt::MiddleButton){panGesture_.reset();e->accept();return;}
+    if(!tabletStroke_&&!stroke_.empty()){const auto s=bridge_?bridge_->canvasSnapshot():std::nullopt;if(s&&itemToDocument(e->position(),*s))appendSample(mouseSample(e));finishStroke();}e->accept();
+}
+void CanvasItem::wheelEvent(QWheelEvent* event){
+    const auto delta=event->angleDelta().y();
+    if(delta && zoomAt(std::pow(1.2,double(delta)/120.0),event->position().x(),event->position().y()))event->accept();
+    else event->ignore();
+}
 bool CanvasItem::event(QEvent* event){
     if(event->type()==QEvent::TabletPress||event->type()==QEvent::TabletMove||event->type()==QEvent::TabletRelease){
         auto*t=static_cast<QTabletEvent*>(event);auto sample=tabletSample(t);const bool isEraser=t->pointingDevice()&&t->pointingDevice()->pointerType()==QPointingDevice::PointerType::Eraser;
@@ -129,9 +200,10 @@ bool CanvasItem::event(QEvent* event){
 }
 QSGNode* CanvasItem::updatePaintNode(QSGNode* old,UpdatePaintNodeData*){
     delete old;auto*root=new QSGNode;root->appendChildNode(new QSGSimpleRectNode(QRectF(0,0,width(),height()),QColor("#323235")));
-    std::uint64_t count;std::optional<DocumentSnapshot> snap;{std::lock_guard lock(snapshotMutex_);snap=snapshot_;count=replayCount_;}if(!snap||!window())return root;
-    const double scale=std::min(width()/double(snap->spec.pixelSize.width),height()/double(snap->spec.pixelSize.height));if(!(scale>0))return root;
-    const double ox=(width()-double(snap->spec.pixelSize.width)*scale)*.5,oy=(height()-double(snap->spec.pixelSize.height)*scale)*.5;
+    std::uint64_t count;double viewZoom;QPointF panOffset;std::optional<DocumentSnapshot> snap;
+    {std::lock_guard lock(snapshotMutex_);snap=snapshot_;count=replayCount_;viewZoom=zoom_;panOffset=pan_;}if(!snap||!window())return root;
+    const auto viewTransform=documentTransform(*snap,viewZoom,panOffset);const auto scale=viewTransform.m11();if(!(scale>0))return root;
+    const auto ox=viewTransform.dx(),oy=viewTransform.dy();
     root->appendChildNode(new QSGSimpleRectNode(QRectF(ox,oy,snap->spec.pixelSize.width*scale,snap->spec.pixelSize.height*scale),QColor("#faf9f6")));
     if(snap->spec.colorSpec.format.mode!=ColorMode::RGB||snap->spec.colorSpec.format.depth!=Depth::U8)return root;
     const auto nx=(snap->spec.pixelSize.width+TileSide-1)/TileSide,ny=(snap->spec.pixelSize.height+TileSide-1)/TileSide;EventLimit limit{snap->revision,std::min<std::uint64_t>(count,snap->eventIndex->size()),UINT64_MAX};

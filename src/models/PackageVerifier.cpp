@@ -6,7 +6,7 @@
 #include <map>
 #include <string_view>
 namespace drawborad { namespace {
-enum class JsonAtomKind { String, Unsigned, Other };
+enum class JsonAtomKind { String, Unsigned, Boolean, Other };
 struct JsonAtom { JsonAtomKind kind{JsonAtomKind::Other}; std::string text; std::uint64_t number{}; };
 using JsonObject = std::map<std::string, JsonAtom>;
 
@@ -89,6 +89,8 @@ class JsonCursor {
     Result<JsonAtom> atom(){
         ws();if(p_>=s_.size())return error(ErrorCode::CorruptData,"model.manifest-value");
         if(s_[p_]=='"'){auto v=str();if(!v)return v.error();return JsonAtom{JsonAtomKind::String,std::move(v.value()),0};}
+        if(s_.substr(p_,4)=="true"){p_+=4;return JsonAtom{JsonAtomKind::Boolean,{},1};}
+        if(s_.substr(p_,5)=="false"){p_+=5;return JsonAtom{JsonAtomKind::Boolean,{},0};}
         if(s_[p_]>='0'&&s_[p_]<='9'){
             std::uint64_t value=0;auto begin=p_;while(p_<s_.size()&&s_[p_]>='0'&&s_[p_]<='9'){auto digit=std::uint64_t(s_[p_++]-'0');if(value>(UINT64_MAX-digit)/10)return error(ErrorCode::CorruptData,"model.manifest-number-overflow");value=value*10+digit;}
             if(p_==begin)return error(ErrorCode::CorruptData,"model.manifest-number");
@@ -235,6 +237,14 @@ Result<ModelManifest> validatePackage(const PackagePath& root){
  for(auto it=std::filesystem::recursive_directory_iterator(root,std::filesystem::directory_options::skip_permission_denied,ec);it!=std::filesystem::recursive_directory_iterator();it.increment(ec)){if(ec)return error(ErrorCode::IoError,"model.walk");if(it->is_symlink(ec))return error(ErrorCode::PathEscape,"model.symlink");if(it->is_regular_file(ec)&&dangerousExt(it->path()))return error(ErrorCode::UnsupportedFeature,"model.executable-content");}
  auto mp=root/"manifest.json";std::ifstream f(mp,std::ios::binary);if(!f)return error(ErrorCode::CorruptData,"model.manifest");std::string j((std::istreambuf_iterator<char>(f)),{});if(j.size()>1024*1024)return error(ErrorCode::BudgetExceeded,"model.manifest-size");
  auto parsed=JsonCursor(j).root();if(!parsed)return parsed.error();const auto& fields=parsed.value();
+ for(const auto* name:{"provider","abi","source","sourceCommit","checkpointSha256","variant"}){
+  const auto it=fields.find(name);
+  if(it!=fields.end()&&it->second.kind!=JsonAtomKind::String)
+   return Error{ErrorCode::CorruptData,"model.manifest-field-type",name};
+ }
+ const auto network=fields.find("networkAccess");
+ if(network!=fields.end()&&network->second.kind!=JsonAtomKind::Boolean)
+  return Error{ErrorCode::CorruptData,"model.manifest-field-type","networkAccess"};
  if(j.find("http://")!=std::string::npos||j.find("https://")!=std::string::npos||j.find("file://")!=std::string::npos||j.find("ftp://")!=std::string::npos)return error(ErrorCode::PathEscape,"model.external-url");
  auto schema=uintField(fields,"schema");auto task=field(fields,"taskId"),weights=field(fields,"weights"),hash=field(fields,"sha256"),license=field(fields,"license");auto decoderWeights=field(fields,"decoderWeights"),decoderHash=field(fields,"decoderSha256");if(!schema||!task||!weights||!hash||!license)return error(ErrorCode::CorruptData,"model.manifest-fields");if(bool(decoderWeights)!=bool(decoderHash))return error(ErrorCode::CorruptData,"model.decoder-manifest-fields");if(*task=="sam21.image.v1"&&(!decoderWeights||!decoderHash))return error(ErrorCode::CorruptData,"model.sam-decoder-required");if(*schema!=1)return error(ErrorCode::UnsupportedFeature,"model.schema");if(*task!="sam21.image.v1")return error(ErrorCode::UnsupportedAdapter,"model.task");auto provider=field(fields,"provider").value_or("cpu");if(provider!="cpu"&&provider!="cuda")return error(ErrorCode::UnsupportedAdapter,"model.provider");
  std::filesystem::path rel=*weights;if(rel.is_absolute()||rel.empty()||rel.string().find("..")!=std::string::npos||dangerousExt(rel))return error(ErrorCode::PathEscape,"model.weights-path");auto full=std::filesystem::weakly_canonical(root/rel,ec);auto canon=std::filesystem::weakly_canonical(root,ec);if(ec||full.string().rfind(canon.string(),0)!=0)return error(ErrorCode::PathEscape,"model.weights-path");NativeFileIO io;auto bytes=io.read(full,4*GiB);if(!bytes)return bytes.error();auto expected=parseHash(*hash);if(!expected)return expected.error();auto actual=sha256(bytes.value());if(actual!=expected.value())return error(ErrorCode::DigestMismatch,"model.weights-digest");auto onnxStorage=validateOnnxStorage(bytes.value());if(!onnxStorage)return onnxStorage.error();
@@ -249,6 +259,23 @@ Result<ModelManifest> validatePackage(const PackagePath& root){
   auto dactual=sha256(dbytes.value());if(dactual!=dexp.value())return error(ErrorCode::DigestMismatch,"model.decoder-digest");auto decoderStorage=validateOnnxStorage(dbytes.value());if(!decoderStorage)return decoderStorage.error();
   m.decoderWeights=drel;m.resolvedDecoderWeights=dfull;m.decoderSha256=dactual;
  }
- m.license=*license;m.provider=provider;m.abi=field(fields,"abi").value_or("sam21.image.v1");m.signedPackage=false;AdapterRegistry registry;auto adapter=registry.resolve(m.taskId);if(!adapter)return adapter.error();if(m.abi!=adapter.value().abi)return error(ErrorCode::UnsupportedAdapter,"model.abi");m.inputs=adapter.value().inputs;m.outputs=adapter.value().outputs;return m;
+ m.license=*license;
+ m.provider=provider;
+ m.abi=field(fields,"abi").value_or("sam21.image.v1");
+ m.manifestSha256=sha256(std::span<const std::uint8_t>(
+     reinterpret_cast<const std::uint8_t*>(j.data()),j.size()));
+ m.source=field(fields,"source").value_or("");
+ m.sourceCommit=field(fields,"sourceCommit").value_or("");
+ m.checkpointSha256=field(fields,"checkpointSha256").value_or("");
+ m.variant=field(fields,"variant").value_or("");
+ m.networkAccess=network!=fields.end()&&network->second.number!=0;
+ m.signedPackage=false;
+ AdapterRegistry registry;
+ auto adapter=registry.resolve(m.taskId);
+ if(!adapter)return adapter.error();
+ if(m.abi!=adapter.value().abi)return error(ErrorCode::UnsupportedAdapter,"model.abi");
+ m.inputs=adapter.value().inputs;
+ m.outputs=adapter.value().outputs;
+ return m;
 }
 }

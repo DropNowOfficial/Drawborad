@@ -1,0 +1,17 @@
+[  4%] Building CXX object CMakeFiles/models.dir/workspace/scratch/f80809aed485/Drawborad/src/models/PackageVerifier.cpp.o
+[  8%] Building CXX object CMakeFiles/models.dir/workspace/scratch/f80809aed485/Drawborad/src/models/AdapterRegistry.cpp.o
+[ 13%] Building CXX object CMakeFiles/models.dir/workspace/scratch/f80809aed485/Drawborad/src/models/OrtSession.cpp.o
+[ 17%] Linking CXX static library libmodels.a
+[ 34%] Built target models
+[ 43%] Linking CXX executable single_runtime
+[ 43%] Linking CXX executable sam_runtime
+[ 47%] Building CXX object CMakeFiles/model_contracts.dir/workspace/scratch/f80809aed485/Drawborad/tests/models/CustomAdapterTests.cpp.o
+[ 56%] Built target single_runtime
+[ 65%] Built target sam_runtime
+[ 69%] Building CXX object CMakeFiles/model_contracts.dir/workspace/scratch/f80809aed485/Drawborad/tests/models/ModelReadinessTests.cpp.o
+[ 73%] Building CXX object CMakeFiles/compatibility_runtime.dir/workspace/scratch/f80809aed485/Drawborad/tests/models/CompatibilityRuntimeTests.cpp.o
+[ 78%] Building CXX object CMakeFiles/model_contracts.dir/workspace/scratch/f80809aed485/Drawborad/tests/models/ProviderParityTests.cpp.o
+[ 82%] Linking CXX executable model_contracts
+[ 91%] Built target model_contracts
+[ 95%] Linking CXX executable compatibility_runtime
+[100%] Built target compatibility_runtime

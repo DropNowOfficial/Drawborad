@@ -1,0 +1,36 @@
+Historical RED capture from tool chunk 5f924b (conservative MissingModel stub before preflight behavior).
+Command:
+g++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -pthread -Isrc -Itests/support tests/support/TestMain.cpp tests/models/ModelReadinessTests.cpp src/models/AdapterRegistry.cpp src/models/PackageVerifier.cpp src/models/ModelRegistry.cpp src/models/OrtSession.cpp src/core/Digest.cpp src/core/DocumentSpec.cpp src/storage/FileIO.cpp -o /tmp/drawborad-model-readiness-tests/readiness && /tmp/drawborad-model-readiness-tests/readiness
+Exit code: 1
+
+RUN readiness rejects a nonstring provider instead of silently choosing CPU
+PASS readiness rejects a nonstring provider instead of silently choosing CPU
+RUN readiness rejects a nonstring ABI instead of silently choosing the SAM adapter
+PASS readiness rejects a nonstring ABI instead of silently choosing the SAM adapter
+RUN readiness rejects a nonboolean network policy
+PASS readiness rejects a nonboolean network policy
+RUN verified packages preserve provenance and bind the exact manifest contents
+PASS verified packages preserve provenance and bind the exact manifest contents
+RUN readiness reports no selected package as MissingModel
+PASS readiness reports no selected package as MissingModel
+RUN readiness reports an absent package as MissingModel
+PASS readiness reports an absent package as MissingModel
+RUN readiness reports a missing manifest as InvalidManifest
+ASSERT_FAIL readiness reports a missing manifest as InvalidManifest: tests/models/ModelReadinessTests.cpp:114 CHECK(report.value().state == ModelReadinessState::InvalidManifest)
+RUN readiness reports malformed provider metadata as InvalidManifest
+RUN readiness reports decoder tampering as ModelIntegrityFailed before runtime
+ASSERT_FAIL readiness reports malformed provider metadata as InvalidManifest: tests/models/ModelReadinessTests.cpp:123 CHECK(report.value().state == ModelReadinessState::InvalidManifest)
+RUN readiness reports missing local weights as ModelIntegrityFailed
+ASSERT_FAIL readiness reports decoder tampering as ModelIntegrityFailed before runtime: tests/models/ModelReadinessTests.cpp:132 CHECK(report.value().state == ModelReadinessState::ModelIntegrityFailed)
+RUN readiness reports an unsupported adapter as IncompatibleModel
+ASSERT_FAIL readiness reports missing local weights as ModelIntegrityFailed: tests/models/ModelReadinessTests.cpp:143 CHECK(report.value().state == ModelReadinessState::ModelIntegrityFailed)
+RUN readiness reports an undeclared requested provider as ProviderUnavailable
+ASSERT_FAIL readiness reports an unsupported adapter as IncompatibleModel: tests/models/ModelReadinessTests.cpp:151 CHECK(report.value().state == ModelReadinessState::IncompatibleModel)
+RUN readiness reports an unsupported declared provider as ProviderUnavailable
+ASSERT_FAIL readiness reports an undeclared requested provider as ProviderUnavailable: tests/models/ModelReadinessTests.cpp:158 CHECK(report.value().state == ModelReadinessState::ProviderUnavailable)
+RUN readiness never promotes package hashes or manifest-only compatibility to Ready
+ASSERT_FAIL readiness reports an unsupported declared provider as ProviderUnavailable: tests/models/ModelReadinessTests.cpp:168 CHECK(report.value().state == ModelReadinessState::ProviderUnavailable)
+RUN cancelled readiness checks cannot publish a readiness report
+ASSERT_FAIL readiness never promotes package hashes or manifest-only compatibility to Ready: tests/models/ModelReadinessTests.cpp:176 CHECK(report.value().manifest)
+ASSERT_FAIL cancelled readiness checks cannot publish a readiness report: tests/models/ModelReadinessTests.cpp:196 CHECK(!report)
+15 cases, 9 failures

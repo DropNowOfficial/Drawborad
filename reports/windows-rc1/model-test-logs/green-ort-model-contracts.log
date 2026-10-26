@@ -1,0 +1,73 @@
+RUN readiness rejects a nonstring provider instead of silently choosing CPU
+PASS readiness rejects a nonstring provider instead of silently choosing CPU
+RUN readiness rejects a nonstring ABI instead of silently choosing the SAM adapter
+PASS readiness rejects a nonstring ABI instead of silently choosing the SAM adapter
+RUN readiness rejects a nonboolean network policy
+PASS readiness rejects a nonboolean network policy
+RUN verified packages preserve provenance and bind the exact manifest contents
+PASS verified packages preserve provenance and bind the exact manifest contents
+RUN readiness reports no selected package as MissingModel
+PASS readiness reports no selected package as MissingModel
+RUN readiness reports an absent package as MissingModel
+PASS readiness reports an absent package as MissingModel
+RUN readiness reports a missing manifest as InvalidManifest
+PASS readiness reports a missing manifest as InvalidManifest
+RUN readiness reports malformed provider metadata as InvalidManifest
+PASS readiness reports malformed provider metadata as InvalidManifest
+RUN readiness reports decoder tampering as ModelIntegrityFailed before runtime
+PASS readiness reports decoder tampering as ModelIntegrityFailed before runtime
+RUN readiness reports missing local weights as ModelIntegrityFailed
+PASS readiness reports missing local weights as ModelIntegrityFailed
+RUN readiness reports an unsupported adapter as IncompatibleModel
+PASS readiness reports an unsupported adapter as IncompatibleModel
+RUN readiness reports an undeclared requested provider as ProviderUnavailable
+PASS readiness reports an undeclared requested provider as ProviderUnavailable
+RUN readiness reports an unsupported declared provider as ProviderUnavailable
+PASS readiness reports an unsupported declared provider as ProviderUnavailable
+RUN readiness never promotes package hashes or manifest-only compatibility to Ready
+PASS readiness never promotes package hashes or manifest-only compatibility to Ready
+RUN cancelled readiness checks cannot publish a readiness report
+PASS cancelled readiness checks cannot publish a readiness report
+RUN M01 valid package is checked by digest and untrusted install needs consent
+PASS M01 valid package is checked by digest and untrusted install needs consent
+RUN M01 tampered package is rejected
+PASS M01 tampered package is rejected
+RUN M01 manifest external URL is rejected even when weights are local
+PASS M01 manifest external URL is rejected even when weights are local
+RUN M01 manifest schema and provider are allow-listed
+PASS M01 manifest schema and provider are allow-listed
+RUN M01 two-stage SAM package verifies decoder digest independently
+PASS M01 two-stage SAM package verifies decoder digest independently
+RUN M01 SAM 2.1 package rejects missing decoder pair
+PASS M01 SAM 2.1 package rejects missing decoder pair
+RUN M01 ONNX external tensor data is rejected before runtime load
+PASS M01 ONNX external tensor data is rejected before runtime load
+RUN M01 verified package carries canonical adapter tensor contract
+PASS M01 verified package carries canonical adapter tensor contract
+RUN M01 duplicate top-level manifest keys are rejected
+PASS M01 duplicate top-level manifest keys are rejected
+RUN M01 ONNX custom operator domains are rejected before runtime load
+PASS M01 ONNX custom operator domains are rejected before runtime load
+RUN M01 install owns verified package and blocks active removal
+PASS M01 install owns verified package and blocks active removal
+RUN M01 package identity includes decoder digest
+PASS M01 package identity includes decoder digest
+RUN M01 malformed numeric JSON in ignored fields is rejected
+PASS M01 malformed numeric JSON in ignored fields is rejected
+RUN M05 unknown adapter is rejected and CPU fallback is explicit
+PASS M05 unknown adapter is rejected and CPU fallback is explicit
+RUN M05 incompatible declared image tensor is not qualified
+PASS M05 incompatible declared image tensor is not qualified
+RUN M05 missing tensor contract and shape bombs are rejected
+PASS M05 missing tensor contract and shape bombs are rejected
+RUN M05 incompatible ABI and resource budget are rejected
+PASS M05 incompatible ABI and resource budget are rejected
+RUN M05 CUDA request stays blocked until CUDA runtime is qualified
+PASS M05 CUDA request stays blocked until CUDA runtime is qualified
+RUN M05 SAM logical adapter exposes image prompts mask and int64 labels
+PASS M05 SAM logical adapter exposes image prompts mask and int64 labels
+RUN M05 registry-bound probe rejects unknown ModelId instead of bypassing registry
+PASS M05 registry-bound probe rejects unknown ModelId instead of bypassing registry
+RUN M02 runtime absence is explicit and never reported as qualified
+PASS M02 runtime absence is explicit and never reported as qualified
+36 cases, 0 failures

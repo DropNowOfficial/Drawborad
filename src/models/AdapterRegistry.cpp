@@ -4,6 +4,108 @@
 #include <cstring>
 
 namespace drawborad {
+namespace {
+ModelReadinessState readinessFailureState(const Error& failure) {
+    const auto& key = failure.messageKey;
+    if (key == "model.package-dir")
+        return ModelReadinessState::MissingModel;
+    if (key == "model.onnxruntime-unavailable")
+        return ModelReadinessState::RuntimeUnavailable;
+    if (key == "model.provider" || key == "model.cuda-not-declared" ||
+        key == "model.cpu-provider-unavailable" ||
+        key == "model.cuda-provider-unavailable" || key == "model.cuda-provider-load-failed")
+        return ModelReadinessState::ProviderUnavailable;
+    if (key.starts_with("model.manifest") || key == "model.schema" ||
+        key == "model.decoder-manifest-fields" || key == "model.sam-decoder-required" ||
+        failure.code == ErrorCode::MissingDigest)
+        return ModelReadinessState::InvalidManifest;
+    if (failure.code == ErrorCode::DigestMismatch || failure.code == ErrorCode::PathEscape ||
+        failure.code == ErrorCode::IoError || key == "model.executable-content")
+        return ModelReadinessState::ModelIntegrityFailed;
+    return ModelReadinessState::IncompatibleModel;
+}
+
+InferenceRequest smokeRequest(const ModelManifest& manifest, DevicePreference device) {
+    InferenceRequest request;
+    std::copy_n(manifest.sha256.bytes.begin(), 16, request.modelId.bytes.begin());
+    if (request.modelId.empty())
+        request.modelId = Id::fromNumber(1);
+    request.device = device;
+    const std::int64_t positive = 1;
+    Bytes labels(sizeof(positive));
+    std::memcpy(labels.data(), &positive, sizeof(positive));
+    request.tensorRefs = {
+        Bytes(3 * 1024 * 1024 * sizeof(float), 0),
+        Bytes(2 * sizeof(float), 0),
+        std::move(labels),
+        Bytes(256 * 256 * sizeof(float), 0),
+        Bytes(sizeof(float), 0)
+    };
+    return request;
+}
+}
+
+std::string_view modelReadinessStateName(ModelReadinessState state) {
+    switch (state) {
+    case ModelReadinessState::MissingModel: return "MissingModel";
+    case ModelReadinessState::InvalidManifest: return "InvalidManifest";
+    case ModelReadinessState::ModelIntegrityFailed: return "ModelIntegrityFailed";
+    case ModelReadinessState::RuntimeUnavailable: return "RuntimeUnavailable";
+    case ModelReadinessState::ProviderUnavailable: return "ProviderUnavailable";
+    case ModelReadinessState::IncompatibleModel: return "IncompatibleModel";
+    case ModelReadinessState::Ready: return "Ready";
+    }
+    return "IncompatibleModel";
+}
+
+Result<ModelReadinessReport> preflightModelPackage(
+    const PackagePath& package, DevicePreference device, std::stop_token stop) {
+    if (stop.stop_requested())
+        return error(ErrorCode::Cancelled, "model.cancelled");
+    ModelReadinessReport report;
+    report.device = device;
+    const auto failed = [&](const Error& failure) -> Result<ModelReadinessReport> {
+        if (failure.code == ErrorCode::Cancelled)
+            return failure;
+        report.state = readinessFailureState(failure);
+        report.messageKey = failure.messageKey;
+        report.diagnostic = failure.diagnosticId;
+        return report;
+    };
+    if (package.empty())
+        return failed(error(ErrorCode::InvalidInput, "model.package-dir"));
+    auto verified = validatePackage(package);
+    if (!verified)
+        return failed(verified.error());
+    report.manifest = std::move(verified.value());
+    if (stop.stop_requested())
+        return error(ErrorCode::Cancelled, "model.cancelled");
+    if (device == DevicePreference::CUDA && report.manifest->provider != "cuda")
+        return failed(error(ErrorCode::UnsupportedAdapter, "model.cuda-not-declared"));
+    OrtSession session(*report.manifest);
+    if (!session.runtimeAvailable())
+        return failed(error(ErrorCode::UnsupportedFeature, "model.onnxruntime-unavailable"));
+
+    // Fresh session + owned image bytes force both encoder and decoder to run.
+    // Passing this input qualifies the local interface, not segmentation quality.
+    report.probeKind = "deterministic-smoke";
+    auto inference = session.run(smokeRequest(*report.manifest, device), stop);
+    if (!inference)
+        return failed(inference.error());
+    if (stop.stop_requested())
+        return error(ErrorCode::Cancelled, "model.cancelled");
+    const auto& tensors = inference.value().tensorRefs;
+    constexpr std::size_t maskBytes = 256 * 256 * sizeof(float);
+    if (tensors.size() != 2 || tensors[0].empty() || tensors[0].size() % maskBytes ||
+        tensors[1].size() != tensors[0].size() / maskBytes * sizeof(float))
+        return failed(error(ErrorCode::CorruptData, "model.sam-output-layout"));
+    report.state = ModelReadinessState::Ready;
+    report.messageKey = "model.ready";
+    report.elapsedUs = inference.value().elapsedUs;
+    report.observedTensorBytes = inference.value().peakBytes;
+    return report;
+}
+
 Result<AdapterInfo> AdapterRegistry::resolve(std::string_view task) const {
     if (task != "sam21.image.v1")
         return error(ErrorCode::UnsupportedAdapter, "adapter.unknown");

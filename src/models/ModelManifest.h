@@ -23,6 +23,9 @@ struct ModelManifest {
     std::string provider;
     std::string abi;
     std::string license;
+    Hash manifestSha256{};
+    std::string source, sourceCommit, checkpointSha256, variant;
+    bool networkAccess{};
     std::uint64_t gpuBytes{}, ramBytes{};
     bool signedPackage{};
     bool operator==(const ModelManifest&) const = default;

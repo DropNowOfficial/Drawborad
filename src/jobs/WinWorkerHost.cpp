@@ -145,6 +145,7 @@ Result<void> WinWorkerHost::start(const JobRequest& r) {
 #ifdef DRAWBORAD_HAS_REVIEW_WORKER
         && r.task != "image.review.sam21"
         && r.task != "image.reconstruct.v1" && r.task != "image.refine.v1"
+        && r.task != "model.preflight.v1"
 #endif
         )
         return error(ErrorCode::UnsupportedFeature, "worker.task-not-implemented");
@@ -243,6 +244,7 @@ Result<void> WinWorkerHost::start(const JobRequest& r) {
     if(r.task=="image.review.sam21")cmd+=L" --task image.review.sam21";
     if(r.task=="image.reconstruct.v1")cmd+=L" --task image.reconstruct.v1";
     if(r.task=="image.refine.v1")cmd+=L" --task image.refine.v1";
+    if(r.task=="model.preflight.v1")cmd+=L" --task model.preflight.v1";
 #endif
     PROCESS_INFORMATION pi{};
     BOOL started =

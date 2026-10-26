@@ -6,19 +6,37 @@ import yaml
 ROOT=Path(__file__).resolve().parents[2]
 
 class AlphaPackagingContract(unittest.TestCase):
-    def test_actions_builds_a_real_windows_exe_and_uploads_zip(self):
-        data=yaml.safe_load((ROOT/'.github/workflows/windows-alpha-portable.yml').read_text())
+    def test_actions_is_manual_and_cannot_trigger_a_push_build(self):
+        data=yaml.load((ROOT/'.github/workflows/windows-alpha-portable.yml').read_text(), Loader=yaml.BaseLoader)
+        self.assertEqual(set(data['on']), {'workflow_dispatch'})
+        self.assertEqual(data['on']['workflow_dispatch']['inputs']['expected_commit']['required'], 'true')
+
+    def test_hosted_job_is_candidate_guarded_and_explicitly_ui_only(self):
+        data=yaml.load((ROOT/'.github/workflows/windows-alpha-portable.yml').read_text(), Loader=yaml.BaseLoader)
         self.assertEqual(data['jobs']['package-windows-alpha']['runs-on'],'windows-2022')
+        guard=data['jobs']['package-windows-alpha'].get('if','')
+        self.assertIn("github.event_name == 'workflow_dispatch'", guard)
+        self.assertIn("github.ref == 'refs/heads/release/win11-integrated-alpha-rc1'", guard)
+        self.assertIn('github.sha == inputs.expected_commit', guard)
         steps=data['jobs']['package-windows-alpha']['steps']
         self.assertTrue(any('install-qt-action' in x.get('uses','') for x in steps))
-        self.assertTrue(any('Build-Alpha.ps1' in x.get('run','') for x in steps))
+        builds=[x for x in steps if 'Build-Alpha.ps1' in x.get('run','')]
+        self.assertEqual(len(builds),1)
+        self.assertIn('-UiOnly', builds[0]['run'])
         self.assertTrue(any('upload-artifact' in x.get('uses','') and 'zip' in x['with']['path'] for x in steps))
-    def test_local_builder_checks_windows_dependencies_and_diagnostics(self):
-        s=(ROOT/'tools/windows/Build-Alpha.ps1').read_text()
-        for item in ('Drawborad.exe','DrawboradWorker.exe','drawborad_build_token.txt',
-                     'windeployqt.exe','--qmldir','platforms\\qwindows.dll',
-                     '--diagnostics','Get-FileHash','Compress-Archive','ALPHA_ZIP='):
-            self.assertIn(item,s)
+
+    def test_hosted_sdk_preflight_precedes_dependency_installation(self):
+        data=yaml.load((ROOT/'.github/workflows/windows-alpha-portable.yml').read_text(), Loader=yaml.BaseLoader)
+        inputs=data['on']['workflow_dispatch']['inputs']
+        self.assertIn('native_sdk_root', inputs)
+        self.assertIn('cmake_toolchain_file', inputs)
+        self.assertEqual(inputs['native_sdk_root']['required'], 'false')
+        steps=data['jobs']['package-windows-alpha']['steps']
+        ids={step.get('id'):index for index,step in enumerate(steps) if step.get('id')}
+        self.assertIn('native_sdk_preflight', ids)
+        for index, step in enumerate(steps):
+            if 'setup-python' in step.get('uses','') or 'install-qt-action' in step.get('uses',''):
+                self.assertLess(ids['native_sdk_preflight'],index)
     def test_reference_preview_applies_exif_orientation(self):
         qml=(ROOT/'ui/Main.qml').read_text()
         cpp=(ROOT/'apps/studio/QtBridge.cpp').read_text()

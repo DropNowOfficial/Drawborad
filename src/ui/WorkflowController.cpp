@@ -12,6 +12,7 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QSaveFile>
+#include <QStringList>
 #include <QUuid>
 #include <algorithm>
 #include <cmath>
@@ -25,6 +26,7 @@ std::optional<Hash> parseHash(const QString& text){
     Hash hash;std::copy_n(reinterpret_cast<const std::uint8_t*>(bytes.constData()),32,hash.bytes.begin());return hash;
 }
 QUrl pinSource(const QJsonObject& metadata,const QString& directory){
+    if(directory.isEmpty() || !QDir(directory).exists())return {};
     QFile source(metadata.value("image").toString());
     if(source.size()<=0 || source.size()>32*1024*1024 || !source.open(QIODevice::ReadOnly))return {};
     const auto bytes=source.readAll();
@@ -54,14 +56,66 @@ WorkflowController::WorkflowController(QtBridge& bridge)
      host_(std::filesystem::path(QCoreApplication::applicationDirPath().toStdWString())/L"DrawboradWorker.exe"),
      broker_(host_,governor_,clock_),directory_(std::make_unique<QTemporaryDir>()) {
     const auto package=qEnvironmentVariable("DRAWBORAD_MODEL_PACKAGE");
-    if(!package.isEmpty()) modelPackage_=QUrl::fromLocalFile(package);
+    if(!package.isEmpty()){modelPackage_=QUrl::fromLocalFile(package);modelState_=QStringLiteral("NotChecked");}
+    modelStatus_=package.isEmpty()?tr("请选择本地模型包。"):tr("已选择模型包；尚未检查 CPU 推理。");
     poll_.setInterval(25);connect(&poll_,&QTimer::timeout,this,&WorkflowController::poll);poll_.start();
 }
 WorkflowController::~WorkflowController(){if(running_) broker_.workerFailed(running_->id);}
 void WorkflowController::fail(const QString& text){message_=text;emit changed();}
 void WorkflowController::setModelPackage(const QUrl& url){
-    if(busy() || !url.isLocalFile()) return;
-    modelPackage_=url;message_=tr("已选择本地模型包；导入时验证模型哈希并使用 CPU。" );emit changed();
+    if(busy() || bridge_.running_ || !url.isLocalFile()) return;
+    modelPackage_=url;modelReceipt_.reset();modelState_=QStringLiteral("NotChecked");
+    modelStatus_=tr("已选择模型包；请检查哈希、接口与真实 CPU 推理。");emit changed();
+}
+void WorkflowController::stopModelCheck(const QString& reason){
+    if(!running_ || running_->task!="model.preflight.v1")return;
+    modelReceipt_.reset();modelState_=QStringLiteral("NotChecked");modelStatus_=reason;
+}
+bool WorkflowController::checkModel(){
+    if(busy() || bridge_.running_ || !modelPackage_.isLocalFile())return false;
+    NewDocumentRequest request;request.dimensions={1,1,Unit::Px,300};
+    const auto spec=validateDocument(request,{});if(!spec)return false;
+    auto document=Document::create(spec.value(),uuid());if(!document)return false;
+    auto directory=std::make_unique<QTemporaryDir>();if(!directory->isValid())return false;
+    const auto metadata=jsonResource({{"type",ModelPreflightRequestType},{"package",modelPackage_.toLocalFile()},{"outputDirectory",directory->path()}});
+    if(!document.value().apply(Command{InstallResource{metadata}},document.value().snapshot().revision))return false;
+    const auto snapshot=document.value().snapshot();auto bytes=encodeDelta({},snapshot);auto hash=stateHash(snapshot);
+    if(!bytes || !hash)return false;
+    JobRequest job;job.id=uuid();job.nonce=uuid();job.task="model.preflight.v1";
+    job.inputSnapshot={snapshot.documentId,snapshot.revision,hash.value()};job.snapshotBytes=std::move(bytes.value());
+    job.budget.ramSoftBytes=2*GiB;job.budget.ramReclaimBytes=3*GiB;job.resources={job.id,ResourceDevice::CPU,2*GiB,0,0,false};
+    modelReceipt_.reset();modelState_=QStringLiteral("CheckingModel");progressCompleted_=0;progressTotal_=0;
+    const auto submitted=broker_.submit(job);
+    if(!submitted){modelState_=QStringLiteral("CheckFailed");modelStatus_=QString::fromStdString(submitted.error().messageKey);emit changed();return false;}
+    analysis_=std::move(document.value());jobDirectory_=std::move(directory);running_=std::move(job);
+    modelStatus_=tr("后台校验本地模型并执行 CPU 编码器/解码器冒烟推理，可取消。");
+    message_=tr("模型检查不会改变当前绘画或审阅。");emit changed();return true;
+}
+bool WorkflowController::loadModelResult(const DocumentSnapshot& snapshot){
+    const auto result=findJsonResource(snapshot,ModelPreflightResultType);if(!result)return false;
+    const auto state=result->value("state").toString();
+    const QStringList states{QStringLiteral("MissingModel"),QStringLiteral("InvalidManifest"),QStringLiteral("ModelIntegrityFailed"),
+        QStringLiteral("RuntimeUnavailable"),QStringLiteral("ProviderUnavailable"),QStringLiteral("IncompatibleModel"),QStringLiteral("Ready")};
+    if(!states.contains(state) || result->value("package").toString()!=modelPackage_.toLocalFile() ||
+       result->value("provider").toString()!="CPU" || result->value("receiptVersion").toInt()!=1)return false;
+    if(state=="Ready"){
+        if(result->value("probeKind").toString()!="deterministic-smoke" ||
+           !parseHash(result->value("manifestHash").toString()) || !parseHash(result->value("encoderHash").toString()) ||
+           !parseHash(result->value("decoderHash").toString()))return false;
+        modelReceipt_=*result;
+        modelStatus_=tr("CPU 编码器和解码器冒烟推理通过（%1 ms）；图像质量仍需审阅。").arg(result->value("elapsedUs").toString().toULongLong()/1000);
+    }else{
+        modelReceipt_.reset();
+        const auto reason=result->value("messageKey").toString();
+        if(state=="MissingModel")modelStatus_=tr("模型包或所需模型文件不存在：%1").arg(reason);
+        else if(state=="InvalidManifest")modelStatus_=tr("模型清单无效：%1").arg(reason);
+        else if(state=="ModelIntegrityFailed")modelStatus_=tr("模型文件哈希校验失败：%1").arg(reason);
+        else if(state=="RuntimeUnavailable")modelStatus_=tr("本地 ONNX Runtime 不可用：%1").arg(reason);
+        else if(state=="ProviderUnavailable")modelStatus_=tr("所选执行设备不可用：%1").arg(reason);
+        else modelStatus_=tr("模型接口或推理输出不兼容：%1").arg(reason);
+        const auto diagnostic=result->value("diagnostic").toString();if(!diagnostic.isEmpty())modelStatus_+=QStringLiteral(" · ")+diagnostic;
+    }
+    modelState_=state;message_=tr("模型检查完成；当前绘画和审阅未改变。");return true;
 }
 QVariantList WorkflowController::candidates() const {
     QVariantList rows;
@@ -124,15 +178,16 @@ bool WorkflowController::addBackgroundCandidate(){
 }
 bool WorkflowController::startImage(const QUrl& url){return startAnalysis(url,false);}
 bool WorkflowController::startAnalysis(const QUrl& url,bool prompted){
-    if(busy() || !url.isLocalFile() || !modelPackage_.isLocalFile()){
-        fail(tr("请先选择本地 SAM 模型包文件夹，再导入本地图片。"));return false;
+    if(busy() || bridge_.running_)return false;
+    if(!url.isLocalFile() || !modelPackage_.isLocalFile() || !modelReady()){
+        fail(tr("请先选择本地 SAM 模型包并通过 CPU 推理检查，再导入本地图片。"));return false;
     }
     NewDocumentRequest request;request.dimensions={1,1,Unit::Px,300};
     const auto spec=validateDocument(request,{});if(!spec){fail(QString::fromStdString(spec.error().messageKey));return false;}
     auto document=Document::create(spec.value(),uuid());if(!document){fail(QString::fromStdString(document.error().messageKey));return false;}
     auto directory=std::make_unique<QTemporaryDir>();
     if(!directory->isValid()){fail(tr("无法创建任务临时目录；当前工程未改变。"));return false;}
-    QJsonObject options{{"type",ReviewRequestType},{"image",url.toLocalFile()}, {"package",modelPackage_.toLocalFile()},{"outputDirectory",directory->path()}};
+    QJsonObject options{{"type",ReviewRequestType},{"image",url.toLocalFile()}, {"package",modelPackage_.toLocalFile()},{"outputDirectory",directory->path()},{"modelReadiness",*modelReceipt_}};
     if(prompted){
         QJsonArray points;for(const auto& p:promptPoints_)points.append(QJsonObject{{"x",p.x},{"y",p.y},{"positive",p.positive}});
         options.insert("proposalMode","prompted");options.insert("points",points);
@@ -152,7 +207,7 @@ bool WorkflowController::startAnalysis(const QUrl& url,bool prompted){
     const auto current=bridge_.canvasSnapshot();jobBaseDocument_=current?std::optional<DocumentId>{current->documentId}:std::nullopt;
     jobBaseRevision_=current?current->revision:0;
     appendPrompt_=prompted;promptBaseRevision_=review_?review_->revision():0;
-    analysis_=std::move(document.value());jobDirectory_=std::move(directory);running_=std::move(job);
+    analysis_=std::move(document.value());jobDirectory_=std::move(directory);running_=std::move(job);progressCompleted_=0;progressTotal_=0;
     message_=tr("正在校验并加载本地模型；原工程保持不变，可取消。" );emit changed();return true;
 }
 void WorkflowController::cancel(){if(running_){broker_.cancel(running_->id);message_=tr("正在取消；保留当前工程和已有审阅。" );emit changed();}}
@@ -160,14 +215,17 @@ void WorkflowController::poll(){
     if(!running_)return;
     broker_.poll();const auto status=broker_.status(running_->id);
     if(status==JobStatus::Cancelled || status==JobStatus::Failed){
-        running_.reset();analysis_.reset();jobDirectory_.reset();fail(tr("任务已停止；当前工程和已有审阅未改变。"));return;
+        stopModelCheck(tr("检查已停止；请重新检查后再导入。"));running_.reset();analysis_.reset();jobDirectory_.reset();fail(tr("任务已停止；当前工程和已有审阅未改变。"));return;
     }
     const auto next=host_.pollMessage(running_->id);
-    if(!next){broker_.workerFailed(running_->id);running_.reset();analysis_.reset();jobDirectory_.reset();fail(tr("后台任务失败；当前工程未改变。"));return;}
+    if(!next){broker_.workerFailed(running_->id);stopModelCheck(tr("后台模型检查失败；请重新检查。"));running_.reset();analysis_.reset();jobDirectory_.reset();fail(tr("后台任务失败；当前工程未改变。"));return;}
     if(!next.value())return;
     const auto& message=*next.value();
     if(message.kind==MessageKind::Progress && message.payload.size()==8){
         unsigned done=0,total=0;for(unsigned i=0;i<4;++i){done|=unsigned(message.payload[i])<<(i*8);total|=unsigned(message.payload[4+i])<<(i*8);}
+        if(total==0 || done>total || total>unsigned(std::numeric_limits<int>::max()))return;
+        progressCompleted_=int(done);progressTotal_=int(total);
+        if(running_->task=="model.preflight.v1"){emit changed();return;}
         if(appendPrompt_ && running_->task=="image.review.sam21"){
             message_=done<total?tr("正在按点/框提示分割，可取消；已有候选和笔迹未变。" ):tr("提示推理完成，正在校验追加候选。" );emit changed();return;
         }
@@ -176,11 +234,14 @@ void WorkflowController::poll(){
         }
         message_=done<total?tr("自动采样 %1 / %2；结果尚未写入工程。" ).arg(done).arg(total):tr("采样完成，正在筛选与整理真实蒙版……");emit changed();
     }else if(message.kind==MessageKind::Cancelled){
-        broker_.acknowledgeCancel(message.id,message.nonce);running_.reset();analysis_.reset();jobDirectory_.reset();fail(tr("已取消；当前工程和已有审阅未改变。"));
+        broker_.acknowledgeCancel(message.id,message.nonce);stopModelCheck(tr("已取消模型检查；请重新检查后再导入。"));running_.reset();analysis_.reset();jobDirectory_.reset();fail(tr("已取消；当前工程和已有审阅未改变。"));
     }else if(message.kind==MessageKind::Failure){
         const auto reason=QString::fromUtf8(reinterpret_cast<const char*>(message.payload.data()),qsizetype(message.payload.size()));
-        broker_.workerFailed(running_->id);running_.reset();analysis_.reset();jobDirectory_.reset();fail(tr("分析失败：%1。当前工程未改变。" ).arg(reason));
+        broker_.workerFailed(running_->id);stopModelCheck(tr("模型检查失败：%1").arg(reason));
+        if(running_->task=="image.review.sam21" && (reason.startsWith("model.") || reason=="review.model-preflight-required-or-stale")){modelReceipt_.reset();modelState_=QStringLiteral("NotChecked");modelStatus_=tr("模型包已变化或推理不可用：%1。请重新检查。").arg(reason);}
+        running_.reset();analysis_.reset();jobDirectory_.reset();fail(tr("分析失败：%1。当前工程未改变。" ).arg(reason));
     }else if(message.kind==MessageKind::Result){
+        const auto jobId=running_->id;const auto task=running_->task;
         QFile file(QDir(jobDirectory_->path()).filePath("review.delta"));
         bool ok=message.payload.size()==32 && file.size()>0 && file.size()<=qint64(MaxSnapshotMappingBytes) && file.open(QIODevice::ReadOnly);
         Bytes bytes;
@@ -190,14 +251,17 @@ void WorkflowController::poll(){
             JobResult result;result.id=message.id;result.nonce=message.nonce;result.inputRevision=running_->inputSnapshot.revision;
             result.outputHash=sha256(bytes);result.delta=std::move(bytes);
             ok=bool(broker_.accept(result,*analysis_));
-            if(ok)ok=running_->task=="image.review.sam21"?(appendPrompt_?loadPromptResult(analysis_->snapshot()):loadResult(analysis_->snapshot())):loadPaintResult(analysis_->snapshot());
+            if(ok)ok=task=="model.preflight.v1"?loadModelResult(analysis_->snapshot()):task=="image.review.sam21"?(appendPrompt_?loadPromptResult(analysis_->snapshot()):loadResult(analysis_->snapshot())):loadPaintResult(analysis_->snapshot());
         }
-        if(!ok)broker_.workerFailed(running_->id);
+        if(!ok){broker_.workerFailed(jobId);stopModelCheck(tr("模型检查结果校验失败，请重新检查。"));}
         running_.reset();analysis_.reset();jobDirectory_.reset();
         if(!ok)fail(tr("候选校验失败；当前工程和已有审阅未改变。"));else emit changed();
     }
 }
 bool WorkflowController::loadResult(const DocumentSnapshot& snapshot){
+    const auto current=bridge_.canvasSnapshot();
+    if(jobBaseDocument_!=(current?std::optional<DocumentId>{current->documentId}:std::nullopt) ||
+       (current && jobBaseRevision_!=current->revision))return false;
     const auto result=findJsonResource(snapshot,ReviewResultType),source=findJsonResource(snapshot,SourceReferenceType);
     if(!result || !source)return false;
     const auto width=result->value("width").toInteger(),height=result->value("height").toInteger();
@@ -217,7 +281,11 @@ bool WorkflowController::loadResult(const DocumentSnapshot& snapshot){
         scores.push_back(score);names.push_back(tr("候选 %1").arg(names.size()+1));
     }
     auto review=ReviewSession::create(proposals,masks,0);if(!review)return false;
-    sourceMetadata_=jsonResource(*source);sourceUrl_=pinSource(*source,directory_->path());
+    // Keep the old review and its undo history until every part of the new
+    // review, including a hash-matching preview, is ready to install.
+    const auto pinned=pinSource(*source,directory_->path());if(pinned.isEmpty())return false;
+    auto sourceMetadata=jsonResource(*source);
+    sourceMetadata_=std::move(sourceMetadata);sourceUrl_=pinned;
     review_=std::move(review.value());names_=std::move(names);scores_=std::move(scores);selected_.assign(names_.size(),false);
     objects_.assign(names_.size(),{});baseMasks_.assign(names_.size(),{});background_.assign(names_.size(),false);undoUi_.clear();activeIndex_=0;pending_=true;
     promptPoints_.clear();promptBox_.reset();reviewAudit_=QJsonArray{QJsonObject{{"operation","automatic-proposals"},{"sourceHash",source->value("sourceHash")},{"modelHash",source->value("modelHash")},{"candidates",array.size()}}};
@@ -241,7 +309,7 @@ bool WorkflowController::loadPromptResult(const DocumentSnapshot& snapshot){
     const auto before=uiState();const auto oldSize=names_.size();const auto done=review_->appendProposals(proposals,masks,review_->revision());if(!done){fail(QString::fromStdString(done.error().messageKey));return false;}
     undoUi_.push_back(before);
     for(std::size_t i=0;i<scores.size();++i){names_.push_back(tr("提示候选 %1").arg(oldSize+i+1));scores_.push_back(scores[i]);selected_.push_back(false);objects_.push_back({});baseMasks_.push_back({});background_.push_back(false);}
-    reviewAudit_.append(QJsonObject{{"operation","prompted-proposals"},{"sourceHash",source->value("sourceHash")},{"modelHash",source->value("modelHash")},{"points",result->value("points")},{"box",result->value("box")},{"candidates",array}});
+    reviewAudit_.append(QJsonObject{{"operation","prompted-proposals"},{"sourceHash",source->value("sourceHash")},{"modelHash",source->value("modelHash")},{"modelReadiness",source->value("modelReadiness")},{"points",result->value("points")},{"box",result->value("box")},{"candidates",array}});
     activeIndex_=int(oldSize);pending_=true;message_=tr("已追加 %1 个真实提示候选，原有候选、蒙版编辑和笔迹未替换。请检查后勾选。" ).arg(scores.size());updateOverlay();return true;
 }
 void WorkflowController::updateOverlay(){
@@ -357,10 +425,11 @@ bool WorkflowController::accept(){
     message_=tr("已应用勾选对象和蒙版；已有笔迹保留，新增绘制层为空。未勾选的已有对象保持原样。");emit changed();return true;
 }
 void WorkflowController::reset(){
+    stopModelCheck(tr("模型检查已停止；请重新检查后再导入。"));
     if(running_)broker_.workerFailed(running_->id);
     running_.reset();analysis_.reset();jobDirectory_.reset();review_.reset();names_.clear();scores_.clear();selected_.clear();objects_.clear();baseMasks_.clear();sourceMetadata_.reset();undoUi_.clear();
     background_.clear();promptPoints_.clear();promptBox_.reset();reviewAudit_={};appendPrompt_=false;promptBaseRevision_=0;
-    sourceUrl_={};overlayUrl_={};baseDocument_.reset();baseRevision_=0;activeIndex_=-1;pending_=false;message_.clear();emit changed();
+    sourceUrl_={};overlayUrl_={};baseDocument_.reset();baseRevision_=0;activeIndex_=-1;pending_=false;progressCompleted_=0;progressTotal_=0;message_.clear();emit changed();
 }
 bool WorkflowController::startPaintJob(QJsonObject options){
     const auto current=bridge_.canvasSnapshot();
@@ -369,7 +438,7 @@ bool WorkflowController::startPaintJob(QJsonObject options){
     }
     // Saved project metadata is data, never authority to execute a worker task
     // or choose its output directory. Preserve it but refuse reserved directives.
-    if(findJsonResource(*current,ReviewRequestType) || findJsonResource(*current,ReconstructionRequestType)){
+    if(findJsonResource(*current,ReviewRequestType) || findJsonResource(*current,ReconstructionRequestType) || findJsonResource(*current,ModelPreflightRequestType)){
         fail(tr("工程包含保留的后台任务指令，已拒绝执行；当前绘画和文件保持不变。"));return false;
     }
     auto directory=std::make_unique<QTemporaryDir>();if(!directory->isValid())return false;
@@ -382,7 +451,7 @@ bool WorkflowController::startPaintJob(QJsonObject options){
     job.inputSnapshot={snapshot.documentId,snapshot.revision,hash.value()};job.snapshotBytes=std::move(bytes.value());
     job.budget.ramSoftBytes=GiB;job.budget.ramReclaimBytes=2*GiB;job.resources={job.id,ResourceDevice::CPU,GiB,0,0,false};
     auto submitted=broker_.submit(job);if(!submitted){fail(QString::fromStdString(submitted.error().messageKey));return false;}
-    paintBase_=*current;analysis_=std::move(document.value());jobDirectory_=std::move(directory);running_=std::move(job);
+    paintBase_=*current;analysis_=std::move(document.value());jobDirectory_=std::move(directory);running_=std::move(job);progressCompleted_=0;progressTotal_=0;
     message_=tr("正在从原图规划真实笔迹，结果将分阶段写入对象层；可取消，当前笔迹保持不变。" );emit changed();return true;
 }
 bool WorkflowController::loadPaintResult(const DocumentSnapshot& result){

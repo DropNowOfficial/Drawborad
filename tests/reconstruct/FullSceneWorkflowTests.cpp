@@ -143,7 +143,12 @@ TEST("E08 real point box native masks match the separately measured official sce
         }
         if(name=="cup-reviewed-points"){
             NewDocumentRequest newRequest;newRequest.dimensions={1,1,Unit::Px,300};const auto spec=validateDocument(newRequest,{});CHECK(spec);auto document=Document::create(spec.value(),Id::fromNumber(500));CHECK(document);
-            auto instruction=metadata;instruction.insert("type",ReviewRequestType);instruction.insert("image",qEnvironmentVariable("DRAWBORAD_COFFEE_IMAGE"));instruction.insert("package",qEnvironmentVariable("DRAWBORAD_COFFEE_PACKAGE"));instruction.insert("expectedSourceHash",QString::fromStdString(image.value().info.sourceHash.hex()));
+            const auto preflightRequest=jsonResource({{"type",ModelPreflightRequestType},{"package",qEnvironmentVariable("DRAWBORAD_COFFEE_PACKAGE")}});
+            auto preflightInput=document.value().snapshot();auto preflightResources=std::make_shared<ResourceMap>(*preflightInput.resources);preflightResources->emplace(preflightRequest.id,preflightRequest);preflightInput.resources=preflightResources;
+            const auto preflightDelta=runModelPreflightJob(preflightInput,{});CHECK(preflightDelta);
+            const auto preflightOutput=decodeDelta(preflightDelta.value(),preflightInput);CHECK(preflightOutput);
+            const auto receipt=findJsonResource(preflightOutput.value(),ModelPreflightResultType);CHECK(receipt);CHECK(receipt->value("state").toString()=="Ready");CHECK(receipt->value("probeKind").toString()=="deterministic-smoke");
+            auto instruction=metadata;instruction.insert("type",ReviewRequestType);instruction.insert("image",qEnvironmentVariable("DRAWBORAD_COFFEE_IMAGE"));instruction.insert("package",qEnvironmentVariable("DRAWBORAD_COFFEE_PACKAGE"));instruction.insert("expectedSourceHash",QString::fromStdString(image.value().info.sourceHash.hex()));instruction.insert("modelReadiness",*receipt);
             auto resource=jsonResource(instruction);auto snapshot=document.value().snapshot();auto resources=std::make_shared<ResourceMap>(*snapshot.resources);resources->emplace(resource.id,resource);snapshot.resources=resources;
             const auto delta=runImageReviewJob(snapshot,{});CHECK(delta);const auto output=decodeDelta(delta.value(),snapshot);CHECK(output);const auto result=findJsonResource(output.value(),ReviewResultType);CHECK(result);CHECK(result->value("proposalMode").toString()=="prompted");CHECK(result->value("candidates").toArray().size()==3);
         }

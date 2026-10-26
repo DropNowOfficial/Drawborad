@@ -1,0 +1,19 @@
+RUN M02 two-stage SAM runtime chains encoder and decoder with int64 labels
+PASS M02 two-stage SAM runtime chains encoder and decoder with int64 labels
+RUN M02 two-stage SAM runtime rejects missing decoder path
+PASS M02 two-stage SAM runtime rejects missing decoder path
+RUN M02 runtime rejects an output rank mismatch even when its byte count agrees
+PASS M02 runtime rejects an output rank mismatch even when its byte count agrees
+RUN M02 runtime rejects a fixed output dimension mismatch
+PASS M02 runtime rejects a fixed output dimension mismatch
+RUN M02 runtime permits dynamic output dimensions only when the concrete result fits
+PASS M02 runtime permits dynamic output dimensions only when the concrete result fits
+RUN M02 runtime rejects zero output dimensions
+PASS M02 runtime rejects zero output dimensions
+RUN M02 runtime checks resolved input dimensions against the actual model interface
+PASS M02 runtime checks resolved input dimensions against the actual model interface
+RUN M02 runtime accepts minus one input dimensions but rejects other negative dimensions
+PASS M02 runtime accepts minus one input dimensions but rejects other negative dimensions
+RUN M02 runtime rejects nonfinite decoder outputs
+PASS M02 runtime rejects nonfinite decoder outputs
+9 cases, 0 failures

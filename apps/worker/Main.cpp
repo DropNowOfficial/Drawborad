@@ -38,11 +38,13 @@ static Id parseId(const std::string& s) {
 static int pipeWorker(int argc, char** argv) {
     bool reviewTask=false;
     bool paintTask=false;
+    bool modelTask=false;
 #ifdef DRAWBORAD_HAS_REVIEW_WORKER
     reviewTask=argc==11 && std::string(argv[9])=="--task" && std::string(argv[10])=="image.review.sam21";
     paintTask=argc==11 && std::string(argv[9])=="--task" && (std::string(argv[10])=="image.reconstruct.v1" || std::string(argv[10])=="image.refine.v1");
+    modelTask=argc==11 && std::string(argv[9])=="--task" && std::string(argv[10])=="model.preflight.v1";
 #endif
-    if (argc != 9 && !reviewTask && !paintTask)
+    if (argc != 9 && !reviewTask && !paintTask && !modelTask)
         return 2;
     std::string pipename = argv[2];
     if (pipename.rfind("\\\\.\\pipe\\Drawborad-", 0) != 0 || std::string(argv[3]) != "--mapping" ||
@@ -94,13 +96,13 @@ static int pipeWorker(int argc, char** argv) {
 #ifdef DRAWBORAD_HAS_REVIEW_WORKER
     auto snapshot=decodeDelta(snapshotBytes,DocumentSnapshot{});
     std::optional<QJsonObject> request;
-    if((reviewTask || paintTask) && snapshot){
-        const auto verified=jobRequestMetadata(snapshot.value(),paintTask?ReconstructionRequestType:ReviewRequestType);
+    if((reviewTask || paintTask || modelTask) && snapshot){
+        const auto verified=jobRequestMetadata(snapshot.value(),modelTask?ModelPreflightRequestType:paintTask?ReconstructionRequestType:ReviewRequestType);
         if(verified)request=verified.value();
     }
-    if((reviewTask || paintTask) && !request){send(MessageKind::Failure,{});CloseHandle(pipe);return 3;}
+    if((reviewTask || paintTask || modelTask) && !request){send(MessageKind::Failure,{});CloseHandle(pipe);return 3;}
     if(paintTask && request->value("mode").toString()!=(std::string(argv[10])=="image.refine.v1"?"refine":"reconstruct")){send(MessageKind::Failure,{});CloseHandle(pipe);return 3;}
-    if((reviewTask || paintTask) && request){
+    if((reviewTask || paintTask || modelTask) && request){
         const auto directory=request->value("outputDirectory").toString();
         if(directory.isEmpty() || !QDir(directory).exists()){CloseHandle(pipe);return 3;}
         std::atomic<bool> done=false;
@@ -112,7 +114,7 @@ static int pipeWorker(int argc, char** argv) {
                     for(unsigned i=0;i<4;++i){payload[i]=std::uint8_t(completed>>(i*8));payload[4+i]=std::uint8_t(total>>(i*8));}
                     if(!send(MessageKind::Progress,std::move(payload))) throw std::runtime_error("review.progress-pipe");
                 };
-                auto delta=paintTask?runReconstructionJob(snapshot.value(),stop,progress):runImageReviewJob(snapshot.value(),stop,progress);
+                auto delta=modelTask?runModelPreflightJob(snapshot.value(),stop,progress):paintTask?runReconstructionJob(snapshot.value(),stop,progress):runImageReviewJob(snapshot.value(),stop,progress);
                 if(!stop.stop_requested()){
                     if(!delta) failure(delta.error().messageKey);
                     else if(delta.value().size()>MaxSnapshotMappingBytes) failure("review.delta-limit");

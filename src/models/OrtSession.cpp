@@ -27,11 +27,26 @@ OrtSession::OrtSession(ModelManifest manifest)
 #ifdef DRAWBORAD_HAS_ONNXRUNTIME
 namespace {
 
+bool shapeMatches(std::span<const std::int64_t> expected,
+                  std::span<const std::int64_t> actual) {
+    if (expected.size() != actual.size())
+        return false;
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        if (expected[i] == 0 || expected[i] < -1 || actual[i] <= 0)
+            return false;
+        if (expected[i] != -1 && expected[i] != actual[i])
+            return false;
+    }
+    return true;
+}
+
 Result<std::vector<std::int64_t>> resolveShape(std::vector<std::int64_t> shape,
                                                std::size_t elements) {
     std::size_t dynamic = shape.size();
     std::uint64_t known = 1;
     for (std::size_t i = 0; i < shape.size(); ++i) {
+        if (shape[i] < -1)
+            return error(ErrorCode::InvalidInput, "model.invalid-dimension");
         if (shape[i] < 0) {
             if (dynamic != shape.size())
                 return error(ErrorCode::UnsupportedFeature, "model.multiple-dynamic-dims");
@@ -96,10 +111,12 @@ Result<Ort::Value> inputTensor(const Ort::MemoryInfo& memoryInfo, const Bytes& b
     if (spec.byteLimit && bytes.size() > spec.byteLimit)
         return error(ErrorCode::BudgetExceeded, "model.input-byte-limit");
 
-    auto shape = spec.shape.empty() ? std::move(runtimeShape) : spec.shape;
+    auto shape = spec.shape.empty() ? runtimeShape : spec.shape;
     auto resolved = resolveShape(std::move(shape), bytes.size() / width);
     if (!resolved)
         return resolved.error();
+    if (!shapeMatches(runtimeShape, resolved.value()))
+        return error(ErrorCode::InvalidInput, "model.runtime-input-shape");
 
     return Ort::Value::CreateTensor(
         memoryInfo, const_cast<std::uint8_t*>(bytes.data()), bytes.size(),
@@ -121,6 +138,8 @@ Result<Bytes> copyFloatOutput(const Ort::Value& output, const TensorSpec* spec,
     if (spec) {
         if (!spec->dtype.empty() && spec->dtype != "float32")
             return error(ErrorCode::UnsupportedFeature, "model.output-dtype");
+        if (!spec->shape.empty() && !shapeMatches(spec->shape, info.GetShape()))
+            return error(ErrorCode::CorruptData, "model.runtime-output-shape");
         if (spec->byteLimit && byteCount.value() > spec->byteLimit)
             return error(ErrorCode::BudgetExceeded, "model.output-byte-limit");
     }
@@ -158,21 +177,27 @@ Result<void> requireName(Ort::Session& session, bool input, std::size_t index,
 Result<void> configureProvider(Ort::SessionOptions& options,
                                const ModelManifest& manifest,
                                DevicePreference device) {
+    const auto providers = Ort::GetAvailableProviders();
+    const auto wanted = device == DevicePreference::CPU
+        ? "CPUExecutionProvider" : "CUDAExecutionProvider";
+    if (std::find(providers.begin(), providers.end(), wanted) == providers.end())
+        return error(ErrorCode::UnsupportedFeature, device == DevicePreference::CPU
+            ? "model.cpu-provider-unavailable" : "model.cuda-provider-unavailable");
     if (device == DevicePreference::CPU)
         return {};
-    const auto providers = Ort::GetAvailableProviders();
-    if (std::find(providers.begin(), providers.end(), "CUDAExecutionProvider") ==
-        providers.end())
-        return error(ErrorCode::UnsupportedFeature, "model.cuda-provider-unavailable");
 
-    OrtCUDAProviderOptions cudaOptions;
+    OrtCUDAProviderOptions cudaOptions{};
     cudaOptions.device_id = 0;
     cudaOptions.do_copy_in_default_stream = 1;
     cudaOptions.arena_extend_strategy = 1;
     if (manifest.gpuBytes)
         cudaOptions.gpu_mem_limit = std::size_t(
             std::min<std::uint64_t>(manifest.gpuBytes, 6 * GiB));
-    options.AppendExecutionProvider_CUDA(cudaOptions);
+    try {
+        options.AppendExecutionProvider_CUDA(cudaOptions);
+    } catch (const Ort::Exception& ex) {
+        return Error{ErrorCode::UnsupportedFeature, "model.cuda-provider-load-failed", ex.what()};
+    }
     return {};
 }
 
@@ -340,6 +365,20 @@ Result<InferenceOutput> runSam21(Ort::Env& env, const ModelManifest& manifest,
         Bytes nextImage = request.tensorRefs[0];
         auto features = encoder.Run(encoderOptions, encoderInputNames, &imageValue.value(), 1,
                                     encoderOutputs, 3);
+        // Validate once before caching, including features a decoder may ignore.
+        // Reused image features do not require rescanning for every prompt.
+        for (const auto& feature : features) {
+            if (!feature.IsTensor())
+                return error(ErrorCode::UnsupportedFeature, "model.non-tensor-output");
+            const auto info = feature.GetTensorTypeAndShapeInfo();
+            if (info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
+                return error(ErrorCode::UnsupportedFeature, "model.sam-feature-dtype");
+            const auto* data = feature.GetTensorData<float>();
+            const auto count = info.GetElementCount();
+            for (std::size_t i = 0; i < count; ++i)
+                if (!std::isfinite(data[i]))
+                    return error(ErrorCode::CorruptData, "model.nonfinite-output");
+        }
         state.features = std::move(features);
         state.image.swap(nextImage);
     }
@@ -381,6 +420,17 @@ Result<InferenceOutput> runSam21(Ort::Env& env, const ModelManifest& manifest,
         if (info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
             return error(ErrorCode::UnsupportedFeature, "model.sam-feature-dtype");
         const auto shape = info.GetShape();
+        const auto index = decoderInputs.size();
+        const auto encoderType = encoder.GetOutputTypeInfo(index);
+        const auto encoderInfo = encoderType.GetTensorTypeAndShapeInfo();
+        const auto decoderType = decoder.GetInputTypeInfo(index);
+        const auto decoderInfo = decoderType.GetTensorTypeAndShapeInfo();
+        if (encoderInfo.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
+            decoderInfo.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
+            return error(ErrorCode::UnsupportedFeature, "model.sam-feature-dtype");
+        if (!shapeMatches(encoderInfo.GetShape(), shape) ||
+            !shapeMatches(decoderInfo.GetShape(), shape))
+            return error(ErrorCode::InvalidInput, "model.sam-feature-shape");
         decoderInputs.push_back(Ort::Value::CreateTensor<float>(memoryInfo,
             const_cast<float*>(feature.GetTensorData<float>()), info.GetElementCount(),
             shape.data(), shape.size()));
@@ -464,7 +514,7 @@ Result<InferenceOutput> OrtSession::run(const InferenceRequest& request,
     } catch (const Ort::Exception& ex) {
         if (stop.stop_requested())
             return error(ErrorCode::Cancelled, "model.cancelled");
-        if (request.device == DevicePreference::CUDA)
+        if (request.device == DevicePreference::CUDA && ex.GetOrtErrorCode() == ORT_EP_FAIL)
             return Error{ErrorCode::UnsupportedFeature, "model.cuda-provider-load-failed", ex.what()};
         return Error{ErrorCode::CorruptData, "model.onnxruntime-error", ex.what()};
     } catch (const std::bad_alloc&) {

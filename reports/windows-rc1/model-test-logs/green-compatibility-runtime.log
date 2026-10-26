@@ -1,0 +1,9 @@
+RUN M05 resolved compatible model must pass an isolated runtime probe
+PASS M05 resolved compatible model must pass an isolated runtime probe
+RUN M05 CUDA compatibility probe fails closed when runtime has no CUDA EP
+PASS M05 CUDA compatibility probe fails closed when runtime has no CUDA EP
+RUN M05 package preflight reaches Ready only after a real two-stage deterministic smoke
+PASS M05 package preflight reaches Ready only after a real two-stage deterministic smoke
+RUN M05 runtime rejects nonfinite encoder features even when decoder output is finite
+PASS M05 runtime rejects nonfinite encoder features even when decoder output is finite
+4 cases, 0 failures

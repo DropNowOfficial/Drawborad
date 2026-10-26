@@ -1,0 +1,5 @@
+RUN M02 real ONNX Runtime executes a verified float32 model
+PASS M02 real ONNX Runtime executes a verified float32 model
+RUN M02 CUDA is never silently replaced by CPU
+PASS M02 CUDA is never silently replaced by CPU
+2 cases, 0 failures

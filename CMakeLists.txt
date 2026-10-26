@@ -7,6 +7,8 @@ option(DRAWBORAD_DESKTOP "Build Qt native desktop shell" OFF)
 option(DRAWBORAD_QUALIFY "Require qualified Windows dependency manifest" OFF)
 option(DRAWBORAD_WINDOWS_VALIDATION "Allow local Windows validation before release dependency qualification" OFF)
 option(DRAWBORAD_SANITIZE "Enable address/undefined sanitizers" OFF)
+include(cmake/ReleaseValidation.cmake)
+drawborad_release_inventory(preflight)
 include(cmake/Dependencies.cmake)
 if(MSVC)
   add_compile_options(/W4 /WX /permissive- /fp:strict /utf-8)
@@ -109,10 +111,14 @@ add_library(drawborad_models STATIC
   src/jobs/QueueStore.cpp)
 target_include_directories(drawborad_models PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(drawborad_models PUBLIC drawborad_core drawborad_color)
-set(DRAWBORAD_ONNXRUNTIME_ROOT "" CACHE PATH "Offline ONNX Runtime SDK root")
 set(DRAWBORAD_TEST_ONNX_MODEL "" CACHE FILEPATH "Developer-only ONNX Runtime smoke model")
 set(DRAWBORAD_TEST_SAM_ENCODER "" CACHE FILEPATH "Developer-only SAM encoder smoke model")
 set(DRAWBORAD_TEST_SAM_DECODER "" CACHE FILEPATH "Developer-only SAM decoder smoke model")
+set(DRAWBORAD_HAS_ONNXRUNTIME FALSE)
+# A changed root must not reuse find results from a previously configured SDK.
+unset(DRAWBORAD_ORT_INCLUDE CACHE)
+unset(DRAWBORAD_ORT_LIBRARY CACHE)
+unset(DRAWBORAD_ORT_RUNTIME CACHE)
 if(DRAWBORAD_ONNXRUNTIME_ROOT)
   find_path(DRAWBORAD_ORT_INCLUDE onnxruntime_cxx_api.h
     PATHS "${DRAWBORAD_ONNXRUNTIME_ROOT}/include" NO_DEFAULT_PATH)
@@ -121,11 +127,19 @@ if(DRAWBORAD_ONNXRUNTIME_ROOT)
   if(NOT DRAWBORAD_ORT_INCLUDE OR NOT DRAWBORAD_ORT_LIBRARY)
     message(FATAL_ERROR "DRAWBORAD_ONNXRUNTIME_ROOT does not contain include/onnxruntime_cxx_api.h and lib/onnxruntime")
   endif()
+  if(WIN32)
+    find_file(DRAWBORAD_ORT_RUNTIME onnxruntime.dll
+      PATHS "${DRAWBORAD_ONNXRUNTIME_ROOT}/lib" NO_DEFAULT_PATH)
+    if(NOT DRAWBORAD_ORT_RUNTIME OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+      message(FATAL_ERROR "DRAWBORAD_ONNXRUNTIME_ROOT requires lib/onnxruntime.dll and an x64 target")
+    endif()
+  endif()
   target_include_directories(drawborad_models SYSTEM PRIVATE "${DRAWBORAD_ORT_INCLUDE}")
   target_link_libraries(drawborad_models PRIVATE "${DRAWBORAD_ORT_LIBRARY}")
   target_compile_definitions(drawborad_models PRIVATE DRAWBORAD_HAS_ONNXRUNTIME=1)
   set(DRAWBORAD_HAS_ONNXRUNTIME TRUE)
 endif()
+message(STATUS "Drawborad CPU inference runtime compiled: ${DRAWBORAD_HAS_ONNXRUNTIME}; model Ready requires executed preflight")
 
 add_library(drawborad_reconstruct STATIC
   src/reconstruct/ReconstructionService.cpp src/reconstruct/EventWriter.cpp
@@ -174,16 +188,12 @@ if(DRAWBORAD_DESKTOP)
   target_compile_definitions(Drawborad PRIVATE DRAWBORAD_HAS_QT)
   target_include_directories(Drawborad PRIVATE ${PROJECT_SOURCE_DIR})
   target_link_libraries(Drawborad PRIVATE drawborad_workflow drawborad_core drawborad_render Qt6::Quick Qt6::QuickControls2 d3d11 dxgi)
-  if(WIN32 AND DRAWBORAD_HAS_ONNXRUNTIME)
-    foreach(runtime_target Drawborad DrawboradWorker)
-      add_custom_command(TARGET ${runtime_target} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-          "${DRAWBORAD_ONNXRUNTIME_ROOT}/lib/onnxruntime.dll" "$<TARGET_FILE_DIR:${runtime_target}>/onnxruntime.dll")
-    endforeach()
-  endif()
   set_source_files_properties(ui/Main.qml PROPERTIES QT_RESOURCE_ALIAS Main.qml)
   qt_add_qml_module(Drawborad URI Drawborad VERSION 1.0 QML_FILES ui/Main.qml)
   string(RANDOM LENGTH 32 ALPHABET 0123456789abcdef DRAWBORAD_BUILD_TOKEN)
+  # Changing the freshness token must also rebuild the executable on every
+  # generator, including an otherwise up-to-date Visual Studio cache.
+  target_compile_definitions(Drawborad PRIVATE DRAWBORAD_BUILD_TOKEN="${DRAWBORAD_BUILD_TOKEN}")
   file(WRITE "${CMAKE_BINARY_DIR}/drawborad_expected_build_token.txt" "${DRAWBORAD_BUILD_TOKEN}\n")
   add_custom_command(
     TARGET Drawborad POST_BUILD
@@ -196,3 +206,24 @@ else()
 endif()
 enable_testing()
 add_subdirectory(tests)
+if(WIN32 AND DRAWBORAD_HAS_ONNXRUNTIME)
+  # One copy job owns each output directory; parallel test links cannot race
+  # while copying the same DLL. App, Worker and tests use this same SDK file.
+  add_custom_target(drawborad_ort_runtime ALL
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:DrawboradWorker>" "$<TARGET_FILE_DIR:test_M01>"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${DRAWBORAD_ORT_RUNTIME}" "$<TARGET_FILE_DIR:DrawboradWorker>/onnxruntime.dll"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${DRAWBORAD_ORT_RUNTIME}" "$<TARGET_FILE_DIR:test_M01>/onnxruntime.dll")
+  if(EXISTS "${DRAWBORAD_ONNXRUNTIME_ROOT}/lib/onnxruntime_providers_shared.dll")
+    add_custom_command(TARGET drawborad_ort_runtime POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${DRAWBORAD_ONNXRUNTIME_ROOT}/lib/onnxruntime_providers_shared.dll" "$<TARGET_FILE_DIR:DrawboradWorker>/onnxruntime_providers_shared.dll"
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${DRAWBORAD_ONNXRUNTIME_ROOT}/lib/onnxruntime_providers_shared.dll" "$<TARGET_FILE_DIR:test_M01>/onnxruntime_providers_shared.dll")
+  endif()
+  get_property(root_targets DIRECTORY "${PROJECT_SOURCE_DIR}" PROPERTY BUILDSYSTEM_TARGETS)
+  get_property(test_targets DIRECTORY "${PROJECT_SOURCE_DIR}/tests" PROPERTY BUILDSYSTEM_TARGETS)
+  foreach(runtime_target IN LISTS root_targets test_targets)
+    get_target_property(kind "${runtime_target}" TYPE)
+    if(kind STREQUAL "EXECUTABLE")
+      add_dependencies("${runtime_target}" drawborad_ort_runtime)
+    endif()
+  endforeach()
+endif()

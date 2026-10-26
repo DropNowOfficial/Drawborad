@@ -81,6 +81,29 @@
         "DRAWBORAD_WINDOWS_VALIDATION": "OFF",
         "DRAWBORAD_SANITIZE": "ON"
       }
+    },
+    {
+      "name": "core-portable-release",
+      "inherits": "lab-release",
+      "binaryDir": "${sourceDir}/out/build/core-portable-release",
+      "cacheVariables": {
+        "DRAWBORAD_TEST_PROFILE": "CorePortable",
+        "DRAWBORAD_ONNXRUNTIME_ROOT": ""
+      }
+    },
+    {
+      "name": "win-integrated-rc1",
+      "inherits": "win-validation",
+      "binaryDir": "${sourceDir}/out/build/win-integrated-rc1",
+      "cacheVariables": {
+        "DRAWBORAD_TEST_PROFILE": "RealWindowsIntegration",
+        "DRAWBORAD_ONNXRUNTIME_ROOT": "$env{DRAWBORAD_ONNXRUNTIME_ROOT}",
+        "DRAWBORAD_TEST_COFFEE_IMAGE": "$env{DRAWBORAD_TEST_COFFEE_IMAGE}",
+        "DRAWBORAD_TEST_COFFEE_PACKAGE": "$env{DRAWBORAD_TEST_COFFEE_PACKAGE}",
+        "DRAWBORAD_TEST_COFFEE_REFERENCE": "$env{DRAWBORAD_TEST_COFFEE_REFERENCE}",
+        "DRAWBORAD_TEST_COFFEE_AUTO_REFERENCE": "$env{DRAWBORAD_TEST_COFFEE_AUTO_REFERENCE}",
+        "DRAWBORAD_TEST_FULL_SCENE_REFERENCE": "$env{DRAWBORAD_TEST_FULL_SCENE_REFERENCE}"
+      }
     }
   ],
   "buildPresets": [
@@ -118,6 +141,17 @@
     {
       "name": "win-asan",
       "configurePreset": "win-asan",
+      "jobs": 2
+    },
+    {
+      "name": "core-portable-release",
+      "configurePreset": "core-portable-release",
+      "jobs": 2
+    },
+    {
+      "name": "win-integrated-rc1",
+      "configurePreset": "win-integrated-rc1",
+      "configuration": "Release",
       "jobs": 2
     }
   ],
@@ -168,6 +202,21 @@
     {
       "name": "win-asan",
       "configurePreset": "win-asan",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "core-portable-release",
+      "configurePreset": "core-portable-release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "win-integrated-rc1",
+      "configurePreset": "win-integrated-rc1",
+      "configuration": "Release",
       "output": {
         "outputOnFailure": true
       }

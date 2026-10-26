@@ -1,0 +1,12 @@
+Historical RED capture from tool chunk  f2ac99 (before the metadata type guards).
+Command:
+g++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -pthread -Isrc -Itests/support tests/support/TestMain.cpp tests/models/ModelReadinessTests.cpp src/models/AdapterRegistry.cpp src/models/PackageVerifier.cpp src/models/ModelRegistry.cpp src/models/OrtSession.cpp src/core/Digest.cpp src/core/DocumentSpec.cpp src/storage/FileIO.cpp -o /tmp/drawborad-model-readiness-tests/readiness && /tmp/drawborad-model-readiness-tests/readiness
+Exit code: 1
+
+RUN readiness rejects a nonstring provider instead of silently choosing CPU
+RUN readiness rejects a nonstring ABI instead of silently choosing the SAM adapter
+ASSERT_FAIL readiness rejects a nonstring provider instead of silently choosing CPU: tests/models/ModelReadinessTests.cpp:49 CHECK(!result)
+ASSERT_FAIL readiness rejects a nonstring ABI instead of silently choosing the SAM adapter: tests/models/ModelReadinessTests.cpp:57 CHECK(!result)
+RUN readiness rejects a nonboolean network policy
+ASSERT_FAIL 3 cases, 3 failures
+readiness rejects a nonboolean network policy: tests/models/ModelReadinessTests.cpp:65 CHECK(!result)

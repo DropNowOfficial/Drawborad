@@ -9,6 +9,7 @@
 #include <QFile>
 #include <QDir>
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QJsonDocument>
 #include <QGuiApplication>
 #include <QImage>
@@ -41,10 +42,54 @@ QColor rendered(const DocumentSnapshot& snapshot,NodeId layer,int x,int y){
     auto tile=nativeMaskedTile(snapshot,layer,std::move(raw.value()),x,y);if(!tile)return {};
     const auto& b=tile.value().bytes;return QColor(b[0],b[1],b[2],b[3]);
 }
+bool selectReadyModel(WorkflowController* workflow,const QUrl& package){
+    workflow->setModelPackage(package);
+    if(!workflow->checkModel())return false;
+    QElapsedTimer elapsed;elapsed.start();
+    while(workflow->busy() && elapsed.elapsed()<120000)QTest::qWait(25);
+    return !workflow->busy() && workflow->modelReady();
+}
 }
 class RealImageReviewTests : public QObject {
     Q_OBJECT
   private slots:
+    void rejectedAnalysisPreservesPendingReview_data(){
+        QTest::addColumn<bool>("changeDocument");
+        QTest::newRow("stale-document")<<true;
+        QTest::newRow("source-disappears-after-decode")<<false;
+    }
+    void rejectedAnalysisPreservesPendingReview(){
+        QFETCH(bool,changeDocument);
+        QTest::failOnWarning(QRegularExpression(".*"));QTemporaryDir owned;QVERIFY(owned.isValid());
+        const auto image=owned.filePath("review-source.png");QVERIFY(QFile::copy(qEnvironmentVariable("DRAWBORAD_COFFEE_IMAGE"),image));
+        NewDocumentRequest request;request.dimensions={600,400,Unit::Px,300};const auto spec=validateDocument(request,{});QVERIFY(spec);
+        auto document=Document::create(spec.value(),Id::fromNumber(6900));QVERIFY(document);
+        const auto source=jsonResource({{"type",SourceReferenceType},{"image",image},{"sourceHash","cc02f8ca188b167c775a7101b5d767d1e71792cf762c33d6fa15a4599b5a8de7"},{"width",600},{"height",400}});
+        const Bytes alpha(600*400,255);Resource mask{sha256(alpha),ResourceKind::Mask,std::make_shared<const Bytes>(alpha),{source.id}};
+        LayerNode object;object.id=Id::fromNumber(6901);object.kind=NodeKind::Object;object.parent=Document::rootId();object.maskId=mask.id;object.name="Existing review";
+        LayerNode layer;layer.id=Id::fromNumber(6902);layer.parent=object.id;layer.objectId=object.id;layer.name="Paint";
+        Command setup;setup.operations={InstallResource{source},InstallResource{mask},AddNode{object},AddNode{layer}};QVERIFY(document.value().apply(setup,0));
+        const auto project=owned.filePath("pending-review.draw");QVERIFY(ProjectStore{}.save(std::filesystem::path(project.toStdWString()),document.value().snapshot()));
+        QtBridge bridge;bridge.openUrl(QUrl::fromLocalFile(project));auto workflow=qobject_cast<WorkflowController*>(bridge.workflow());QVERIFY(workflow && workflow->hasReview());
+        QVERIFY2(selectReadyModel(workflow,QUrl::fromLocalFile(qEnvironmentVariable("DRAWBORAD_COFFEE_PACKAGE"))),qPrintable(workflow->modelStatus()));
+        QVERIFY(workflow->renameCandidate(0,"Keep this pending name"));
+        const QImage original(workflow->overlayUrl().toLocalFile());
+        QVERIFY(workflow->editRectangle(false,10,10,30,30));
+        const auto candidates=workflow->candidates();const QImage edited(workflow->overlayUrl().toLocalFile());const auto preview=workflow->sourceUrl();
+        QVERIFY(workflow->startImage(QUrl::fromLocalFile(image)));
+        if(changeDocument)QVERIFY(bridge.addLayer());
+        else{
+            // The first proposal progress arrives only after the worker decoded this file.
+            QTRY_VERIFY_WITH_TIMEOUT(workflow->progressTotal()>0,120000);
+            QVERIFY(workflow->busy());QVERIFY(QFile::remove(image));
+        }
+        const auto current=*bridge.canvasSnapshot();
+        QTRY_VERIFY_WITH_TIMEOUT(!workflow->busy(),600000);
+        QVERIFY(bridge.canvasSnapshot()->sameContent(current));QVERIFY(workflow->pending());
+        QCOMPARE(workflow->candidates(),candidates);QCOMPARE(workflow->sourceUrl(),preview);
+        QCOMPARE(QImage(workflow->overlayUrl().toLocalFile()),edited);
+        QVERIFY(workflow->undo());QCOMPARE(QImage(workflow->overlayUrl().toLocalFile()),original);
+    }
     void repeatedSmallReviewEditsKeepHistoryBoundedAndAuditUndoBranchExact(){
         QTest::failOnWarning(QRegularExpression(".*"));QTemporaryDir owned;QVERIFY(owned.isValid());
         const auto image=owned.filePath("small.png");QImage pixels(32,32,QImage::Format_RGB32);pixels.fill(Qt::white);QVERIFY(pixels.save(image));QFile file(image);QVERIFY(file.open(QIODevice::ReadOnly));const auto bytes=file.readAll();
@@ -115,7 +160,7 @@ class RealImageReviewTests : public QObject {
             setup.operations.emplace_back(InstallResource{mask});setup.operations.emplace_back(AddNode{object});setup.operations.emplace_back(AddNode{layer});
         }
         QVERIFY(document.value().apply(setup,0));const auto path=owned.filePath("existing.draw");QVERIFY(ProjectStore{}.save(std::filesystem::path(path.toStdWString()),document.value().snapshot()));
-        QtBridge bridge;bridge.openUrl(QUrl::fromLocalFile(path));auto workflow=qobject_cast<WorkflowController*>(bridge.workflow());QVERIFY(workflow);QVERIFY(workflow->editingExisting());workflow->setModelPackage(QUrl::fromLocalFile(qEnvironmentVariable("DRAWBORAD_COFFEE_PACKAGE")));
+        QtBridge bridge;bridge.openUrl(QUrl::fromLocalFile(path));auto workflow=qobject_cast<WorkflowController*>(bridge.workflow());QVERIFY(workflow);QVERIFY(workflow->editingExisting());QVERIFY2(selectReadyModel(workflow,QUrl::fromLocalFile(qEnvironmentVariable("DRAWBORAD_COFFEE_PACKAGE"))),qPrintable(workflow->modelStatus()));
         auto before=*bridge.canvasSnapshot();StrokeEvent ink;ink.id=Id::fromNumber(7000);ink.layerId=*bridge.activeLayer();ink.objectId=before.nodes->at(ink.layerId).objectId;ink.parentRevision=before.revision;ink.engineVersion=2;ink.toolId="marker";ink.color.profileId=before.spec.colorSpec.profileId;ink.startUs=1;ink.endUs=2;ink.geometry={{250,140,1,{},{},1,0,0},{270,140,1,{},{},2,0,0}};QVERIFY(bridge.commitStroke(ink));before=*bridge.canvasSnapshot();
         QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("studio",&bridge);engine.load(QUrl::fromLocalFile(QStringLiteral(DRAWBORAD_SOURCE_DIR "/ui/Main.qml")));QVERIFY(!engine.rootObjects().isEmpty());
         auto window=qobject_cast<QQuickWindow*>(engine.rootObjects()[0]);QVERIFY(window);QVERIFY(QTest::qWaitForWindowExposed(window));
@@ -254,19 +299,25 @@ class RealImageReviewTests : public QObject {
         auto workflow=qobject_cast<WorkflowController*>(bridge.workflow());QVERIFY(workflow);
         const auto model=QUrl::fromLocalFile(qEnvironmentVariable("DRAWBORAD_COFFEE_PACKAGE"));
         const auto image=QUrl::fromLocalFile(qEnvironmentVariable("DRAWBORAD_COFFEE_IMAGE"));
-        workflow->setModelPackage(model);const auto stable=*bridge.canvasSnapshot();
+        QVERIFY2(selectReadyModel(workflow,model),qPrintable(workflow->modelStatus()));const auto stable=*bridge.canvasSnapshot();
+        QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("studio",&bridge);
+        engine.load(QUrl::fromLocalFile(QStringLiteral(DRAWBORAD_SOURCE_DIR "/ui/Main.qml")));QVERIFY(!engine.rootObjects().isEmpty());
+        auto window=qobject_cast<QQuickWindow*>(engine.rootObjects().front());QVERIFY(window && QTest::qWaitForWindowExposed(window));
         QVERIFY2(workflow->startImage(image),qPrintable(workflow->message()));
-        QTest::qWait(100);workflow->cancel();QTRY_VERIFY_WITH_TIMEOUT(!workflow->busy(),8000);
+        auto cancel=window->findChild<QQuickItem*>("cancelWorkerButton");QVERIFY(cancel);QTRY_VERIFY(cancel->isVisible() && cancel->isEnabled());
+        QTest::mouseClick(window,Qt::LeftButton,{},cancel->mapToScene({cancel->width()/2,cancel->height()/2}).toPoint());
+        QTRY_VERIFY_WITH_TIMEOUT(!workflow->busy(),8000);
         QVERIFY(bridge.canvasSnapshot()->sameContent(stable));
         QTemporaryDir owned;QVERIFY(owned.isValid());
         workflow->setModelPackage(QUrl::fromLocalFile(owned.filePath("missing-model")));
-        QVERIFY(workflow->startImage(image));QTRY_VERIFY_WITH_TIMEOUT(!workflow->busy(),10000);
+        QVERIFY(workflow->checkModel());QTRY_VERIFY_WITH_TIMEOUT(!workflow->busy(),10000);QCOMPARE(workflow->modelState(),QStringLiteral("MissingModel"));QVERIFY(!workflow->startImage(image));
         QVERIFY(bridge.canvasSnapshot()->sameContent(stable));
         QImage transparent(8,8,QImage::Format_ARGB32);transparent.fill(QColor(255,0,0,128));
         const auto partial=owned.filePath("partial-alpha.png");QVERIFY(transparent.save(partial));
-        workflow->setModelPackage(model);QVERIFY(workflow->startImage(QUrl::fromLocalFile(partial)));
+        QVERIFY2(selectReadyModel(workflow,model),qPrintable(workflow->modelStatus()));QVERIFY(workflow->startImage(QUrl::fromLocalFile(partial)));
         QTRY_VERIFY_WITH_TIMEOUT(!workflow->busy(),20000);QVERIFY(bridge.canvasSnapshot()->sameContent(stable));
         QVERIFY(workflow->message().contains("review.partial-alpha-not-supported"));
+        window->setProperty("approvedClose",true);window->close();
     }
     void realCoffeeReviewSaveReopen(){
         QTest::failOnWarning(QRegularExpression(".*"));
@@ -278,7 +329,7 @@ class RealImageReviewTests : public QObject {
         QVERIFY(QFile::copy(qEnvironmentVariable("DRAWBORAD_COFFEE_IMAGE"),image));
         QtBridge bridge;bridge.createDocument(600,400,300);
         auto workflow=qobject_cast<WorkflowController*>(bridge.workflow());QVERIFY(workflow);
-        workflow->setModelPackage(QUrl::fromLocalFile(qEnvironmentVariable("DRAWBORAD_COFFEE_PACKAGE")));
+        QVERIFY2(selectReadyModel(workflow,QUrl::fromLocalFile(qEnvironmentVariable("DRAWBORAD_COFFEE_PACKAGE"))),qPrintable(workflow->modelStatus()));
         QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("studio",&bridge);
         engine.load(QUrl::fromLocalFile(QStringLiteral(DRAWBORAD_SOURCE_DIR "/ui/Main.qml")));
         QVERIFY(!engine.rootObjects().isEmpty());
@@ -378,8 +429,8 @@ class RealImageReviewTests : public QObject {
         QTest::qWait(100);workflow->cancel();QTRY_VERIFY_WITH_TIMEOUT(!workflow->busy(),8000);
         QVERIFY(bridge.canvasSnapshot()->sameContent(stable));QVERIFY(workflow->hasReview());
         workflow->setModelPackage(QUrl::fromLocalFile(owned.filePath("missing-model")));
-        QVERIFY(workflow->startImage(QUrl::fromLocalFile(qEnvironmentVariable("DRAWBORAD_COFFEE_IMAGE"))));
-        QTRY_VERIFY_WITH_TIMEOUT(!workflow->busy(),10000);QVERIFY(bridge.canvasSnapshot()->sameContent(stable));QVERIFY(workflow->hasReview());
+        QVERIFY(workflow->checkModel());QTRY_VERIFY_WITH_TIMEOUT(!workflow->busy(),10000);QCOMPARE(workflow->modelState(),QStringLiteral("MissingModel"));
+        QVERIFY(!workflow->startImage(QUrl::fromLocalFile(qEnvironmentVariable("DRAWBORAD_COFFEE_IMAGE"))));QVERIFY(bridge.canvasSnapshot()->sameContent(stable));QVERIFY(workflow->hasReview());
         QVERIFY(window->close());
     }
 };

@@ -29,13 +29,13 @@ ApplicationWindow {
             Label { text: qsTr("本地图像工作流 · Alpha"); color: "#aaaab0"; font.pixelSize: 11; Layout.leftMargin: 12 }
             Item { Layout.fillWidth: true }
             Button { objectName: "newDocumentButton"; text: qsTr("New"); onClicked: newDialog.open() }
-            Button { objectName: "importForReviewButton"; text: qsTr("导入图片 · 分割审阅"); enabled: !studio.busy; onClicked: {
+            Button { objectName: "importForReviewButton"; text: qsTr("导入图片 · 分割审阅"); enabled: !studio.busy && studio.workflow.modelReady; onClicked: {
                 if (studio.workflow.pending) replaceReviewDialog.open()
                 else analysisImageDialog.open()
             } }
             Button { text: qsTr("Open project"); onClicked: { if (studio.dirty) replaceDialog.open(); else openDialog.open() } }
             Button { text: qsTr("Save"); enabled: studio.hasDocument; onClicked: saveDialog.open() }
-            Button { objectName: "promptReviewButton"; text: qsTr("按提示补候选"); enabled: studio.workflow.hasReview && !studio.busy; onClicked: studio.workflow.startPrompted() }
+            Button { objectName: "promptReviewButton"; text: qsTr("按提示补候选"); enabled: studio.workflow.hasReview && studio.workflow.modelReady && !studio.busy; onClicked: studio.workflow.startPrompted() }
             Button { objectName: "reconstructButton"; text: qsTr("生成笔迹"); enabled: studio.workflow.editingExisting && !studio.workflow.pending && !studio.busy; onClicked: { if (studio.workflow.startReconstruction()) workspaceTabs.currentIndex = 1 } }
             Button { objectName: "exportPsdButton"; text: qsTr("导出分层 PSD"); enabled: studio.hasDocument && !studio.busy && !studio.workflow.pending; onClicked: psdDialog.open() }
         }
@@ -51,7 +51,7 @@ ApplicationWindow {
             radius: 10
             TabBar {
                 id: workspaceTabs; anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
-                visible: studio.workflow.hasReview || studio.workflow.busy
+                visible: studio.workflow.hasReview || studio.workflow.analyzing
                 TabButton { text: qsTr("原图与蒙版审阅") }
                 TabButton { text: qsTr("绘制结果") }
             }
@@ -59,7 +59,7 @@ ApplicationWindow {
             Item {
                 id: reviewPanel; objectName: "reviewPanel"
                 anchors.fill: nativeCanvas
-                visible: (studio.workflow.hasReview || studio.workflow.busy) && workspaceTabs.currentIndex === 0
+                visible: (studio.workflow.hasReview || studio.workflow.analyzing) && workspaceTabs.currentIndex === 0
                 Image { id: analysisSource; anchors.fill: parent; source: studio.workflow.sourceUrl; autoTransform: true; fillMode: Image.PreserveAspectFit; asynchronous: true; cache: false }
                 Image { id: maskOverlay; anchors.fill: parent; source: studio.workflow.overlayUrl; fillMode: Image.PreserveAspectFit; asynchronous: true; cache: false }
                 MouseArea {
@@ -111,22 +111,21 @@ ApplicationWindow {
                 }
                 Label { anchors.bottom: parent.bottom; anchors.horizontalCenter: parent.horizontalCenter; text: studio.workflow.activeIndex < 0 ? qsTr("红色：未分配给已勾选对象的区域；保留为空") : qsTr("原图参考 + 选中蒙版；这不是重建绘画"); color: "#ffffff"; padding: 8; background: Rectangle { color: "#c0202428" } }
             }
-            Image {
-                id: referencePreview
-                anchors.fill: nativeCanvas
-                source: studio.referenceUrl
-                autoTransform: true
+            Item {
+                anchors.fill: nativeCanvas; clip: true
                 visible: studio.hasReference && showReference.checked && studio.hasDocument && !reviewPanel.visible && studio.replayCount === studio.eventCount
-                opacity: referenceOpacity.value
-                fillMode: Image.PreserveAspectFit
-                asynchronous: true
-                cache: false
-                // A preview overlay. It is deliberately not rasterized into paint events.
+                Image {
+                    id: referencePreview
+                    x: nativeCanvas.documentRect.x; y: nativeCanvas.documentRect.y
+                    width: nativeCanvas.documentRect.width; height: nativeCanvas.documentRect.height
+                    source: studio.referenceUrl; autoTransform: true; opacity: referenceOpacity.value
+                    fillMode: Image.PreserveAspectFit; asynchronous: true; cache: false
+                }
             }
             Label { anchors.centerIn: parent; visible: !studio.hasDocument && !reviewPanel.visible; text: qsTr("导入图片进行分割审阅，或新建绘画工程"); color: "#bcbcc4"; font.pixelSize: 18 }
         }
         ScrollView {
-            id: sidebar
+            id: sidebar; objectName: "sidebar"
             Layout.minimumWidth: 280
             Layout.preferredWidth: 280
             Layout.maximumWidth: 280
@@ -139,10 +138,13 @@ ApplicationWindow {
             spacing: 12
             Label { text: qsTr("图像 → 对象审阅"); color: "#f5f5f7"; font.pixelSize: 22 }
             Button { objectName: "chooseModelButton"; text: qsTr("选择本地 SAM 模型包"); enabled: !studio.busy; onClicked: modelFolderDialog.open() }
-            Label { text: studio.workflow.modelPackage.toString().length > 0 ? qsTr("本地 CPU 模型已选；导入时校验") : qsTr("尚未选择模型包文件夹"); color: "#b5b5bd"; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Button { objectName: "checkModelButton"; text: qsTr("检查模型与 CPU 推理"); enabled: !studio.busy && studio.workflow.modelPackage.toString().length > 0; onClicked: studio.workflow.checkModel() }
+            Label { objectName: "modelReadinessStatus"; text: studio.workflow.modelState + " · " + studio.workflow.modelStatus; color: studio.workflow.modelReady ? "#a2dbbc" : "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Label { text: qsTr("执行设备：CPU。检查包含真实编码器/解码器冒烟推理；不代表咖啡图质量或 GPU 验收。"); color: "#b5b5bd"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Label { text: studio.workflow.message; color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Label { text: qsTr("当前验证范围：PNG/JPEG、RGB 8 位、最多 400 万像素；暂不支持半透明对象组。"); color: "#b5b5bd"; wrapMode: Text.Wrap; Layout.fillWidth: true }
-            Button { text: qsTr("取消图片分析"); visible: studio.workflow.busy; onClicked: studio.workflow.cancel() }
+            Button { objectName: "cancelWorkerButton"; text: qsTr("取消后台任务"); visible: studio.busy; enabled: studio.busy; onClicked: studio.cancelWorker() }
+            ProgressBar { objectName: "workerProgress"; visible: studio.workflow.busy; Layout.fillWidth: true; from: 0; to: Math.max(1, studio.workflow.progressTotal); value: studio.workflow.progressCompleted; indeterminate: studio.workflow.progressTotal === 0 }
             BusyIndicator { running: studio.workflow.busy; visible: running }
             Label { text: qsTr("候选可能是背景或物体部件。请自行命名、选取和合并；不会补画被遮挡内容。"); visible: studio.workflow.hasReview; color: "#c9d2d6"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Repeater {
@@ -241,6 +243,22 @@ ApplicationWindow {
                 ScrollBar.vertical: ScrollBar { }
             }
             Label { text: studio.layerNotice; color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true; visible: text.length > 0 }
+            Label { text: qsTr("Canvas view"); color: "#f5f5f7"; font.pixelSize: 18 }
+            RowLayout {
+                enabled: studio.hasDocument && !reviewPanel.visible
+                Button { objectName: "zoomOutButton"; text: "−"; Layout.preferredWidth: 42; onClicked: nativeCanvas.zoomAt(0.8, nativeCanvas.width / 2, nativeCanvas.height / 2) }
+                Label { objectName: "canvasZoom"; text: Math.round(nativeCanvas.zoom * 100) + "%"; color: "#b5b5bd"; Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter }
+                Button { objectName: "zoomInButton"; text: "+"; Layout.preferredWidth: 42; onClicked: nativeCanvas.zoomAt(1.25, nativeCanvas.width / 2, nativeCanvas.height / 2) }
+                Button { objectName: "fitCanvasButton"; text: qsTr("Fit"); Layout.preferredWidth: 52; onClicked: nativeCanvas.fitDocument() }
+            }
+            RowLayout {
+                enabled: studio.hasDocument && !reviewPanel.visible
+                Button { text: "←"; Layout.preferredWidth: 46; onClicked: nativeCanvas.panBy(-40, 0) }
+                Button { text: "↑"; Layout.preferredWidth: 46; onClicked: nativeCanvas.panBy(0, -40) }
+                Button { text: "↓"; Layout.preferredWidth: 46; onClicked: nativeCanvas.panBy(0, 40) }
+                Button { text: "→"; Layout.preferredWidth: 46; onClicked: nativeCanvas.panBy(40, 0) }
+            }
+            Label { text: qsTr("滚轮缩放；鼠标中键拖动画布。百分比以适合窗口为基准。"); color: "#b5b5bd"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Label { text: qsTr("Alpha：自动分割与人工审阅验证中"); color: "#d9c59e"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Label { text: qsTr("Reference image is preview-only; .draw saves paint events, not the imported source image."); color: "#d6b1a6"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Switch { id: showReference; text: qsTr("Show reference overlay"); checked: true; enabled: studio.hasReference }
@@ -250,7 +268,6 @@ ApplicationWindow {
             Label { text: qsTr("Reference could not be displayed."); color: "#ffc2a1"; visible: studio.hasReference && referencePreview.status === Image.Error }
             Label { text: qsTr("This build includes the native tiled canvas, mouse/tablet stroke input, replay core, DPI coordinates and cache recovery foundation."); color: "#a5a5ae"; wrapMode: Text.Wrap; Layout.fillWidth: true; lineHeight: 1.45 }
             Button { text: qsTr("Check native worker"); enabled: studio.hasDocument && !studio.busy; onClicked: studio.probeWorker() }
-            Button { text: qsTr("Cancel worker"); enabled: studio.busy; onClicked: studio.cancelWorker() }
             BusyIndicator { running: studio.busy; visible: studio.busy }
             Label { text: studio.message; color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             }

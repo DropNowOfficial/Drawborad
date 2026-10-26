@@ -5,18 +5,13 @@ import sys
 import tempfile
 
 if len(sys.argv) != 2:
-    print("usage: test_codec_worker.py BUILD_DIR", file=sys.stderr)
+    print("usage: test_codec_worker.py CODEC_EXECUTABLE", file=sys.stderr)
     raise SystemExit(2)
 
-build = pathlib.Path(sys.argv[1])
-names = ["DrawboradCodec.exe", "DrawboradCodec"]
-candidates = []
-for name in names:
-    candidates.extend(build.rglob(name))
-if not candidates:
+exe = pathlib.Path(sys.argv[1]).resolve()
+if not exe.is_file():
     print("missing DrawboradCodec executable", file=sys.stderr)
     raise SystemExit(1)
-exe = candidates[0]
 
 # 1x1, 24-bit uncompressed BMP. Pixel is BGR=(3,2,1).
 bmp = bytearray()

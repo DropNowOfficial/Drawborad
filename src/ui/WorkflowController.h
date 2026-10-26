@@ -15,6 +15,7 @@ class WorkflowController : public QObject {
     Q_OBJECT
     friend class QtBridge;
     Q_PROPERTY(bool busy READ busy NOTIFY changed)
+    Q_PROPERTY(bool analyzing READ analyzing NOTIFY changed)
     Q_PROPERTY(bool pending READ pending NOTIFY changed)
     Q_PROPERTY(bool hasReview READ hasReview NOTIFY changed)
     Q_PROPERTY(bool editingExisting READ editingExisting NOTIFY changed)
@@ -22,6 +23,11 @@ class WorkflowController : public QObject {
     Q_PROPERTY(QUrl sourceUrl READ sourceUrl NOTIFY changed)
     Q_PROPERTY(QUrl overlayUrl READ overlayUrl NOTIFY changed)
     Q_PROPERTY(QUrl modelPackage READ modelPackage NOTIFY changed)
+    Q_PROPERTY(QString modelState READ modelState NOTIFY changed)
+    Q_PROPERTY(QString modelStatus READ modelStatus NOTIFY changed)
+    Q_PROPERTY(bool modelReady READ modelReady NOTIFY changed)
+    Q_PROPERTY(int progressCompleted READ progressCompleted NOTIFY changed)
+    Q_PROPERTY(int progressTotal READ progressTotal NOTIFY changed)
     Q_PROPERTY(QVariantList candidates READ candidates NOTIFY changed)
     Q_PROPERTY(int activeIndex READ activeIndex NOTIFY changed)
     Q_PROPERTY(int imageWidth READ imageWidth NOTIFY changed)
@@ -58,6 +64,10 @@ class WorkflowController : public QObject {
     std::optional<DocumentSnapshot> paintBase_;
     QUrl sourceUrl_,overlayUrl_,modelPackage_;
     QString message_;
+    QString modelState_{QStringLiteral("MissingModel")};
+    QString modelStatus_;
+    std::optional<QJsonObject> modelReceipt_;
+    int progressCompleted_{},progressTotal_{};
     int activeIndex_{-1};
     unsigned overlayVersion_{};
     bool pending_{};
@@ -70,6 +80,8 @@ class WorkflowController : public QObject {
     bool startAnalysis(const QUrl&,bool);
     bool loadPaintResult(const DocumentSnapshot&);
     bool startPaintJob(QJsonObject);
+    bool loadModelResult(const DocumentSnapshot&);
+    void stopModelCheck(const QString&);
     void updateOverlay();
     void fail(const QString&);
     bool canRecordEdit();
@@ -77,6 +89,7 @@ class WorkflowController : public QObject {
     explicit WorkflowController(QtBridge&);
     ~WorkflowController() override;
     bool busy() const {return running_.has_value();}
+    bool analyzing() const {return running_ && running_->task=="image.review.sam21";}
     bool pending() const {return pending_;}
     bool hasReview() const {return review_.has_value();}
     bool editingExisting() const {return std::any_of(objects_.begin(),objects_.end(),[](NodeId id){return !id.empty();});}
@@ -84,6 +97,11 @@ class WorkflowController : public QObject {
     QUrl sourceUrl() const {return sourceUrl_;}
     QUrl overlayUrl() const {return overlayUrl_;}
     QUrl modelPackage() const {return modelPackage_;}
+    QString modelState() const {return modelState_;}
+    QString modelStatus() const {return modelStatus_;}
+    bool modelReady() const {return modelReceipt_.has_value() && modelState_==QLatin1String("Ready");}
+    int progressCompleted() const {return progressCompleted_;}
+    int progressTotal() const {return progressTotal_;}
     QVariantList candidates() const;
     int activeIndex() const {return activeIndex_;}
     int imageWidth() const {return review_?int(review_->masks().dimensions.width):0;}
@@ -97,6 +115,7 @@ class WorkflowController : public QObject {
     Q_INVOKABLE bool subtractIncluded();
     Q_INVOKABLE bool addBackgroundCandidate();
     Q_INVOKABLE void setModelPackage(const QUrl&);
+    Q_INVOKABLE bool checkModel();
     Q_INVOKABLE bool startImage(const QUrl&);
     Q_INVOKABLE void cancel();
     Q_INVOKABLE bool selectCandidate(int);

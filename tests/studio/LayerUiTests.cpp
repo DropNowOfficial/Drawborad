@@ -1,6 +1,9 @@
 #include "apps/studio/QtBridge.h"
 #include "platform/CanvasItem.h"
 #include "view/LayerTree.h"
+#include "ui/WorkflowController.h"
+#include "ui/ReviewJob.h"
+#include <QBuffer>
 #include <QDir>
 #include <QColor>
 #include <QGuiApplication>
@@ -17,6 +20,7 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <limits>
 #include <tuple>
 using namespace drawborad;
 namespace {
@@ -115,6 +119,18 @@ bool clickItem(QQuickWindow* window, QObject* root, const QString& name) {
     };
     auto item = find(window->contentItem());
     if (!item || !item->isVisible() || !item->isEnabled()) return false;
+    if (auto sidebar = window->findChild<QQuickItem*>("sidebar")) {
+        auto ancestor = item->parentItem();
+        while (ancestor && ancestor != sidebar) ancestor = ancestor->parentItem();
+        if (ancestor) {
+            const auto y = item->mapToItem(sidebar, {0, item->height() / 2}).y();
+            if (y < 0 || y > sidebar->height()) {
+                auto flick = sidebar->property("contentItem").value<QObject*>();
+                if (!flick || !flick->setProperty("contentY", flick->property("contentY").toDouble() + y - sidebar->height() / 2)) return false;
+                QCoreApplication::processEvents();
+            }
+        }
+    }
     QTest::mouseClick(window, Qt::LeftButton, {},
                       item->mapToScene({item->width() / 2, item->height() / 2}).toPoint());
     return true;
@@ -147,6 +163,156 @@ class LayerUiTests : public QObject {
     Q_OBJECT
   private slots:
     void init() { QTest::failOnWarning(QRegularExpression(".*")); }
+    void missingModelPreflightUsesWorkerWithoutChangingDocument() {
+        QtBridge bridge;
+        bridge.createDocument(64, 64, 300);
+        const auto before = *bridge.canvasSnapshot();
+        auto workflow = qobject_cast<WorkflowController*>(bridge.workflow());
+        QVERIFY(workflow);
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        workflow->setModelPackage(QUrl::fromLocalFile(directory.filePath("missing-model")));
+        QVERIFY(!workflow->modelReady());
+        QVERIFY(workflow->checkModel());
+        QVERIFY(workflow->busy());
+        QTRY_VERIFY_WITH_TIMEOUT(!workflow->busy(), 10000);
+        QCOMPARE(workflow->modelState(), QStringLiteral("MissingModel"));
+        QVERIFY(!workflow->modelReady());
+        QVERIFY(!workflow->startImage(QUrl::fromLocalFile(directory.filePath("missing.png"))));
+        QVERIFY(bridge.canvasSnapshot()->sameContent(before));
+    }
+    void zoomAndPanKeepMouseInputInDocumentCoordinates() {
+        QtBridge bridge;
+        bridge.createDocument(128, 128, 300);
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("studio", &bridge);
+        engine.load(QUrl::fromLocalFile(QStringLiteral(DRAWBORAD_SOURCE_DIR "/ui/Main.qml")));
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto window = qobject_cast<QQuickWindow*>(engine.rootObjects().front());
+        QVERIFY(window && QTest::qWaitForWindowExposed(window));
+        auto canvas = window->findChild<CanvasItem*>("nativeCanvas");
+        QVERIFY(canvas);
+        const auto before = *bridge.canvasSnapshot();
+        const auto anchor = QPointF(canvas->width() / 2, canvas->height() / 2);
+        QVERIFY(clickItem(window, window, "zoomInButton"));
+        QCOMPARE(canvas->zoom(), 1.25);
+        QVERIFY(canvas->zoomAt(1.6, anchor.x(), anchor.y()));
+        QCOMPARE(canvas->zoom(), 2.0);
+        QVERIFY(canvas->panBy(24, -18));
+        const auto scale = std::min(canvas->width() / 128, canvas->height() / 128) * 2;
+        const auto point = [&](double x, double y) {
+            return canvas->mapToScene({anchor.x() + 24 + (x - 64) * scale,
+                                       anchor.y() - 18 + (y - 64) * scale}).toPoint();
+        };
+        QTest::mousePress(window, Qt::LeftButton, {}, point(55, 60));
+        QTest::mouseMove(window, point(64, 60));
+        QTest::mouseRelease(window, Qt::LeftButton, {}, point(73, 60));
+        QTRY_COMPARE(bridge.canvasSnapshot()->eventIndex->size(), std::size_t(1));
+        const auto& stroke = bridge.canvasSnapshot()->eventIndex->front();
+        QVERIFY(std::abs(stroke.geometry.front().x - 55) < 1);
+        QVERIFY(std::abs(stroke.geometry.front().y - 60) < 1);
+        QVERIFY(std::abs(stroke.geometry.back().x - 73) < 1);
+        QVERIFY(std::abs(stroke.geometry.back().y - 60) < 1);
+        QVERIFY(!canvas->zoomAt(std::numeric_limits<double>::infinity(), 0, 0));
+        QVERIFY(!canvas->panBy(std::numeric_limits<double>::quiet_NaN(), 0));
+        QVERIFY(canvas->zoomAt(1000, anchor.x(), anchor.y()));
+        QVERIFY(canvas->zoom() <= 16);
+        canvas->fitDocument();
+        QCOMPARE(canvas->zoom(), 1.0);
+        QVERIFY(bridge.canvasSnapshot()->documentId == before.documentId);
+        bridge.createDocument(64, 96, 300);
+        QCOMPARE(canvas->zoom(), 1.0);
+        window->setProperty("approvedClose", true);
+        window->close();
+    }
+    void exifPreviewAndMaskEditsUseTheSameOrientedCoordinates() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        QImage original(96, 64, QImage::Format_RGB32);
+        for (int y = 0; y < 64; ++y)
+            for (int x = 0; x < 96; ++x)
+                original.setPixelColor(x, y, y < 32 ? (x < 48 ? Qt::red : Qt::green)
+                                                   : (x < 48 ? Qt::blue : Qt::yellow));
+        QByteArray encoded;
+        QBuffer buffer(&encoded);
+        QVERIFY(buffer.open(QIODevice::WriteOnly));
+        QVERIFY(original.save(&buffer, "JPEG", 100));
+        const auto exif = QByteArray::fromHex("45786966000049492a0008000000010012010300010000000600000000000000");
+        QByteArray marker = QByteArray::fromHex("ffe10000");
+        marker[2] = char((exif.size() + 2) >> 8);
+        marker[3] = char((exif.size() + 2) & 255);
+        marker += exif;
+        encoded.insert(2, marker);
+        const auto imagePath = directory.filePath("orientation-6.jpg");
+        QFile image(imagePath);
+        QVERIFY(image.open(QIODevice::WriteOnly));
+        QCOMPARE(image.write(encoded), qint64(encoded.size()));
+        image.close();
+        NewDocumentRequest request;
+        request.dimensions = {64, 96, Unit::Px, 300};
+        const auto spec = validateDocument(request, {});
+        QVERIFY(spec);
+        auto document = Document::create(spec.value(), Id::fromNumber(6800));
+        QVERIFY(document);
+        const auto source = jsonResource({{"type", SourceReferenceType}, {"image", imagePath},
+            {"sourceHash", QString::fromStdString(sha256(std::span(reinterpret_cast<const std::uint8_t*>(encoded.constData()), std::size_t(encoded.size()))).hex())},
+            {"width", 64}, {"height", 96}});
+        Bytes pixels(64 * 96, 0);
+        for (unsigned y = 0; y < 48; ++y)
+            for (unsigned x = 0; x < 32; ++x) pixels[y * 64 + x] = 255;
+        Resource mask{sha256(pixels), ResourceKind::Mask, std::make_shared<const Bytes>(pixels), {source.id}};
+        LayerNode object;
+        object.id = Id::fromNumber(6801); object.parent = Document::rootId();
+        object.kind = NodeKind::Object; object.name = "Oriented blue corner"; object.maskId = mask.id;
+        LayerNode layer;
+        layer.id = Id::fromNumber(6802); layer.parent = object.id; layer.objectId = object.id; layer.name = "Paint";
+        Command setup;
+        setup.operations = {InstallResource{source}, InstallResource{mask}, AddNode{object}, AddNode{layer}};
+        QVERIFY(document.value().apply(setup, 0));
+        const auto path = QUrl::fromLocalFile(directory.filePath("oriented.draw"));
+        QVERIFY(ProjectStore{}.save(std::filesystem::path(path.toLocalFile().toStdWString()), document.value().snapshot()));
+        QtBridge bridge;
+        bridge.openUrl(path);
+        auto workflow = qobject_cast<WorkflowController*>(bridge.workflow());
+        QVERIFY(workflow && workflow->hasReview());
+        QCOMPARE(workflow->imageWidth(), 64);
+        QCOMPARE(workflow->imageHeight(), 96);
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("studio", &bridge);
+        engine.load(QUrl::fromLocalFile(QStringLiteral(DRAWBORAD_SOURCE_DIR "/ui/Main.qml")));
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto window = qobject_cast<QQuickWindow*>(engine.rootObjects().front());
+        QVERIFY(window && QTest::qWaitForWindowExposed(window));
+        auto sourceItem = qmlObject(window, "analysisSource");
+        auto overlay = qmlObject(window, "maskOverlay");
+        QVERIFY(sourceItem && overlay);
+        QTRY_COMPARE(sourceItem->property("status").toInt(), 1);
+        QTRY_COMPARE(overlay->property("status").toInt(), 1);
+        QVERIFY(std::abs(sourceItem->property("paintedWidth").toDouble() /
+                         sourceItem->property("paintedHeight").toDouble() - 2.0 / 3.0) < .01);
+        QCOMPARE(sourceItem->property("paintedWidth"), overlay->property("paintedWidth"));
+        QCOMPARE(sourceItem->property("paintedHeight"), overlay->property("paintedHeight"));
+        QVERIFY(qmlObject(window, "maskTool")->setProperty("currentIndex", 2));
+        auto editor = window->findChild<QQuickItem*>("maskEditor");
+        QVERIFY(editor);
+        const auto snapshot = *bridge.canvasSnapshot();
+        QTRY_VERIFY(pixel(window, editor, snapshot, {12, 15}).blue() >
+                    pixel(window, editor, snapshot, {12, 15}).red() + 100);
+        QTRY_VERIFY(pixel(window, editor, snapshot, {48, 15}).red() >
+                    pixel(window, editor, snapshot, {48, 15}).blue() + 100);
+        QTest::mousePress(window, Qt::LeftButton, {}, canvasPoint(editor, {8, 10}, snapshot));
+        QTest::mouseRelease(window, Qt::LeftButton, {}, canvasPoint(editor, {16, 20}, snapshot));
+        QVERIFY(workflow->accept());
+        const auto accepted = *bridge.canvasSnapshot();
+        const auto& edited = *accepted.resources->at(accepted.nodes->at(object.id).maskId).bytes;
+        QCOMPARE(edited[15 * 64 + 12], std::uint8_t(0));
+        QCOMPARE(edited[30 * 64 + 20], std::uint8_t(255));
+        bridge.saveUrl(path);
+        QVERIFY(!bridge.dirty());
+        bridge.openUrl(path);
+        QVERIFY(bridge.canvasSnapshot()->sameContent(accepted));
+        QVERIFY(window->close());
+    }
     void closeAndSaveFlow_data() {
         QTest::addColumn<QString>("action");
         for (const auto* action : {"save", "cancel-save", "failed-save", "manual-save",

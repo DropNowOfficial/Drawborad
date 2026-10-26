@@ -1,38 +1,86 @@
-name: Drawborad Windows Alpha portable
+name: RC1 UI-only candidate (preinstalled codec SDK required, not Windows 11 qualified)
 on:
-  push:
-    branches: [alpha/windows-portable-20261008]
   workflow_dispatch:
+    inputs:
+      expected_commit:
+        description: Exact full SHA at the tip of release/win11-integrated-alpha-rc1
+        required: true
+        type: string
+      native_sdk_root:
+        description: Existing runner-local SDK directory containing x64-windows; empty means Blocked
+        required: false
+        type: string
+        default: ''
+      cmake_toolchain_file:
+        description: Existing runner-local vcpkg.cmake path; empty means Blocked
+        required: false
+        type: string
+        default: ''
 permissions:
   contents: read
 concurrency:
-  group: drawborad-windows-alpha-${{ github.ref }}
+  group: drawborad-rc1-ui-only-${{ github.ref }}
   cancel-in-progress: false
 jobs:
   package-windows-alpha:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/release/win11-integrated-alpha-rc1' && github.sha == inputs.expected_commit
     runs-on: windows-2022
-    timeout-minutes: 90
+    timeout-minutes: 60
+    env:
+      EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+      RC1_NATIVE_SDK_ROOT: ${{ inputs.native_sdk_root }}
+      RC1_TOOLCHAIN_FILE: ${{ inputs.cmake_toolchain_file }}
     steps:
-      - name: Checkout exactly the candidate source
+      - name: Checkout exactly the requested candidate
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.expected_commit }}
           persist-credentials: false
+      - name: Require preinstalled native codec SDK before installing dependencies
+        id: native_sdk_preflight
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path out/alpha/evidence -Force | Out-Null
+          $request = @{ root = $env:RC1_NATIVE_SDK_ROOT; toolchain = $env:RC1_TOOLCHAIN_FILE }
+          $request | ConvertTo-Json | Set-Content out/alpha/evidence/native-sdk-request.json -Encoding utf8
+          if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+            @{ status = 'Blocked'; blockers = @('Preinstalled Python is required for the SDK preflight') } | ConvertTo-Json | Set-Content out/alpha/evidence/NATIVE_SDK_PREFLIGHT.json -Encoding utf8
+            throw 'Blocked: preinstalled Python is missing; Qt installation has not started.'
+          }
+          python .\tools\windows\alpha_release.py codec-sdk --input out/alpha/evidence/native-sdk-request.json --output out/alpha/evidence/NATIVE_SDK_PREFLIGHT.json
+          if ($LASTEXITCODE -ne 0) { throw 'Blocked: preinstalled codec SDK/toolchain is missing or incomplete. Use the documented local offline build; Qt installation has not started.' }
+      - name: Prepare Python for the complete test suite
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install the test parser
+        run: python -m pip install --disable-pip-version-check PyYAML==6.0.2
       - name: Install Qt 6.12 for MSVC 2022
         uses: jurplel/install-qt-action@v4.2.0
         with:
           version: '6.12.0'
           arch: win64_msvc2022_64
           cache: false
-      - name: Build, deploy, validate and archive portable Alpha
+      - name: Build and verify an explicitly UI-only candidate
         shell: pwsh
         run: |
-          .\tools\windows\Build-Alpha.ps1 -QtRoot "$env:QT_ROOT_DIR"
-      - name: Upload versioned ZIP and checksum
+          .\tools\windows\Build-Alpha.ps1 -UiOnly -QtRoot "$env:QT_ROOT_DIR" -ExpectedCommit "$env:EXPECTED_COMMIT" -CMakeToolchainFile "$env:RC1_TOOLCHAIN_FILE" -VcpkgInstalledDir "$env:RC1_NATIVE_SDK_ROOT"
+      - name: Preserve build and test evidence even when packaging fails
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Drawborad-Windows-Alpha-${{ github.sha }}
+          name: Drawborad-RC1-UIOnly-evidence-${{ github.sha }}
+          path: out/alpha/evidence/**
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload UI-only ZIP, checksum and final extracted-package smoke
+        uses: actions/upload-artifact@v4
+        with:
+          name: Drawborad-RC1-UIOnly-NOT-Win11-qualified-${{ github.sha }}
           path: |
-            out/alpha/Drawborad-Alpha-Win11-x64-*.zip
-            out/alpha/Drawborad-Alpha-Win11-x64-*.sha256.txt
+            out/alpha/Drawborad-Alpha-Win11-x64-UIOnly-*.zip
+            out/alpha/Drawborad-Alpha-Win11-x64-UIOnly-*.sha256.txt
+            out/alpha/Drawborad-Alpha-Win11-x64-UIOnly-*.smoke.json
           if-no-files-found: error
           retention-days: 14
