@@ -137,6 +137,12 @@ ApplicationWindow {
             width: sidebar.availableWidth
             spacing: 12
             Label { text: qsTr("图像 → 对象审阅"); color: "#f5f5f7"; font.pixelSize: 22 }
+            Label { text: qsTr("SAM 3 · 按名称自动分割对象"); color: "#f5f5f7"; font.pixelSize: 17 }
+            Label { text: qsTr("按背景到前景输入对象类别，逗号分隔。识别后进入原生蒙版审阅和绘画。"); color: "#b5b5bd"; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            TextField { id: sam3Prompts; objectName: "sam3ObjectPrompts"; text: "wooden table, saucer, coffee cup, spoon"; Layout.fillWidth: true }
+            Button { objectName: "runSam3Button"; text: qsTr("SAM 3 自动识别 / 分层"); enabled: !studio.busy; onClicked: sam3ImageDialog.open() }
+            Button { objectName: "importSemanticButton"; text: qsTr("导入 SAM 3 分层结果"); enabled: !studio.busy; onClicked: sam3ManifestDialog.open() }
+            Label { text: qsTr("本地模型需先设置 DRAWBORAD_SAM3_CHECKPOINT；不上传图像。"); color: "#a5a5ae"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Button { objectName: "chooseModelButton"; text: qsTr("选择本地 SAM 模型包"); enabled: !studio.busy; onClicked: modelFolderDialog.open() }
             Button { objectName: "checkModelButton"; text: qsTr("检查模型与 CPU 推理"); enabled: !studio.busy && studio.workflow.modelPackage.toString().length > 0; onClicked: studio.workflow.checkModel() }
             Label { objectName: "modelReadinessStatus"; text: studio.workflow.modelState + " · " + studio.workflow.modelStatus; color: studio.workflow.modelReady ? "#a2dbbc" : "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
@@ -274,6 +280,8 @@ ApplicationWindow {
         }
     }
     FolderDialog { id: modelFolderDialog; title: qsTr("选择含 manifest.json / encoder.onnx / decoder.onnx 的本地模型包"); onAccepted: studio.workflow.setModelPackage(selectedFolder) }
+    FileDialog { id: sam3ImageDialog; title: qsTr("选择要由 SAM 3 识别的图像"); nameFilters: ["PNG/JPEG (*.png *.jpg *.jpeg)"]; onAccepted: { workspaceTabs.currentIndex = 0; studio.workflow.startSam3Image(selectedFile, sam3Prompts.text) } }
+    FileDialog { id: sam3ManifestDialog; title: qsTr("导入 SAM 3 分层结果 manifest.json"); nameFilters: ["JSON manifest (*.json)"]; onAccepted: { workspaceTabs.currentIndex = 0; studio.workflow.importSemanticManifest(selectedFile) } }
     FileDialog { id: analysisImageDialog; title: qsTr("导入图片进行真实对象分割与审阅"); nameFilters: ["PNG/JPEG (*.png *.jpg *.jpeg)"]; onAccepted: { workspaceTabs.currentIndex = 0; studio.workflow.startImage(selectedFile) } }
     Dialog {
         id: replaceReviewDialog; anchors.centerIn: parent; modal: true; title: qsTr("保留还是替换当前审阅？"); standardButtons: Dialog.Ok | Dialog.Cancel
