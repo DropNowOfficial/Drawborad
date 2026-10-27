@@ -59,6 +59,7 @@ def infer_candidates(processor: Any, image: Image.Image, prompts: Sequence[str],
         if masks.ndim != 3 or masks.shape[0] != scores.shape[0] or masks.shape[1:] != (image.height, image.width):
             raise ValueError(f"invalid SAM 3 output tensor shape for {phrase}")
         matches = sorted(zip(scores, masks), key=lambda x: -float(x[0]))
+        instances: list[Candidate] = []
         for rank, (raw_score, raw_mask) in enumerate(matches, 1):
             score = float(raw_score)
             if not math.isfinite(score) or score < 0 or score > 1:
@@ -66,9 +67,12 @@ def infer_candidates(processor: Any, image: Image.Image, prompts: Sequence[str],
             mask = np.asarray(raw_mask) > 0.5
             if score >= min_score and int(mask.sum()) >= min_pixels:
                 name = phrase if len(matches) == 1 else f"{phrase} {rank}"
-                found.append(Candidate(name, score, mask))
-                if len(found) >= MAX_LAYERS - 1:
-                    raise ValueError("too many instances; narrow the prompts")
+                instances.append(Candidate(name, score, mask))
+        # The partition is resolved last-to-first. Within the *same* semantic
+        # prompt, high confidence must win overlap, never the weaker instance.
+        found.extend(reversed(instances))
+        if len(found) > MAX_LAYERS - 1:
+            raise ValueError("too many instances; narrow the prompts")
     return found
 
 
@@ -123,35 +127,46 @@ def write_semantic_manifest(source: Path, output: Path, layers: Sequence[Candida
     with Image.open(source) as img:
         img.verify()
     with Image.open(source) as img:
-        width, height = ImageOps.exif_transpose(img).size
+        oriented = ImageOps.exif_transpose(img)
+        width, height = oriented.size
+        visible = (np.asarray(oriented.getchannel("A")) > 0 if "A" in oriented.getbands()
+                   else np.ones((height, width), dtype=bool))
+    if backend != "sam3-image":
+        raise ValueError("unrecognized model backend")
     if not layers or len(layers) > MAX_LAYERS or width * height > MAX_PIXELS:
         raise ValueError("empty or oversized layer document")
+    ext = source.suffix.lower()
+    if ext not in (".png", ".jpg", ".jpeg"):
+        raise ValueError("native pipeline accepts PNG or JPEG source")
+    assigned = np.zeros((height, width), dtype=bool)
+    for layer in layers:
+        if np.asarray(layer.mask).shape != (height, width):
+            raise ValueError("layer/source dimension mismatch")
+        if not layer.name or len(layer.name) > 128 or not math.isfinite(layer.score) or not 0 <= layer.score <= 1:
+            raise ValueError("invalid semantic layer fields")
+        arr = np.asarray(layer.mask, dtype=bool)
+        if not arr.any():
+            raise ValueError("empty semantic layer")
+        if np.any(assigned & arr):
+            raise ValueError("layer masks overlap")
+        assigned |= arr
+    if not np.array_equal(assigned, visible):
+        raise ValueError("semantic layers must exactly cover visible pixels")
     if output.exists() and any(output.iterdir()):
         raise ValueError("output directory must be empty")
     output.mkdir(parents=True, exist_ok=True)
     (output / "masks").mkdir(exist_ok=True)
-    ext = source.suffix.lower()
-    if ext not in (".png", ".jpg", ".jpeg"):
-        raise ValueError("native pipeline accepts PNG or JPEG source")
     image_name = f"source{ext}"
     shutil.copyfile(source, output / image_name)
     serialized = []
-    assigned = np.zeros((height, width), dtype=bool)
     for index, layer in enumerate(layers):
-        if np.asarray(layer.mask).shape != (height, width):
-            raise ValueError("layer/source dimension mismatch")
         arr = np.asarray(layer.mask, dtype=bool)
-        if np.any(assigned & arr):
-            raise ValueError("layer masks overlap")
-        assigned |= arr
         content = np.where(arr, 255, 0).astype(np.uint8).tobytes()
         filename = f"masks/layer-{index:02d}.u8"
         (output / filename).write_bytes(content)
         serialized.append({"name":layer.name,"score":float(layer.score),"mask":filename,
                            "sha256":hashlib.sha256(content).hexdigest(),
                            "pixels":int(arr.sum()),"isBackground":bool(layer.is_background)})
-    if not assigned.any():
-        raise ValueError("no image pixels assigned")
     src_hash = hashlib.sha256(source.read_bytes()).hexdigest()
     result = {"schema":1,"backend":backend,"image":image_name,"sourceSha256":src_hash,
               "width":width,"height":height,"promptOrder":"back-to-front",
