@@ -32,7 +32,7 @@ Result<Bytes> maskFile(const QDir& directory,const QString& relative,
                        std::size_t pixels,const QString& expectedHash) {
     if(!simpleLocalPath(relative,true))return error(ErrorCode::PathEscape,"semantic.mask-path");
     QFile file(directory.filePath(relative));
-    if(QFileInfo(file).isSymLink())return error(ErrorCode::PathEscape,"semantic.mask-symlink");
+    if(QFileInfo(directory.filePath(relative)).isSymLink())return error(ErrorCode::PathEscape,"semantic.mask-symlink");
     if(!file.open(QIODevice::ReadOnly) || file.size()!=qint64(pixels))
         return error(ErrorCode::InvalidInput,"semantic.mask-size");
     const QByteArray contents=file.readAll();
