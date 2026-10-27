@@ -215,6 +215,16 @@ bool WorkflowController::importSemanticManifest(const QUrl& url) {
     message_=tr("已载入 %1 个带名称的独立对象层。请检查后点击“接受对象”，再执行“生成笔迹”。").arg(names_.size());
     emit changed();return true;
 }
+void WorkflowController::setSam3Checkpoint(const QUrl& url) {
+    if(busy() || !url.isLocalFile())return;
+    const QFileInfo info(url.toLocalFile());
+    if(!info.isFile() || info.size()<=0 || info.suffix().toLower()!=QLatin1String("pt")){
+        fail(tr("请选择本地 SAM 3 图像模型 .pt 权重。"));return;
+    }
+    sam3Checkpoint_=url;
+    message_=tr("已选择本地 SAM 3 图像模型。推理时按图像内容逐对象检测，不会上传图片。");
+    emit changed();
+}
 bool WorkflowController::startSam3Image(const QUrl& url,const QString& promptList) {
     if(busy() || bridge_.running_ || !url.isLocalFile())return false;
     const QFileInfo image(url.toLocalFile());
@@ -229,7 +239,7 @@ bool WorkflowController::startSam3Image(const QUrl& url,const QString& promptLis
     }
     // We do not run executable instructions from a .draw file. This command
     // is explicitly invoked by the user with a local checkpoint and script.
-    const QString checkpoint=qEnvironmentVariable("DRAWBORAD_SAM3_CHECKPOINT");
+    const QString checkpoint=sam3Checkpoint_.isLocalFile()?sam3Checkpoint_.toLocalFile():qEnvironmentVariable("DRAWBORAD_SAM3_CHECKPOINT");
     const QString python=qEnvironmentVariable("DRAWBORAD_SAM3_PYTHON",QStringLiteral("python"));
     const QString script=qEnvironmentVariable("DRAWBORAD_SAM3_SCRIPT",
         QCoreApplication::applicationDirPath()+QStringLiteral("/sam3_semantic.py"));
