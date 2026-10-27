@@ -129,7 +129,11 @@ def write_semantic_manifest(source: Path, output: Path, layers: Sequence[Candida
     with Image.open(source) as img:
         oriented = ImageOps.exif_transpose(img)
         width, height = oriented.size
-        visible = (np.asarray(oriented.getchannel("A")) > 0 if "A" in oriented.getbands()
+        alpha = (np.asarray(oriented.getchannel("A")) if "A" in oriented.getbands()
+                 else None)
+        if alpha is not None and np.any((alpha != 0) & (alpha != 255)):
+            raise ValueError("partial alpha is not yet supported by native brush reconstruction")
+        visible = (alpha > 0 if alpha is not None
                    else np.ones((height, width), dtype=bool))
     if backend != "sam3-image":
         raise ValueError("unrecognized model backend")
@@ -199,6 +203,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         alpha = None
         if "A" in source.getbands():
             alpha = np.asarray(ImageOps.exif_transpose(source).getchannel("A"))
+            if np.any((alpha != 0) & (alpha != 255)):
+                parser.error("partial alpha PNG is not supported by the native brushstroke pipeline")
     # Imported only after validating arguments so test environments need not
     # install a 848M-parameter model or GPU just to validate the file format.
     from sam3.model_builder import build_sam3_image_model
