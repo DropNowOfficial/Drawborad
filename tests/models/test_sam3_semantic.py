@@ -57,7 +57,7 @@ def test_manifest_preserves_source_hash_and_separate_mask_hashes(tmp_path):
     cup = np.zeros((3, 4),bool); cup[1,1] = True
     layers = build_semantic_partition([candidate("cup",cup)], (3,4))
     output = tmp_path / "export"
-    manifest_path = write_semantic_manifest(src, output, layers, "sam3", ["cup"])
+    manifest_path = write_semantic_manifest(src, output, layers, "sam3-image", ["cup"])
     manifest = json.loads(manifest_path.read_text())
     assert manifest["schema"] == 1
     assert manifest["sourceSha256"] == hashlib.sha256(src.read_bytes()).hexdigest()
@@ -83,3 +83,41 @@ def test_refuses_empty_or_invalid_inputs(tmp_path):
         build_semantic_partition([candidate("bad", np.zeros((2,2)))], (3, 4))
     with pytest.raises(ValueError):
         build_semantic_partition([candidate("", np.ones((3,4)))], (3, 4))
+
+
+def test_highest_confidence_instance_wins_same_prompt_overlap():
+    class TwoCups:
+        def set_image(self, image):
+            return {"image": image}
+        def set_text_prompt(self, state, prompt):
+            mask = np.zeros((2, 1, 3, 4), dtype=np.float32)
+            mask[0, 0, 1, 1] = 1  # strong detection
+            mask[1, 0, 1, 1:3] = 1  # weaker detection overlaps
+            return {"masks": mask, "scores": np.asarray([0.95, 0.65])}
+    image = Image.fromarray(np.zeros((3, 4, 3), dtype=np.uint8))
+    detections = infer_candidates(TwoCups(), image, ["cup"], min_pixels=1)
+    layers = build_semantic_partition(detections, (3, 4))
+    by_name = {x.name: x.mask for x in layers}
+    assert by_name["cup 1"][1, 1]
+    assert not by_name["cup 2"][1, 1]
+    assert by_name["cup 2"][1, 2]
+
+
+def test_export_rejects_missing_visible_pixels_before_writing(tmp_path):
+    source = tmp_path / "source.png"
+    Image.fromarray(np.zeros((3, 4, 3), dtype=np.uint8)).save(source)
+    partial = np.zeros((3, 4), dtype=bool)
+    partial[0, 0] = True
+    out = tmp_path / "incomplete"
+    with pytest.raises(ValueError, match="cover"):
+        write_semantic_manifest(source, out, [candidate("cup", partial)], "sam3-image", ["cup"])
+    assert not out.exists()
+
+
+def test_export_rejects_inconsistent_backend_before_writing(tmp_path):
+    source = tmp_path / "source.png"
+    Image.fromarray(np.zeros((2, 2, 3), dtype=np.uint8)).save(source)
+    with pytest.raises(ValueError, match="backend"):
+        write_semantic_manifest(source, tmp_path / "wrong-backend",
+                                [candidate("all", np.ones((2, 2), bool))],
+                                "sam3", ["all"])
