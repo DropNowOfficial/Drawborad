@@ -2,10 +2,13 @@
 #include "ReviewJob.h"
 #include "ReconstructionJob.h"
 #include "PaintedDocument.h"
+#include "SemanticManifest.h"
 #include "codecs/ImageReader.h"
 #include "apps/studio/QtBridge.h"
 #include "storage/ProjectCodec.h"
 #include <QCoreApplication>
+#include <QRegularExpression>
+#include <QProcess>
 #include <QDir>
 #include <QFile>
 #include <QImage>
@@ -60,7 +63,10 @@ WorkflowController::WorkflowController(QtBridge& bridge)
     modelStatus_=package.isEmpty()?tr("请选择本地模型包。"):tr("已选择模型包；尚未检查 CPU 推理。");
     poll_.setInterval(25);connect(&poll_,&QTimer::timeout,this,&WorkflowController::poll);poll_.start();
 }
-WorkflowController::~WorkflowController(){if(running_) broker_.workerFailed(running_->id);}
+WorkflowController::~WorkflowController(){
+    if(semanticProcess_){semanticProcess_->disconnect(this);semanticProcess_->kill();semanticProcess_->waitForFinished(3000);}
+    if(running_) broker_.workerFailed(running_->id);
+}
 void WorkflowController::fail(const QString& text){message_=text;emit changed();}
 void WorkflowController::setModelPackage(const QUrl& url){
     if(busy() || bridge_.running_ || !url.isLocalFile()) return;
@@ -176,6 +182,116 @@ bool WorkflowController::addBackgroundCandidate(){
     reviewAudit_.append(QJsonObject{{"operation","explicit-remaining-background-proposal"},{"sourceAlphaPreserved",true}});
     pending_=true;message_=tr("背景候选已生成但尚未接受。请检查它是否误含未识别的前景；需要时先修正对象，再明确勾选。" );updateOverlay();emit changed();return true;
 }
+
+bool WorkflowController::importSemanticManifest(const QUrl& url) {
+    if(busy() || bridge_.running_)return false;
+    const auto parsed=loadSemanticMaskManifest(url);
+    if(!parsed){fail(tr("AI 分层工程校验失败：%1").arg(QString::fromStdString(parsed.error().messageKey)));return false;}
+    // No partially-installed candidate state on a bad manifest.
+    auto review=ReviewSession::create(parsed.value().proposals,parsed.value().masks,0);
+    if(!review){fail(QString::fromStdString(review.error().messageKey));return false;}
+    const auto pinned=pinSource(parsed.value().sourceReference,directory_->path());
+    if(pinned.isEmpty()){fail(tr("原图丢失或哈希变化；分层没有被导入。"));return false;}
+    const auto current=bridge_.canvasSnapshot();
+    sourceMetadata_=jsonResource(parsed.value().sourceReference);
+    sourceUrl_=pinned;
+    review_=std::move(review.value());
+    names_=parsed.value().names;
+    scores_=parsed.value().scores;
+    background_=parsed.value().background;
+    selected_.assign(names_.size(),true);
+    objects_.assign(names_.size(),{});
+    baseMasks_.assign(names_.size(),{});
+    undoUi_.clear();
+    activeIndex_=0;
+    pending_=true;
+    baseDocument_=current?std::optional<DocumentId>{current->documentId}:std::nullopt;
+    baseRevision_=current?current->revision:0;
+    promptPoints_.clear();promptBox_.reset();
+    reviewAudit_=QJsonArray{QJsonObject{{"operation","sam3-semantic-proposals"},
+        {"backend",parsed.value().backend},{"candidates",int(names_.size())},
+        {"humanQualityApproval",false}}};
+    updateOverlay();
+    message_=tr("已载入 %1 个带名称的独立对象层。请检查后点击“接受对象”，再执行“生成笔迹”。").arg(names_.size());
+    emit changed();return true;
+}
+void WorkflowController::setSam3Checkpoint(const QUrl& url) {
+    if(busy() || !url.isLocalFile())return;
+    const QFileInfo info(url.toLocalFile());
+    if(!info.isFile() || info.size()<=0 || info.suffix().toLower()!=QLatin1String("pt")){
+        fail(tr("请选择本地 SAM 3 图像模型 .pt 权重。"));return;
+    }
+    sam3Checkpoint_=url;
+    message_=tr("已选择本地 SAM 3 图像模型。推理时按图像内容逐对象检测，不会上传图片。");
+    emit changed();
+}
+bool WorkflowController::startSam3Image(const QUrl& url,const QString& promptList) {
+    if(busy() || bridge_.running_ || !url.isLocalFile())return false;
+    const QFileInfo image(url.toLocalFile());
+    if(!image.isFile() || image.size()<=0 || image.size()>32*1024*1024){
+        fail(tr("请选择小于 32MB 的本地 PNG/JPEG 图像。"));return false;
+    }
+    auto prompts=promptList.split(QRegularExpression(QStringLiteral("[,，;；\\n]+")),Qt::SkipEmptyParts);
+    for(auto& prompt:prompts)prompt=prompt.trimmed();
+    if(prompts.isEmpty() || prompts.size()>63 ||
+       std::any_of(prompts.begin(),prompts.end(),[](const QString& p){return p.isEmpty() || p.size()>128;})){
+        fail(tr("请输入 1–63 个短物体名称，按背景到前景排序，例如 wood table, saucer, cup, spoon。"));return false;
+    }
+    // We do not run executable instructions from a .draw file. This command
+    // is explicitly invoked by the user with a local checkpoint and script.
+    const QString checkpoint=sam3Checkpoint_.isLocalFile()?sam3Checkpoint_.toLocalFile():qEnvironmentVariable("DRAWBORAD_SAM3_CHECKPOINT");
+    const QString python=qEnvironmentVariable("DRAWBORAD_SAM3_PYTHON",QStringLiteral("python"));
+    const QString script=qEnvironmentVariable("DRAWBORAD_SAM3_SCRIPT",
+        QCoreApplication::applicationDirPath()+QStringLiteral("/sam3_semantic.py"));
+    const QString device=qEnvironmentVariable("DRAWBORAD_SAM3_DEVICE",QStringLiteral("cuda"));
+    if(checkpoint.isEmpty() || !QFileInfo(checkpoint).isFile() || !QFileInfo(script).isFile() ||
+       (device!="cpu" && device!="cuda")){
+        fail(tr("需要本地 SAM 3 图像模型检查点与脚本。请设置 DRAWBORAD_SAM3_CHECKPOINT；脚本默认在应用目录。"));return false;
+    }
+    auto directory=std::make_unique<QTemporaryDir>();
+    if(!directory->isValid()){fail(tr("无法创建本地语义分层任务目录。"));return false;}
+    const auto current=bridge_.canvasSnapshot();
+    semanticBaseDocument_=current?std::optional<DocumentId>{current->documentId}:std::nullopt;
+    semanticBaseRevision_=current?current->revision:0;
+    semanticDirectory_=std::move(directory);
+    semanticCancelled_=false;
+    semanticBusy_=true;
+    auto* process=new QProcess(this);
+    semanticProcess_=process;
+    QStringList args{script,"--input",image.absoluteFilePath(),"--output",
+        semanticDirectory_->path(),"--checkpoint",checkpoint,"--device",device};
+    for(const auto& prompt:prompts)args<<"--prompt"<<prompt;
+    connect(process,&QProcess::errorOccurred,this,[this,process](QProcess::ProcessError reason){
+        if(reason!=QProcess::FailedToStart || semanticProcess_!=process)return;
+        semanticBusy_=false;semanticProcess_=nullptr;semanticDirectory_.reset();
+        process->deleteLater();fail(tr("SAM 3 解释器无法启动：%1").arg(process->errorString()));
+    });
+    connect(process,QOverload<int,QProcess::ExitStatus>::of(&QProcess::finished),
+            this,[this,process](int exitCode,QProcess::ExitStatus status){
+        if(semanticProcess_!=process)return;
+        const QString diagnostics=QString::fromUtf8(process->readAllStandardError()).right(1800);
+        const QString manifest=semanticDirectory_?QDir(semanticDirectory_->path()).filePath("manifest.json"):QString();
+        semanticBusy_=false;semanticProcess_=nullptr;
+        process->deleteLater();
+        if(semanticCancelled_){semanticDirectory_.reset();message_=tr("已取消 SAM 3 识别；原工程未改变。");emit changed();return;}
+        if(status!=QProcess::NormalExit || exitCode!=0){
+            semanticDirectory_.reset();fail(tr("SAM 3 推理失败（%1）：%2").arg(exitCode).arg(diagnostics));return;
+        }
+        const auto current=bridge_.canvasSnapshot();
+        const auto id=current?std::optional<DocumentId>{current->documentId}:std::nullopt;
+        if(id!=semanticBaseDocument_ || (current && current->revision!=semanticBaseRevision_)){
+            semanticDirectory_.reset();fail(tr("AI 推理期间工程已变化；未覆盖新的笔迹。"));return;
+        }
+        const bool ok=importSemanticManifest(QUrl::fromLocalFile(manifest));
+        semanticDirectory_.reset();
+        if(!ok)return;
+    });
+    process->setProcessChannelMode(QProcess::SeparateChannels);
+    process->start(python,args);
+    message_=tr("正在以本地 SAM 3 图像模型按语义识别对象。结束后可在原生审阅中检查各图层。");
+    emit changed();return true;
+}
+
 bool WorkflowController::startImage(const QUrl& url){return startAnalysis(url,false);}
 bool WorkflowController::startAnalysis(const QUrl& url,bool prompted){
     if(busy() || bridge_.running_)return false;
@@ -210,7 +326,10 @@ bool WorkflowController::startAnalysis(const QUrl& url,bool prompted){
     analysis_=std::move(document.value());jobDirectory_=std::move(directory);running_=std::move(job);progressCompleted_=0;progressTotal_=0;
     message_=tr("正在校验并加载本地模型；原工程保持不变，可取消。" );emit changed();return true;
 }
-void WorkflowController::cancel(){if(running_){broker_.cancel(running_->id);message_=tr("正在取消；保留当前工程和已有审阅。" );emit changed();}}
+void WorkflowController::cancel(){
+    if(semanticProcess_ && semanticBusy_){semanticCancelled_=true;semanticProcess_->kill();message_=tr("正在取消 SAM 3 推理；原工程保留。");emit changed();return;}
+    if(running_){broker_.cancel(running_->id);message_=tr("正在取消；保留当前工程和已有审阅。" );emit changed();}
+}
 void WorkflowController::poll(){
     if(!running_)return;
     broker_.poll();const auto status=broker_.status(running_->id);
@@ -425,6 +544,8 @@ bool WorkflowController::accept(){
     message_=tr("已应用勾选对象和蒙版；已有笔迹保留，新增绘制层为空。未勾选的已有对象保持原样。");emit changed();return true;
 }
 void WorkflowController::reset(){
+    if(semanticProcess_){semanticCancelled_=true;semanticProcess_->disconnect(this);semanticProcess_->kill();semanticProcess_->deleteLater();semanticProcess_=nullptr;}
+    semanticBusy_=false;semanticDirectory_.reset();semanticBaseDocument_.reset();semanticBaseRevision_=0;
     stopModelCheck(tr("模型检查已停止；请重新检查后再导入。"));
     if(running_)broker_.workerFailed(running_->id);
     running_.reset();analysis_.reset();jobDirectory_.reset();review_.reset();names_.clear();scores_.clear();selected_.clear();objects_.clear();baseMasks_.clear();sourceMetadata_.reset();undoUi_.clear();

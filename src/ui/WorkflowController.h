@@ -8,6 +8,7 @@
 #include <QVariantList>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QProcess>
 #include <algorithm>
 namespace drawborad {
 class QtBridge;
@@ -23,6 +24,7 @@ class WorkflowController : public QObject {
     Q_PROPERTY(QUrl sourceUrl READ sourceUrl NOTIFY changed)
     Q_PROPERTY(QUrl overlayUrl READ overlayUrl NOTIFY changed)
     Q_PROPERTY(QUrl modelPackage READ modelPackage NOTIFY changed)
+    Q_PROPERTY(QUrl sam3Checkpoint READ sam3Checkpoint NOTIFY changed)
     Q_PROPERTY(QString modelState READ modelState NOTIFY changed)
     Q_PROPERTY(QString modelStatus READ modelStatus NOTIFY changed)
     Q_PROPERTY(bool modelReady READ modelReady NOTIFY changed)
@@ -62,7 +64,12 @@ class WorkflowController : public QObject {
     std::optional<DocumentId> jobBaseDocument_;
     Revision jobBaseRevision_{};
     std::optional<DocumentSnapshot> paintBase_;
-    QUrl sourceUrl_,overlayUrl_,modelPackage_;
+    QUrl sourceUrl_,overlayUrl_,modelPackage_,sam3Checkpoint_;
+    QProcess* semanticProcess_{};
+    std::unique_ptr<QTemporaryDir> semanticDirectory_;
+    bool semanticBusy_{}, semanticCancelled_{};
+    std::optional<DocumentId> semanticBaseDocument_;
+    Revision semanticBaseRevision_{};
     QString message_;
     QString modelState_{QStringLiteral("MissingModel")};
     QString modelStatus_;
@@ -88,8 +95,8 @@ class WorkflowController : public QObject {
   public:
     explicit WorkflowController(QtBridge&);
     ~WorkflowController() override;
-    bool busy() const {return running_.has_value();}
-    bool analyzing() const {return running_ && running_->task=="image.review.sam21";}
+    bool busy() const {return running_.has_value() || semanticBusy_;}
+    bool analyzing() const {return semanticBusy_ || (running_ && running_->task=="image.review.sam21");}
     bool pending() const {return pending_;}
     bool hasReview() const {return review_.has_value();}
     bool editingExisting() const {return std::any_of(objects_.begin(),objects_.end(),[](NodeId id){return !id.empty();});}
@@ -97,6 +104,7 @@ class WorkflowController : public QObject {
     QUrl sourceUrl() const {return sourceUrl_;}
     QUrl overlayUrl() const {return overlayUrl_;}
     QUrl modelPackage() const {return modelPackage_;}
+    QUrl sam3Checkpoint() const {return sam3Checkpoint_;}
     QString modelState() const {return modelState_;}
     QString modelStatus() const {return modelStatus_;}
     bool modelReady() const {return modelReceipt_.has_value() && modelState_==QLatin1String("Ready");}
@@ -117,6 +125,9 @@ class WorkflowController : public QObject {
     Q_INVOKABLE void setModelPackage(const QUrl&);
     Q_INVOKABLE bool checkModel();
     Q_INVOKABLE bool startImage(const QUrl&);
+    Q_INVOKABLE bool importSemanticManifest(const QUrl&);
+    Q_INVOKABLE bool startSam3Image(const QUrl&,const QString& promptList);
+    Q_INVOKABLE void setSam3Checkpoint(const QUrl&);
     Q_INVOKABLE void cancel();
     Q_INVOKABLE bool selectCandidate(int);
     Q_INVOKABLE bool includeCandidate(int,bool);
