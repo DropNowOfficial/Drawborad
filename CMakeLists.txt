@@ -178,13 +178,19 @@ add_executable(DrawboradCodec apps/codec/Main.cpp)
 target_link_libraries(DrawboradCodec PRIVATE drawborad_codecs)
 if(DRAWBORAD_DESKTOP)
   qt_standard_project_setup(REQUIRES 6.12)
-  add_library(drawborad_workflow STATIC src/ui/ReviewJob.cpp src/ui/ReconstructionJob.cpp src/ui/PaintedDocument.cpp)
+  add_library(drawborad_workflow STATIC src/ui/ReviewJob.cpp src/ui/ReconstructionJob.cpp src/ui/PaintedDocument.cpp src/ui/SemanticManifest.cpp)
   target_include_directories(drawborad_workflow PUBLIC ${PROJECT_SOURCE_DIR}/src)
   target_link_libraries(drawborad_workflow PUBLIC drawborad_codecs drawborad_models drawborad_reconstruct Qt6::Core)
   target_link_libraries(DrawboradWorker PRIVATE drawborad_workflow)
   target_compile_definitions(DrawboradWorker PRIVATE DRAWBORAD_HAS_REVIEW_WORKER)
   target_compile_definitions(drawborad_core PRIVATE DRAWBORAD_HAS_REVIEW_WORKER)
   qt_add_executable(Drawborad apps/studio/Main.cpp apps/studio/QtBridge.cpp apps/studio/QtBridge.h src/ui/WorkflowController.cpp src/ui/WorkflowController.h src/platform/CanvasItem.cpp src/platform/CanvasItem.h src/platform/CanvasRenderer.cpp)
+  # The SAM3 runner is an optional locally executed model backend. No weights
+  # are bundled; the application requires an explicitly selected checkpoint.
+  add_custom_command(TARGET Drawborad POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${PROJECT_SOURCE_DIR}/tools/models/sam3_semantic.py"
+            "$<TARGET_FILE_DIR:Drawborad>/sam3_semantic.py")
   target_compile_definitions(Drawborad PRIVATE DRAWBORAD_HAS_QT)
   target_include_directories(Drawborad PRIVATE ${PROJECT_SOURCE_DIR})
   target_link_libraries(Drawborad PRIVATE drawborad_workflow drawborad_core drawborad_render Qt6::Quick Qt6::QuickControls2 d3d11 dxgi)
