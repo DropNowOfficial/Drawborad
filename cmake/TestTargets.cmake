@@ -145,6 +145,13 @@ feature_task(M01 tests/models/PackageTests.cpp)
 feature_task(M01.Readiness tests/models/ModelReadinessTests.cpp)
 feature_task(M02 tests/models/ProviderParityTests.cpp)
 feature_task(M03 tests/segmentation/ProposalTests.cpp)
+# The semantic manifest is consumed by the *native Qt application*, not an
+# experimental ORA exporter. A failed hash/partition must never install layers.
+if(DRAWBORAD_DESKTOP)
+  feature_task(U04.SemanticManifest tests/studio/SemanticManifestTests.cpp)
+  target_link_libraries(test_U04.SemanticManifest PRIVATE drawborad_workflow Qt6::Gui)
+endif()
+
 set(DRAWBORAD_TEST_COFFEE_REFERENCE "" CACHE PATH "Developer-only real coffee/SAM reference directory")
 if(DRAWBORAD_HAS_ONNXRUNTIME AND DRAWBORAD_TEST_COFFEE_IMAGE AND DRAWBORAD_TEST_COFFEE_PACKAGE AND DRAWBORAD_TEST_COFFEE_REFERENCE)
   feature_task(M03.Coffee tests/models/CoffeeRuntimeTests.cpp)
