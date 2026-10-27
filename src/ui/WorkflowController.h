@@ -24,6 +24,7 @@ class WorkflowController : public QObject {
     Q_PROPERTY(QUrl sourceUrl READ sourceUrl NOTIFY changed)
     Q_PROPERTY(QUrl overlayUrl READ overlayUrl NOTIFY changed)
     Q_PROPERTY(QUrl modelPackage READ modelPackage NOTIFY changed)
+    Q_PROPERTY(QUrl sam3Checkpoint READ sam3Checkpoint NOTIFY changed)
     Q_PROPERTY(QString modelState READ modelState NOTIFY changed)
     Q_PROPERTY(QString modelStatus READ modelStatus NOTIFY changed)
     Q_PROPERTY(bool modelReady READ modelReady NOTIFY changed)
@@ -63,7 +64,7 @@ class WorkflowController : public QObject {
     std::optional<DocumentId> jobBaseDocument_;
     Revision jobBaseRevision_{};
     std::optional<DocumentSnapshot> paintBase_;
-    QUrl sourceUrl_,overlayUrl_,modelPackage_;
+    QUrl sourceUrl_,overlayUrl_,modelPackage_,sam3Checkpoint_;
     QProcess* semanticProcess_{};
     std::unique_ptr<QTemporaryDir> semanticDirectory_;
     bool semanticBusy_{}, semanticCancelled_{};
@@ -103,6 +104,7 @@ class WorkflowController : public QObject {
     QUrl sourceUrl() const {return sourceUrl_;}
     QUrl overlayUrl() const {return overlayUrl_;}
     QUrl modelPackage() const {return modelPackage_;}
+    QUrl sam3Checkpoint() const {return sam3Checkpoint_;}
     QString modelState() const {return modelState_;}
     QString modelStatus() const {return modelStatus_;}
     bool modelReady() const {return modelReceipt_.has_value() && modelState_==QLatin1String("Ready");}
@@ -125,6 +127,7 @@ class WorkflowController : public QObject {
     Q_INVOKABLE bool startImage(const QUrl&);
     Q_INVOKABLE bool importSemanticManifest(const QUrl&);
     Q_INVOKABLE bool startSam3Image(const QUrl&,const QString& promptList);
+    Q_INVOKABLE void setSam3Checkpoint(const QUrl&);
     Q_INVOKABLE void cancel();
     Q_INVOKABLE bool selectCandidate(int);
     Q_INVOKABLE bool includeCandidate(int,bool);
