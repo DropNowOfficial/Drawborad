@@ -8,6 +8,7 @@
 #include <QVariantList>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QProcess>
 #include <algorithm>
 namespace drawborad {
 class QtBridge;
@@ -63,6 +64,11 @@ class WorkflowController : public QObject {
     Revision jobBaseRevision_{};
     std::optional<DocumentSnapshot> paintBase_;
     QUrl sourceUrl_,overlayUrl_,modelPackage_;
+    QProcess* semanticProcess_{};
+    std::unique_ptr<QTemporaryDir> semanticDirectory_;
+    bool semanticBusy_{}, semanticCancelled_{};
+    std::optional<DocumentId> semanticBaseDocument_;
+    Revision semanticBaseRevision_{};
     QString message_;
     QString modelState_{QStringLiteral("MissingModel")};
     QString modelStatus_;
@@ -88,8 +94,8 @@ class WorkflowController : public QObject {
   public:
     explicit WorkflowController(QtBridge&);
     ~WorkflowController() override;
-    bool busy() const {return running_.has_value();}
-    bool analyzing() const {return running_ && running_->task=="image.review.sam21";}
+    bool busy() const {return running_.has_value() || semanticBusy_;}
+    bool analyzing() const {return semanticBusy_ || (running_ && running_->task=="image.review.sam21");}
     bool pending() const {return pending_;}
     bool hasReview() const {return review_.has_value();}
     bool editingExisting() const {return std::any_of(objects_.begin(),objects_.end(),[](NodeId id){return !id.empty();});}
@@ -117,6 +123,8 @@ class WorkflowController : public QObject {
     Q_INVOKABLE void setModelPackage(const QUrl&);
     Q_INVOKABLE bool checkModel();
     Q_INVOKABLE bool startImage(const QUrl&);
+    Q_INVOKABLE bool importSemanticManifest(const QUrl&);
+    Q_INVOKABLE bool startSam3Image(const QUrl&,const QString& promptList);
     Q_INVOKABLE void cancel();
     Q_INVOKABLE bool selectCandidate(int);
     Q_INVOKABLE bool includeCandidate(int,bool);
