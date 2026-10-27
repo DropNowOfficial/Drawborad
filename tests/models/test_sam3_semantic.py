@@ -121,3 +121,18 @@ def test_export_rejects_inconsistent_backend_before_writing(tmp_path):
         write_semantic_manifest(source, tmp_path / "wrong-backend",
                                 [candidate("all", np.ones((2, 2), bool))],
                                 "sam3", ["all"])
+
+
+def test_export_refuses_partial_alpha_that_native_reconstruction_cannot_preserve(tmp_path):
+    source = tmp_path / "alpha.png"
+    pixels = np.zeros((2, 2, 4), dtype=np.uint8)
+    pixels[:, :, :3] = 127
+    pixels[:, :, 3] = 255
+    pixels[0, 0, 3] = 128
+    Image.fromarray(pixels, mode="RGBA").save(source)
+    out = tmp_path / "bad-alpha"
+    with pytest.raises(ValueError, match="partial alpha"):
+        write_semantic_manifest(source, out,
+                                [candidate("foreground", np.ones((2, 2), bool))],
+                                "sam3-image", ["foreground"])
+    assert not out.exists()
