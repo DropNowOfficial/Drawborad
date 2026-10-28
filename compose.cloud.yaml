@@ -1,0 +1,53 @@
+name: drawborad-cloud
+services:
+  review:
+    build:
+      context: .
+      dockerfile: Dockerfile.cloud
+    image: drawborad/cloud-review:local
+    restart: unless-stopped
+    environment:
+      DRAWBORAD_CLOUD_TOKEN: ${DRAWBORAD_CLOUD_TOKEN:?Set a random 32-character token}
+      DRAWBORAD_CLOUD_DATA: /data
+    ports:
+      - '127.0.0.1:8765:8765'
+    volumes:
+      - cloud-review-data:/data
+    mem_limit: 2g
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+
+  sam3-gpu:
+    profiles: ['gpu']
+    build:
+      context: .
+      dockerfile: Dockerfile.cloud-gpu
+    image: drawborad/cloud-sam3-gpu:local
+    restart: unless-stopped
+    gpus: all
+    environment:
+      DRAWBORAD_CLOUD_TOKEN: ${DRAWBORAD_CLOUD_TOKEN:?Set a random 32-character token}
+      DRAWBORAD_CLOUD_DATA: /data
+      DRAWBORAD_SAM3_CHECKPOINT: /models/sam3.pt
+      DRAWBORAD_SAM3_DEVICE: cuda
+    ports:
+      - '127.0.0.1:8766:8765'
+    volumes:
+      - cloud-gpu-data:/data
+      - ${SAM3_MODEL_DIR:?Set path to licensed SAM3 image checkpoint directory}:/models:ro
+    mem_limit: 24g
+    pids_limit: 1024
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  cloud-review-data:
+  cloud-gpu-data:
