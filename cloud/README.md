@@ -11,6 +11,10 @@ python -m cloud.cli serve                 # http://127.0.0.1:8765
 # then click "Open synthetic sample"
 ```
 
+## GitHub Codespaces — no local Linux, Docker or Python installation
+
+On the GitHub branch `work/cloud-agent-runtime-20261028`: **Code → Codespaces → Create codespace**. After it starts, open the private forwarded port 8765, get the password by running `cat .cloud-data/cloud-token` in its terminal, and paste it into the Cloud Studio browser UI. See the runbook for details. This validates the CPU review UI, not GPU segmentation accuracy.
+
 ## Cloud / Docker
 
 See [full runbook](../docs/cloud/CLOUD_AGENT_RUNBOOK.md) and [`AGENTS-CLOUD.md`](../AGENTS-CLOUD.md).
