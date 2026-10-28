@@ -1,0 +1,24 @@
+# GPU image is opt-in. The licensed SAM3 image checkpoint is never baked in.
+# CUDA runtime is newer than the cu128 PyTorch binaries and requires an NVIDIA
+# driver and NVIDIA Container Toolkit on the cloud host.
+FROM nvidia/cuda:12.9.2-cudnn-runtime-ubuntu24.04
+ENV DEBIAN_FRONTEND=noninteractive PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
+    DRAWBORAD_CLOUD_DATA=/data DRAWBORAD_SAM3_DEVICE=cuda
+ARG SAM3_COMMIT=f1647e8d0c1d280991f4d1b7d974c2704537fe66
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv python3-pip git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+WORKDIR /app
+COPY cloud/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt \
+    && pip install --no-cache-dir torch==2.10.0 torchvision --index-url https://download.pytorch.org/whl/cu128 \
+    && pip install --no-cache-dir "git+https://github.com/facebookresearch/sam3.git@${SAM3_COMMIT}"
+RUN groupadd -r studio && useradd -r -g studio -d /app studio \
+    && mkdir -p /data && chown studio:studio /data
+COPY --chown=studio:studio cloud/ /app/cloud/
+COPY --chown=studio:studio tools/models/sam3_semantic.py /app/tools/models/sam3_semantic.py
+USER studio
+EXPOSE 8765
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s CMD python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8765/healthz',timeout=3)" || exit 1
+CMD ["python","-m","cloud.cli","serve","--host","0.0.0.0","--port","8765"]

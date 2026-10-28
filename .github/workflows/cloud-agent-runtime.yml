@@ -1,0 +1,76 @@
+name: Drawborad cloud agent runtime
+on:
+  pull_request:
+    paths:
+      - 'cloud/**'
+      - '.devcontainer/**'
+      - 'scripts/cloud/**'
+      - 'tests/cloud/**'
+      - 'Dockerfile.cloud*'
+      - 'compose.cloud.yaml'
+      - '.github/workflows/cloud-agent-runtime.yml'
+      - 'docs/cloud/**'
+  push:
+    branches:
+      - 'work/cloud-agent-runtime-*'
+    paths:
+      - 'cloud/**'
+      - '.devcontainer/**'
+      - 'scripts/cloud/**'
+      - 'tests/cloud/**'
+      - 'Dockerfile.cloud*'
+      - 'compose.cloud.yaml'
+      - '.github/workflows/cloud-agent-runtime.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: drawborad-cloud-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test-and-container-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install cloud runtime and test dependencies
+        run: python -m pip install -r cloud/requirements.txt pytest httpx
+      - name: Run API, security, export and CLI tests
+        run: python -m pytest -q tests/cloud
+      - name: Build real OpenRaster artifact (synthetic smoke, explicitly not AI)
+        run: python -m cloud.cli smoke --output out/cloud-smoke
+      - name: Build CPU container
+        run: docker build -f Dockerfile.cloud -t drawborad-cloud:ci .
+      - name: Boot container and exercise HTTP endpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+          docker run -d --name drawborad-cloud-ci -e DRAWBORAD_CLOUD_TOKEN="$TOKEN" -p 127.0.0.1:8765:8765 drawborad-cloud:ci
+          trap 'docker logs drawborad-cloud-ci || true; docker rm -f drawborad-cloud-ci || true' EXIT
+          for i in $(seq 1 40); do
+            if curl -fsS --max-time 2 http://127.0.0.1:8765/healthz > out/cloud-smoke/health.json; then break; fi
+            sleep 1
+          done
+          curl -fsS -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8765/api/v1/capabilities > out/cloud-smoke/capabilities.json
+          curl -fsS -X POST -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8765/api/v1/demo > out/cloud-smoke/http-demo.json
+          ID="$(python -c 'import json; print(json.load(open("out/cloud-smoke/http-demo.json"))["id"])')"
+          curl -fsS -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8765/api/v1/jobs/$ID/layers.ora" -o out/cloud-smoke/http-demo.ora
+          python - <<'PY'
+          import json, zipfile
+          with zipfile.ZipFile('out/cloud-smoke/http-demo.ora') as z:
+              assert z.read('mimetype') == b'image/openraster'
+              assert 'mergedimage.png' in z.namelist()
+          print('HTTP multi-layer ORA verified')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: drawborad-cloud-smoke-${{ github.run_number }}
+          path: out/cloud-smoke/
+          retention-days: 14

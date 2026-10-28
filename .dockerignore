@@ -1,0 +1,13 @@
+.git
+.github
+.cloud-data
+.pytest_cache
+__pycache__
+*.pyc
+*.pt
+*.pth
+*.onnx
+out
+build
+.DS_Store
+**/*.zip

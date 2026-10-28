@@ -1,0 +1,15 @@
+FROM python:3.12-slim-bookworm
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 DRAWBORAD_CLOUD_DATA=/data
+WORKDIR /app
+COPY cloud/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt \
+    && groupadd -r studio && useradd -r -g studio -d /app studio \
+    && mkdir -p /data && chown studio:studio /data
+COPY --chown=studio:studio cloud/ /app/cloud/
+# Adapter is part of the native Drawborad SAM3 integration PR; CPU image
+# intentionally does NOT claim that the 848M model is installed.
+COPY --chown=studio:studio tools/models/sam3_semantic.py /app/tools/models/sam3_semantic.py
+USER studio
+EXPOSE 8765
+HEALTHCHECK --interval=30s --timeout=4s --start-period=20s CMD python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8765/healthz',timeout=3)" || exit 1
+CMD ["python","-m","cloud.cli","serve","--host","0.0.0.0","--port","8765"]
