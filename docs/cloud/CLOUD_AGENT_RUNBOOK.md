@@ -12,6 +12,17 @@ Designed for users without Linux installed locally. Agents can run this on a Lin
 - Deterministic artificial sample and ZIP import/export make the cloud/agent workflow fully testable *before* acquiring a GPU.
 - This cloud component **does not run Drawborad's C++ paint/stroke reconstruction** yet. That engine still needs its own native integration/real-image qualification.
 
+## Zero-install option: GitHub Codespaces (recommended first test)
+
+From the private Drawborad repository, select branch `work/cloud-agent-runtime-20261028`, then **Code → Codespaces → Create codespace on this branch** (requires access to GitHub Codespaces on the account). The devcontainer installs the cloud Python dependencies and starts the service automatically.
+
+1. Wait until the Codespace terminal shows `Drawborad Cloud Studio running on private forwarded port 8765`.
+2. In **Ports**, open forwarded port `8765` (configured **private**, not public).
+3. In the Codespaces terminal run `cat .cloud-data/cloud-token` and paste the token into the browser UI access token field.
+4. Click **Open synthetic sample**, toggle independent layers and export `.ora`, or import a previously generated SAM3 manifest ZIP.
+
+This is an actual cloud computer running Linux **for you**; your own Windows machine only uses the browser. The synthetic sample is not AI inference. A regular Codespace normally does **not** provide an NVIDIA GPU; use the separate GPU deployment below to test real SAM3 inference.
+
 ## A: No GPU needed — run browser and layer tests in any Docker cloud computer
 
 ```bash
