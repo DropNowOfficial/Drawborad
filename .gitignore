@@ -6,3 +6,9 @@ out/
 
 __pycache__/
 *.pyc
+
+# Cloud agent runtime: local source images, masks, job state and licensed weights
+.cloud-data/
+**/__pycache__/
+**/.pytest_cache/
+*.pt
