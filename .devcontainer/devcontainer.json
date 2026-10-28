@@ -1,0 +1,15 @@
+{
+  "name": "Drawborad Cloud Studio / Agent Workstation",
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bookworm",
+  "postCreateCommand": "python -m pip install -r cloud/requirements.txt pytest httpx",
+  "postStartCommand": "bash scripts/cloud/codespaces-start.sh",
+  "forwardPorts": [8765],
+  "portsAttributes": {
+    "8765": {
+      "label": "Drawborad Cloud Studio",
+      "onAutoForward": "notify",
+      "visibility": "private"
+    }
+  },
+  "remoteUser": "vscode"
+}
