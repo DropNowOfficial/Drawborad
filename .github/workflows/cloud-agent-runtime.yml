@@ -3,6 +3,8 @@ on:
   pull_request:
     paths:
       - 'cloud/**'
+      - '.devcontainer/**'
+      - 'scripts/cloud/**'
       - 'tests/cloud/**'
       - 'Dockerfile.cloud*'
       - 'compose.cloud.yaml'
@@ -13,6 +15,8 @@ on:
       - 'work/cloud-agent-runtime-*'
     paths:
       - 'cloud/**'
+      - '.devcontainer/**'
+      - 'scripts/cloud/**'
       - 'tests/cloud/**'
       - 'Dockerfile.cloud*'
       - 'compose.cloud.yaml'
