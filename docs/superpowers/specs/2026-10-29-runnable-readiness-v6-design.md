@@ -1,3 +1,5 @@
+> **已被替代（2026-10-31）**：用户明确要求 Linux 云端优先、浏览器和跨平台 Agent 可用，Windows 后续适配。本文的 Windows 优先顺序、工期与首批桌面笔刷改动建议不再作为当前执行依据。请以[Linux 云端完整架构](https://github.com/DropNowOfficial/Drawborad/blob/design/linux-cloud-architecture-20261031/docs/superpowers/specs/2026-10-29-linux-cloud-architecture-design.md)为准。下文仅保留历史审阅记录。
+
 # Drawborad：可运行版本距离评估与最小实现设计
 
 日期：2026-10-29（America/New_York）。状态：**实证评估已完成；下面的新产品改动是待审阅设计，不是已实现功能或发布承诺。**
