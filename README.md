@@ -1,5 +1,11 @@
 # Drawborad
 
+Current product direction: **Linux cloud first, browser and platform-neutral Agent access; Windows adaptation later.** See the [complete architecture and phased acceptance criteria](docs/superpowers/specs/2026-10-29-linux-cloud-architecture-design.md) and [cloud agent instructions](AGENTS-CLOUD.md). This design branch updates documentation only; the existing cloud runtime is still a semantic cutout workspace, not the completed C++ cloud drawing application.
+
+## Historical native foundation report
+
+The following section describes the earlier Windows foundation and its historical test results, not the current product platform or a fresh verification.
+
 Native Windows drawing studio — **F01–F06 foundation implementation**.
 
 This branch contains C++20 document, transaction, persistence, worker and native-shell
