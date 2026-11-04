@@ -305,3 +305,9 @@ foreach(test_name IN LISTS _release_tests)
   endif()
 endforeach()
 drawborad_release_inventory(inventory)
+
+if(DRAWBORAD_HEADLESS_WORKFLOW)
+  add_test(NAME H00.HeadlessCLI
+    COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/headless/test_headless_cli.py $<TARGET_FILE:DrawboradHeadless>)
+  set_tests_properties(H00.HeadlessCLI PROPERTIES TIMEOUT 10)
+endif()
