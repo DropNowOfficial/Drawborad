@@ -59,3 +59,52 @@ TEST("H01 acceptance and cancellation are explicit and atomic") {
     input.masks.fullResolutionMasks[1]=input.masks.fullResolutionMasks[0];
     CHECK(!runHeadlessWorkflow({input,{0,1},output}));
 }
+
+#include "storage/ProjectStore.h"
+#include "ui/PaintedDocument.h"
+#include "history/ReplayEngine.h"
+#include <QColorSpace>
+#include <QFile>
+TEST("H02 saved project replays without original image and exports three frames") {
+    QTemporaryDir temp;CHECK(temp.isValid());const auto source=temp.filePath("source.png");
+    auto input=fixture(source);const auto output=std::filesystem::path(temp.filePath("result").toStdString());
+    auto result=runHeadlessWorkflow({input,{0,1},output});CHECK(result);
+    CHECK(std::filesystem::exists(output/"project.draw"));CHECK(QFile::remove(source));
+    auto recovered=ProjectStore{}.recover(output/"project.draw");CHECK(recovered);
+    const auto& snapshot=recovered.value().snapshot;
+    CHECK(snapshot.sameContent(result.value().snapshot));
+    auto final=renderPaintedDocument(snapshot,{snapshot.revision});CHECK(final);
+    auto png=decodeImage(output/"final.png",{});CHECK(png);CHECK(png.value().decodedPixels);
+    CHECK(png.value().decodedPixels->bytes==final.value().merged.bytes);
+    CHECK(final.value().statistics.sourceAssetReads==0);
+    auto zero=decodeImage(output/"zero.png",{}),middle=decodeImage(output/"middle.png",{});CHECK(zero);CHECK(middle);
+    CHECK(zero.value().decodedPixels->bytes!=middle.value().decodedPixels->bytes);
+    CHECK(middle.value().decodedPixels->bytes!=final.value().merged.bytes);
+    ReplayEngine replay;
+    for(const auto& [id,node]:*snapshot.nodes){
+        if(node.kind!=NodeKind::Layer)continue;
+        auto frame=replay.seek({snapshot,{id,0,0,0},snapshot.eventIndex->size()});CHECK(frame);
+        ReferenceRenderer reference;auto expected=reference.render(snapshot,{id,0,0,0},{snapshot.revision});CHECK(expected);
+        CHECK(frame.value().tile.bytes==expected.value().bytes);
+    }
+    CHECK(replay.statistics().sourceAssetReads==0);
+    CHECK(std::filesystem::exists(output/"painted.ora"));CHECK(std::filesystem::exists(output/"report.json"));
+    CHECK(!runHeadlessWorkflow({input,{0,1},output})); // no clobber after source is gone
+    CHECK(ProjectStore{}.recover(output/"project.draw"));
+}
+TEST("H02 UTF8 source and output paths retain exact embedded RGB profile") {
+    QTemporaryDir temp;CHECK(temp.isValid());
+    const auto path=temp.filePath(QString::fromUtf8("原图 space.png"));auto input=fixture(path);
+    QImage tagged(path);tagged.setColorSpace(QColorSpace(QColorSpace::SRgb));CHECK(tagged.save(path));
+    const auto decoded=decodeImage(std::filesystem::path(path.toUtf8().toStdString()),{});CHECK(decoded);
+    CHECK(!decoded.value().info.iccProfile.empty());
+    input.sourceReference.insert("sourceHash",QString::fromStdString(decoded.value().info.sourceHash.hex()));
+    const auto output=std::filesystem::path(temp.filePath(QString::fromUtf8("绘画 output")).toUtf8().toStdString());
+    auto result=runHeadlessWorkflow({input,{0,1},output});CHECK(result);
+    const auto profile=decoded.value().info.icc;CHECK(result.value().snapshot.spec.colorSpec.profileId==profile);
+    CHECK(*result.value().snapshot.resources->at(profile).bytes==decoded.value().info.iccProfile);
+    CHECK(result.value().snapshot.resources->at(profile).kind==ResourceKind::Profile);
+    auto png=decodeImage(output/"final.png",{});CHECK(png);CHECK(png.value().info.iccProfile==decoded.value().info.iccProfile);
+    auto saved=ProjectStore{}.recover(output/"project.draw");CHECK(saved);
+    CHECK(*saved.value().snapshot.resources->at(profile).bytes==decoded.value().info.iccProfile);
+}
