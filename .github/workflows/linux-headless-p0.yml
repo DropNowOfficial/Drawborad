@@ -1,0 +1,59 @@
+name: Drawborad Linux headless P0
+on:
+  push:
+    branches: [work/linux-headless-engine-20261104]
+    paths:
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'apps/headless/**'
+      - 'src/headless/**'
+      - 'src/ui/**'
+      - 'src/codecs/**'
+      - 'tests/headless/**'
+      - 'tests/**'
+      - '.github/workflows/linux-headless-p0.yml'
+  pull_request:
+    paths:
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'apps/headless/**'
+      - 'src/headless/**'
+      - 'src/ui/**'
+      - 'src/codecs/**'
+      - 'tests/headless/**'
+      - '.github/workflows/linux-headless-p0.yml'
+permissions:
+  contents: read
+concurrency:
+  group: drawborad-linux-headless-p0-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  linux-headless:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++ qt6-base-dev qt6-base-private-dev libpng-dev zlib1g-dev libjpeg-dev libtiff-dev libwebp-dev libheif-dev liblcms2-dev python3
+      - name: Configure headless workflow
+        run: cmake -S . -B out/linux-headless -G Ninja -DCMAKE_BUILD_TYPE=Release -DDRAWBORAD_HEADLESS_WORKFLOW=ON -DDRAWBORAD_DESKTOP=OFF -DDRAWBORAD_QUALIFY=OFF -DDRAWBORAD_ONNXRUNTIME_ROOT=
+      - name: Build
+        run: cmake --build out/linux-headless --parallel 2
+      - name: Run portable and headless tests
+        run: ctest --test-dir out/linux-headless --output-on-failure --no-tests=error
+      - name: Upload build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-headless-p0-${{ github.sha }}
+          path: |
+            out/linux-headless/CTestTestfile.cmake
+            out/linux-headless/Testing/Temporary/LastTest.log
+            out/linux-headless/TEST_INVENTORY.json
+            out/linux-headless/DrawboradHeadless
+          if-no-files-found: warn
+          retention-days: 14
