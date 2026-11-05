@@ -6,10 +6,10 @@ on:
       - 'CMakeLists.txt'
       - 'cmake/**'
       - 'apps/headless/**'
-      - 'src/headless/**'
+      - 'src/**'
       - 'src/ui/**'
       - 'src/codecs/**'
-      - 'tests/headless/**'
+      - 'tools/qa/headless_evidence.py'
       - 'tests/**'
       - '.github/workflows/linux-headless-p0.yml'
   pull_request:
@@ -17,10 +17,10 @@ on:
       - 'CMakeLists.txt'
       - 'cmake/**'
       - 'apps/headless/**'
-      - 'src/headless/**'
+      - 'src/**'
       - 'src/ui/**'
       - 'src/codecs/**'
-      - 'tests/headless/**'
+      - 'tools/qa/headless_evidence.py'
       - '.github/workflows/linux-headless-p0.yml'
 permissions:
   contents: read
@@ -40,20 +40,29 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build g++ qt6-base-dev qt6-base-private-dev libpng-dev zlib1g-dev libjpeg-dev libtiff-dev libwebp-dev libheif-dev liblcms2-dev python3 python3-pil
       - name: Configure headless workflow
-        run: cmake -S . -B out/linux-headless -G Ninja -DCMAKE_BUILD_TYPE=Release -DDRAWBORAD_HEADLESS_WORKFLOW=ON -DDRAWBORAD_DESKTOP=OFF -DDRAWBORAD_QUALIFY=OFF -DDRAWBORAD_ONNXRUNTIME_ROOT=
+        shell: bash
+        run: |
+          mkdir -p out/evidence
+          cmake -S . -B out/linux-headless -G Ninja -DCMAKE_BUILD_TYPE=Release -DDRAWBORAD_HEADLESS_WORKFLOW=ON -DDRAWBORAD_DESKTOP=OFF -DDRAWBORAD_QUALIFY=OFF -DDRAWBORAD_ONNXRUNTIME_ROOT= 2>&1 | tee out/evidence/configure.log
       - name: Build
-        run: cmake --build out/linux-headless --parallel 2
+        shell: bash
+        run: cmake --build out/linux-headless --parallel 2 2>&1 | tee out/evidence/build.log
       - name: Run portable and headless tests
-        run: ctest --test-dir out/linux-headless --output-on-failure --no-tests=error
+        shell: bash
+        run: |
+          ctest --test-dir out/linux-headless --show-only=json-v1 > out/evidence/ctest-inventory.json
+          ctest --test-dir out/linux-headless --output-on-failure --no-tests=error --output-junit "$PWD/out/evidence/ctest.xml" 2>&1 | tee out/evidence/ctest.log
+      - name: Generate genuine C++ painting artifacts
+        run: out/linux-headless/DrawboradHeadless smoke --output out/evidence/painting > out/evidence/smoke-stdout.json
+      - name: Independently verify ORA and collect receipts
+        run: |
+          python3 tests/headless/verify_artifacts.py out/evidence/painting > out/evidence/ora-validation.json
+          python3 tools/qa/headless_evidence.py out/linux-headless out/evidence
       - name: Upload build evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: linux-headless-p0-${{ github.sha }}
-          path: |
-            out/linux-headless/CTestTestfile.cmake
-            out/linux-headless/Testing/Temporary/LastTest.log
-            out/linux-headless/TEST_INVENTORY.json
-            out/linux-headless/DrawboradHeadless
-          if-no-files-found: warn
+          path: out/evidence/
+          if-no-files-found: error
           retention-days: 14

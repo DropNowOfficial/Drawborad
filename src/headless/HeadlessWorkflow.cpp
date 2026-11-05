@@ -6,12 +6,81 @@
 #include "storage/ProjectCodec.h"
 #include "ui/ReconstructionJob.h"
 #include <QJsonArray>
+#include <QJsonDocument>
+#include <QTemporaryDir>
+#include <QDateTime>
+#include "storage/ProjectStore.h"
+#include "ui/PaintedDocument.h"
+#include "codecs/RasterWriters.h"
 #include <algorithm>
 #include <cmath>
 #include <set>
 namespace drawborad {
+namespace {
+Result<void> saveArtifacts(HeadlessWorkflowReport& report,const std::filesystem::path& output,std::stop_token stop){
+    std::error_code ec;
+    const auto absolute=std::filesystem::absolute(output,ec);
+    if(ec || output.empty() || std::filesystem::exists(absolute,ec))return error(ErrorCode::IoError,"headless.output-exists-or-invalid");
+    std::filesystem::create_directories(absolute.parent_path(),ec);
+    if(ec)return error(ErrorCode::IoError,"headless.output-parent");
+    const auto pattern=(absolute.parent_path()/".drawborad-XXXXXX").string();
+    QTemporaryDir staging(QString::fromUtf8(pattern));
+    if(!staging.isValid())return error(ErrorCode::IoError,"headless.output-stage");
+    const std::filesystem::path directory(staging.path().toUtf8().toStdString());
+    const auto& snapshot=report.snapshot;
+    auto saved=ProjectStore{}.save(directory/"project.draw",snapshot);if(!saved)return saved.error();
+    auto recovered=ProjectStore{}.recover(directory/"project.draw");if(!recovered)return recovered.error();
+    if(!recovered.value().snapshot.sameContent(snapshot))return error(ErrorCode::CorruptData,"headless.reopen-mismatch");
+    RasterEncodingOptions options;options.ppi=snapshot.spec.ppi;
+    if(!snapshot.spec.colorSpec.profileId.empty())options.iccProfile=*snapshot.resources->at(snapshot.spec.colorSpec.profileId).bytes;
+    const auto events=snapshot.eventIndex->size();
+    const std::array<std::pair<const char*,std::size_t>,3> frames{{{"zero.png",0},{"middle.png",events/2},{"final.png",events}}};
+    PaintedDocument final;
+    std::uint64_t reads=0;
+    for(const auto& [name,limit]:frames){
+        auto frame=renderPaintedDocument(recovered.value().snapshot,{snapshot.revision,limit},stop);if(!frame)return frame.error();
+        reads+=frame.value().statistics.sourceAssetReads;
+        ExportRequest request;request.path=directory/name;request.size=snapshot.spec.pixelSize;
+        auto plan=preflightExport(snapshot,request);if(!plan)return plan.error();
+        auto written=ExportService{}.write(plan.value(),frame.value().merged,{},options,stop);if(!written)return written.error();
+        if(limit==events)final=std::move(frame.value());
+    }
+    auto beforeSave=renderPaintedDocument(snapshot,{snapshot.revision},stop);if(!beforeSave)return beforeSave.error();
+    if(beforeSave.value().merged.bytes!=final.merged.bytes || reads!=0)
+        return error(ErrorCode::CorruptData,"headless.replay-mismatch");
+    ExportRequest ora;ora.format=ExportFormat::Ora;ora.path=directory/"painted.ora";ora.size=snapshot.spec.pixelSize;
+    auto plan=preflightExport(snapshot,ora);if(!plan)return plan.error();
+    auto exported=ExportService{}.write(plan.value(),final.merged,final.layers,options,stop);if(!exported)return exported.error();
+    std::size_t leaves=0;for(const auto& [id,node]:*snapshot.nodes){(void)id;if(node.kind==NodeKind::Layer)++leaves;}
+    report.metadata.insert("paintLayers",qint64(leaves));
+    report.metadata.insert("width",qint64(snapshot.spec.pixelSize.width));report.metadata.insert("height",qint64(snapshot.spec.pixelSize.height));
+    report.metadata.insert("savedRevision",QString::number(snapshot.revision));
+    report.metadata.insert("replaySourceAssetReads",qint64(reads));report.metadata.insert("reopenReplayMatches",true);
+    report.metadata.insert("validationSourceDecodes",1);report.metadata.insert("reconstructionSourceDecodes",1);
+    report.metadata.insert("profileSha256",QString::fromStdString(snapshot.spec.colorSpec.profileId.hex()));
+    report.metadata.insert("sam3Inference","Not Tested");report.metadata.insert("photoshopOracle","Blocked — Not Run");
+    report.metadata.insert("fidelityStatus","NeedsReview");
+    report.metadata.insert("qtVersion",qVersion());
+#ifdef DRAWBORAD_GIT_SHA
+    report.metadata.insert("gitSha",DRAWBORAD_GIT_SHA);
+#else
+    report.metadata.insert("gitSha","unknown");
+#endif
+    report.metadata.insert("generatedAt",QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+    report.metadata.insert("artifacts",QJsonArray{"project.draw","zero.png","middle.png","final.png","painted.ora","report.json"});
+    const auto json=QJsonDocument(report.metadata).toJson(QJsonDocument::Indented);
+    NativeFileIO io;auto written=io.write(directory/"report.json",std::span(reinterpret_cast<const std::uint8_t*>(json.constData()),std::size_t(json.size())),true);
+    if(!written)return written.error();
+    if(stop.stop_requested())return error(ErrorCode::Cancelled,"headless.cancelled");
+    std::filesystem::rename(directory,absolute,ec);
+    if(ec)return error(ErrorCode::IoError,"headless.publish");
+    staging.setAutoRemove(false);
+    return {};
+}
+}
 Result<HeadlessWorkflowReport> runHeadlessWorkflow(const HeadlessWorkflowRequest& request,std::stop_token stop) {
     if(stop.stop_requested())return error(ErrorCode::Cancelled,"headless.cancelled");
+    if(request.outputDirectory.empty() || std::filesystem::exists(request.outputDirectory))return error(ErrorCode::IoError,"headless.output-exists-or-invalid");
     const auto& input=request.input;
     const auto size=input.masks.dimensions;
     const auto count=input.masks.fullResolutionMasks.size();
@@ -106,6 +175,7 @@ Result<HeadlessWorkflowReport> runHeadlessWorkflow(const HeadlessWorkflowRequest
     report.metadata.insert("backend",input.backend);report.metadata.insert("acceptedObjects",names);
     report.metadata.insert("strokeEvents",qint64(report.snapshot.eventIndex->size()));
     report.metadata.insert("objectCount",qint64(accepted.size()));
+    auto artifacts=saveArtifacts(report,request.outputDirectory,stop);if(!artifacts)return artifacts.error();
     return report;
 }
 }

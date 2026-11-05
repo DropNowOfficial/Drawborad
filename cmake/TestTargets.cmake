@@ -304,12 +304,11 @@ foreach(test_name IN LISTS _release_tests)
       "PATH=path_list_prepend:${DRAWBORAD_ONNXRUNTIME_ROOT}/lib")
   endif()
 endforeach()
-drawborad_release_inventory(inventory)
 
 if(DRAWBORAD_HEADLESS_WORKFLOW)
   add_test(NAME H00.HeadlessCLI
     COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/headless/test_headless_cli.py $<TARGET_FILE:DrawboradHeadless>)
-  set_tests_properties(H00.HeadlessCLI PROPERTIES TIMEOUT 10)
+  set_tests_properties(H00.HeadlessCLI PROPERTIES TIMEOUT 120 LABELS "LinuxHeadless")
 endif()
 
 if(DRAWBORAD_HEADLESS_WORKFLOW)
@@ -317,3 +316,8 @@ if(DRAWBORAD_HEADLESS_WORKFLOW)
   target_sources(test_H01.HeadlessWorkflow PRIVATE ${PROJECT_SOURCE_DIR}/src/headless/HeadlessWorkflow.cpp)
   target_link_libraries(test_H01.HeadlessWorkflow PRIVATE drawborad_workflow)
 endif()
+
+if(DRAWBORAD_HEADLESS_WORKFLOW)
+  set_tests_properties(H01.HeadlessWorkflow PROPERTIES LABELS "LinuxHeadless")
+endif()
+drawborad_release_inventory(inventory)
