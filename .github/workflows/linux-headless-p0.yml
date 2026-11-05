@@ -11,6 +11,7 @@ on:
       - 'src/codecs/**'
       - 'tools/qa/headless_evidence.py'
       - 'tools/packaging/**'
+      - 'tools/experiments/**'
       - 'tests/**'
       - '.github/workflows/linux-headless-p0.yml'
   pull_request:
@@ -23,6 +24,7 @@ on:
       - 'src/codecs/**'
       - 'tools/qa/headless_evidence.py'
       - 'tools/packaging/**'
+      - 'tools/experiments/**'
       - 'tests/**'
       - '.github/workflows/linux-headless-p0.yml'
 permissions:
@@ -61,6 +63,12 @@ jobs:
         run: |
           python3 tests/headless/verify_artifacts.py out/evidence/painting > out/evidence/ora-validation.json
           python3 tools/qa/headless_evidence.py out/linux-headless out/evidence
+      - name: Reconstruct a public real photograph
+        run: |
+          sudo apt-get install -y python3-skimage python3-opencv
+          python3 tools/experiments/real_photo.py out/evidence/real-input
+          out/linux-headless/DrawboradHeadless run --manifest "$PWD/out/evidence/real-input/manifest.json" --output out/evidence/real-painting --accept-all > out/evidence/real-photo-run.json
+          python3 tests/headless/verify_artifacts.py out/evidence/real-painting > out/evidence/real-photo-ora.json
       - name: Upload build evidence
         if: always()
         uses: actions/upload-artifact@v4

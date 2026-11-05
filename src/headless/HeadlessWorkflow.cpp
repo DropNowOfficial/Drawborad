@@ -84,7 +84,7 @@ Result<HeadlessWorkflowReport> runHeadlessWorkflow(const HeadlessWorkflowRequest
     const auto& input=request.input;
     const auto size=input.masks.dimensions;
     const auto count=input.masks.fullResolutionMasks.size();
-    if((input.backend!="fixture-no-ai" && input.backend!="sam3-image") ||
+    if((input.backend!="fixture-no-ai" && input.backend!="sam3-image" && input.backend!="opencv-grabcut") ||
        !size.width || !size.height || size.width>4096 || size.height>4096 || size.width*size.height>4*1024*1024 ||
        !count || count>64 || count*size.width*size.height>56*1024*1024 ||
        input.proposals.sourceSize!=size || input.proposals.candidates.size()!=count ||
