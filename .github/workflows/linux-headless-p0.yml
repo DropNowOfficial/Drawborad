@@ -10,6 +10,7 @@ on:
       - 'src/ui/**'
       - 'src/codecs/**'
       - 'tools/qa/headless_evidence.py'
+      - 'tools/packaging/**'
       - 'tests/**'
       - '.github/workflows/linux-headless-p0.yml'
   pull_request:
@@ -21,6 +22,7 @@ on:
       - 'src/ui/**'
       - 'src/codecs/**'
       - 'tools/qa/headless_evidence.py'
+      - 'tools/packaging/**'
       - 'tests/**'
       - '.github/workflows/linux-headless-p0.yml'
 permissions:
@@ -65,5 +67,52 @@ jobs:
         with:
           name: linux-headless-p0-${{ github.sha }}
           path: out/evidence/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Package native Ubuntu runtime
+        run: |
+          mkdir -p out/runtime
+          cp out/linux-headless/DrawboradHeadless out/runtime/
+          cp tools/packaging/install-runtime-ubuntu.sh tools/packaging/README.md out/runtime/
+          cp tests/headless/verify_artifacts.py out/evidence/readiness.json out/runtime/
+          ldd out/runtime/DrawboradHeadless > out/runtime/build-linked-libraries.txt
+          (cd out/runtime && sha256sum DrawboradHeadless install-runtime-ubuntu.sh README.md verify_artifacts.py readiness.json build-linked-libraries.txt > SHA256SUMS)
+          tar -czf out/DrawboradHeadless-ubuntu24-x86_64.tar.gz -C out/runtime .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-headless-runtime-${{ github.sha }}
+          path: out/DrawboradHeadless-ubuntu24-x86_64.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+  runtime-install:
+    needs: linux-headless
+    runs-on: ubuntu-24.04
+    container: ubuntu:24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-headless-runtime-${{ github.sha }}
+          path: /tmp/download
+      - name: Install and run extracted native package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/runtime /tmp/runtime-evidence
+          tar -xzf /tmp/download/DrawboradHeadless-ubuntu24-x86_64.tar.gz -C /tmp/runtime
+          cd /tmp/runtime
+          sha256sum -c SHA256SUMS | tee /tmp/runtime-evidence/checksums.log
+          bash install-runtime-ubuntu.sh 2>&1 | tee /tmp/runtime-evidence/install.log
+          ldd ./DrawboradHeadless | tee /tmp/runtime-evidence/linked-libraries.log
+          ./DrawboradHeadless --help | tee /tmp/runtime-evidence/help.log
+          ./DrawboradHeadless smoke --output /tmp/runtime-evidence/painting | tee /tmp/runtime-evidence/run.log
+          python3 verify_artifacts.py /tmp/runtime-evidence/painting | tee /tmp/runtime-evidence/ora-validation.json
+          python3 -c 'import json,os; r=json.load(open("/tmp/runtime-evidence/painting/report.json")); assert r["gitSha"] == os.environ["GITHUB_SHA"]; assert r["replaySourceAssetReads"] == 0'
+          cp /etc/os-release /tmp/runtime-evidence/os-release
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-headless-runtime-validation-${{ github.sha }}
+          path: /tmp/runtime-evidence/
           if-no-files-found: error
           retention-days: 14
