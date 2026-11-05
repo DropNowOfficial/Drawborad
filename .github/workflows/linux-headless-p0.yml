@@ -21,6 +21,7 @@ on:
       - 'src/ui/**'
       - 'src/codecs/**'
       - 'tools/qa/headless_evidence.py'
+      - 'tests/**'
       - '.github/workflows/linux-headless-p0.yml'
 permissions:
   contents: read

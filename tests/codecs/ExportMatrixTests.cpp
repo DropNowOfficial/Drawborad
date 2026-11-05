@@ -313,6 +313,8 @@ TEST("C06 ORA export omits group markers and preserves hidden masked leaves") {
     leaf.visible=false;leaf.mask={0,255,128,255};leaf.maskBounds={0,0,2,2};
     PsdLayerPixels end;end.name="</Layer group>";end.sectionType=3;end.pixels=pixels;
     PsdLayerPixels group;group.name="Cup";group.sectionType=2;group.pixels=pixels;
+    for(const bool hiddenParent:{false,true}){
+    leaf.visible=hiddenParent;group.visible=!hiddenParent;
     const std::array<PsdLayerPixels,3> layers{end,leaf,group};
     ExportRequest request;request.format=ExportFormat::Ora;request.path=path;request.size={2,2};
     auto plan=preflightExport(ColorMode::RGB,request);CHECK(plan);
@@ -328,4 +330,5 @@ TEST("C06 ORA export omits group markers and preserves hidden masked leaves") {
     CHECK(bytes[3]==0);CHECK(bytes[7]==128);CHECK(bytes[11]==128);CHECK(bytes[15]==0);
     CHECK(leaf.pixels.bytes==pixels.bytes);
     std::filesystem::remove(layerPath);std::filesystem::remove(path);
+    }
 }
