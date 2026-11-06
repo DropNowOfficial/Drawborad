@@ -34,7 +34,7 @@ def main(argv=None) -> int:
     segment.add_argument('--prompt',action='append',required=True)
     args=parser.parse_args(argv)
     if args.command=='serve':
-        if args.host not in ('127.0.0.1','localhost','::1') and not os.getenv('DRAWBORAD_CLOUD_TOKEN'):
+        if args.host not in ('127.0.0.1','localhost','::1') and not os.getenv('DRAWBORAD_CLOUD_TOKEN', '').strip():
             print('Refusing public binding without DRAWBORAD_CLOUD_TOKEN; use loopback or set an access TOKEN.',file=sys.stderr)
             return 2
         import uvicorn

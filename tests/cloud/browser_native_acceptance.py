@@ -1,0 +1,178 @@
+"""Drive the packaged native editor in Chromium on an isolated Compose host."""
+import io
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+from urllib.parse import urlsplit
+import zipfile
+
+from PIL import Image
+from playwright.sync_api import expect, sync_playwright
+
+
+def endpoint(method, suffix):
+    return lambda r: r.request.method == method and urlsplit(r.url).path.endswith(suffix)
+
+
+def authenticate(page, url, token, *, reconnect=False):
+    with page.expect_response(endpoint("GET", "/capabilities")) as probe:
+        page.goto(url)
+    assert probe.value.status == 401
+    field = page.get_by_label("Access token", exact=True)
+    expect(field).to_have_value("")
+    if reconnect:
+        expect(page.locator("#nativeError")).to_contain_text("Bearer token required")
+    expect(page.locator("#nativeNew")).to_be_enabled()
+    with page.expect_response(endpoint("GET", "/capabilities")) as authenticated:
+        field.fill(token)
+        field.press("Tab")
+    assert authenticated.value.status == 200
+    assert authenticated.value.json()["native_engine_configured"] is True
+    if reconnect:
+        expect(page.locator("#nativeSave")).to_be_enabled()
+
+
+def click_post(page, control, suffix, status=200):
+    with page.expect_response(endpoint("POST", suffix)) as request:
+        control.click()
+    response = request.value
+    assert response.status == status, f"{suffix} returned {response.status}"
+    expect(page.locator("#nativeNew")).to_be_enabled(timeout=90000)
+    return response.json()
+
+
+def preview(page, destination=None):
+    image = page.get_by_alt_text("Native painting preview")
+    image.evaluate("(image) => image.decode()")
+    png = image.screenshot(path=destination, animations="disabled")
+    return Image.open(io.BytesIO(png)).convert("RGB").tobytes()
+
+
+def download(page, button, output, filename):
+    with page.expect_download() as transfer:
+        page.get_by_role("button", name=button, exact=True).click()
+    assert transfer.value.suggested_filename == filename
+    target = output / filename
+    transfer.value.save_as(target)
+    assert target.stat().st_size > 0
+    return target
+
+
+def exercise(context, page, source, output, url, token):
+    authenticate(page, url, token)
+    page.get_by_text("Photo segmentation & source-layer review", exact=True).click()
+    page.locator("#image").set_input_files(source / "source.png")
+    page.locator("#seedFile").set_input_files(source / "seeds.png")
+    job = click_post(page, page.locator("#guidedRun"), "/guided", 201)
+    assert job["backend"] == "opencv-grabcut" and not job["ai_inference"]
+    expect(page.locator("#layerList img").first).to_be_visible()
+    state = click_post(page, page.locator("#nativeFromJob"), "/from-job/" + job["id"], 201)
+    stroke = state["strokes"][-1]
+    select = page.locator("#nativeStrokes")
+    select.select_option(index=0)
+    select.select_option(value=stroke["id"])
+    expect(page.locator("#nativeStrokeInfo")).to_contain_text(stroke["id"])
+    before = preview(page, output / "before.png")
+
+    peer = context.new_page()
+    authenticate(peer, url, token, reconnect=True)
+    changed = click_post(page, page.locator("#nativeRecolor"), "/commands")
+    assert changed["dirty"] and changed["strokes"][-1]["color"] != stroke["color"]
+    expect(page.locator("#nativeDownload")).to_be_disabled()
+    after = preview(page, output / "after.png")
+    assert before != after, "Recolor must change the rendered browser image"
+
+    owner = next(n for n in state["nodes"] if n["id"] == stroke["object_id"])
+    lock_label = owner["name"] + " locked"
+    peer_lock = peer.get_by_role("checkbox", name=lock_label, exact=True)
+    stale = click_post(peer, peer_lock, "/commands", 409)
+    assert stale["detail"]["code"] == "stale_revision"
+    expect(peer.locator("#nativeError")).to_be_visible()
+    expect(peer_lock).not_to_be_checked()
+    assert preview(peer) == after
+    peer.close()
+
+    click_post(page, page.locator("#nativeUndo"), "/undo")
+    assert preview(page) == before
+    click_post(page, page.locator("#nativeRedo"), "/redo")
+    assert preview(page) == after
+    lock = page.get_by_role("checkbox", name=lock_label, exact=True)
+    click_post(page, lock, "/commands")
+    locked = click_post(page, page.locator("#nativeRecolor"), "/commands", 423)
+    assert locked["detail"]["code"] == "locked"
+    expect(page.locator("#nativeError")).to_be_visible()
+    expect(lock).to_be_checked()
+    assert preview(page) == after
+    click_post(page, lock, "/commands")
+
+    saved = click_post(page, page.locator("#nativeSave"), "/save")
+    assert not saved["dirty"]
+    # Loading the same URL reloads the document and drops the in-memory token.
+    authenticate(page, url, token, reconnect=True)
+    expect(page.locator("#nativeStatus")).to_contain_text("Saved · revision " + saved["revision"])
+    assert preview(page) == after
+    page.screenshot(path=output / "saved-editor.png", mask=[page.locator("#token")])
+
+    replay = page.locator("#nativeReplay")
+    replay.press("Home")
+    expect(page.locator("#nativeReplayCount")).to_have_text("0")
+    assert preview(page, output / "replay-zero.png") != after
+    replay.press("End")
+    expect(page.locator("#nativeReplayCount")).to_have_text(saved["stroke_count"])
+    assert preview(page) == after
+
+    draw = download(page, "Download saved .draw", output, "painting.draw")
+    png = download(page, "Export painting PNG", output, "painting.png")
+    ora = download(page, "Export painted layers ORA", output, "painting.ora")
+    with zipfile.ZipFile(ora) as archive, Image.open(png) as exported:
+        assert archive.read("mimetype") == b"image/openraster"
+        merged = Image.open(io.BytesIO(archive.read("mergedimage.png"))).convert("RGBA")
+        assert merged.size == exported.size
+        assert merged.tobytes() == exported.convert("RGBA").tobytes()
+
+    # Leave a real unsaved edit in the old process before replacing the container.
+    click_post(page, lock, "/commands")
+    expect(page.locator("#nativeDownload")).to_be_disabled()
+    subprocess.run(["docker", "compose", "up", "-d", "--force-recreate", "--wait",
+                    "--wait-timeout", "90", "editor"], check=True)
+    page.once("dialog", lambda dialog: dialog.accept())
+    authenticate(page, url, token, reconnect=True)
+    expect(page.locator("#nativeStatus")).to_contain_text("Saved · revision " + saved["revision"])
+    expect(lock).not_to_be_checked()
+    assert preview(page) == after
+    click_post(page, page.locator("#nativeClose"), "/close")
+    expect(page.locator("#nativeStatus")).to_have_text("No painting open")
+    page.locator("#nativeFile").set_input_files(draw)
+    imported = click_post(page, page.locator("#nativeImport"), "/import", 201)
+    assert imported["id"] != saved["id"] and imported["strokes"] == saved["strokes"]
+    assert preview(page) == after
+    changed_pixels = sum(before[i:i+3] != after[i:i+3] for i in range(0, len(after), 3))
+    return {"project": saved["id"], "strokes": saved["stroke_count"], "stroke": stroke["id"],
+            "changed_browser_pixels": changed_pixels, "saved_revision": saved["revision"],
+            "stale_status": 409, "locked_status": 423, "container_recovery": "saved revision",
+            "exports": [draw.name, png.name, ora.name], "target": "packaged editor on CI loopback"}
+
+
+if __name__ == "__main__":
+    if os.environ.get("COMPOSE_PROJECT_NAME") != "drawborad-native-ci":
+        sys.exit("This acceptance recreates a container. Use the isolated drawborad-native-ci project.")
+    source, output = (Path(arg).resolve() for arg in sys.argv[1:])
+    output.mkdir(parents=True, exist_ok=True)
+    url = "http://127.0.0.1:" + os.environ["DRAWBORAD_NATIVE_PORT"]
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        context = browser.new_context(viewport={"width": 1440, "height": 1000}, reduced_motion="reduce")
+        context.set_default_timeout(90000)
+        page = context.new_page()
+        try:
+            receipt = exercise(context, page, source, output, url, os.environ["DRAWBORAD_CLOUD_TOKEN"])
+            receipt["browser"] = "Chromium " + browser.version
+            (output / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
+            print(json.dumps(receipt))
+        except Exception:
+            page.screenshot(path=output / "failure.png", mask=[page.locator("#token")], timeout=10000)
+            raise
+        finally:
+            browser.close()

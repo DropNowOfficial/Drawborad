@@ -1,0 +1,14 @@
+**
+!DrawboradHeadless
+!cloud/
+!cloud/*.py
+!cloud/requirements.txt
+!cloud/static/
+!cloud/static/index.html
+!tools/
+!tools/packaging/
+!tools/packaging/install-runtime-ubuntu.sh
+!tools/models/
+!tools/models/sam3_semantic.py
+!tools/segmentation/
+!tools/segmentation/guided_grabcut.py

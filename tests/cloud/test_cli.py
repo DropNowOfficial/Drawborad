@@ -26,6 +26,11 @@ def test_public_binding_rejected_without_explicit_token(monkeypatch):
     assert r.returncode != 0
     assert 'TOKEN' in r.stderr.upper()
 
+    monkeypatch.setenv('DRAWBORAD_CLOUD_TOKEN', '   ')
+    r = subprocess.run([sys.executable, '-m', 'cloud.cli', 'serve', '--host', '0.0.0.0'],
+                       capture_output=True, text=True, timeout=10)
+    assert r.returncode != 0 and 'TOKEN' in r.stderr.upper()
+
 
 def test_cli_segment_requires_actual_model_checkpoint(tmp_path):
     r=run('segment','--image',tmp_path/'missing.png','--output',tmp_path/'out',

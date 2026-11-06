@@ -1,6 +1,8 @@
 # Drawborad Cloud Studio
 
-A self-hostable **agent-neutral** browser application and HTTP API for evaluating SAM 3 semantic image segmentation as independent object layers. Runs on cloud Linux/containers; Windows clients need only a browser. CPU-only mode supports import, inspection and OpenRaster export; real SAM 3 inference requires separately approved official checkpoint, official Python module and sufficient GPU. It does **not** claim to run the existing native Drawborad C++ paint engine.
+Drawborad Cloud Studio serves the browser UI and HTTP API. The review-only image supports layer inspection and OpenRaster export. The **native editor host bundle** adds the persistent C++ engine for editing, replaying and saving real brush strokes. Licensed SAM 3 inference requires its separate model and runtime.
+
+For a persistent Linux host, download the `native-editor-host-…` artifact from the Linux headless workflow and follow the [native editor deployment instructions](../tools/packaging/native-editor/README.md). It includes the precompiled engine, a loopback-bound Compose service and persistent project storage.
 
 ## Fast local verification (no model required)
 

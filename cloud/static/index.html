@@ -18,6 +18,10 @@ footer{color:#98a1ac;font-size:11px;margin-top:25px;line-height:1.7}.errors{colo
 <main class="shell"><div class="heading"><div><div class="eyebrow">IMAGE → SEMANTIC LAYERS → CREATIVE CONTROL</div><h1>Make the painting yours.</h1><p class="sub">Open a native painting, choose a brush stroke, and make your edit. Save the complete project to keep painting later.</p></div><div class="chip"><span id="deviceDot" class="dot"></span><span id="deviceStatus">Checking model runtime…</span></div></div>
 <section class="panel" id="nativeEditor" aria-label="Native painting editor" style="margin-bottom:28px">
 <div class="panelhdr">Your painting <span class="tag">NATIVE PROJECT</span></div>
+<div class="panelbody" style="max-width:360px;padding-bottom:0">
+<label class="fieldlabel" for="token">Access token</label>
+<input id="token" class="field" type="password" placeholder="Required on protected hosts" autocomplete="off">
+</div>
 <div class="panelbody nativebar">
 <label class="fieldlabel" for="nativeFile">Open .draw <input id="nativeFile" type="file" accept=".draw"></label>
 <button id="nativeImport" class="secondary" type="button">Open project</button>
@@ -49,7 +53,7 @@ footer{color:#98a1ac;font-size:11px;margin-top:25px;line-height:1.7}.errors{colo
 </aside></div></section>
 
 <details><summary style="margin:20px 0;cursor:pointer">Photo segmentation &amp; source-layer review</summary><div class="workspace">
-<section class="panel"><div class="panelhdr">01 · Source &amp; inference <span class="tag">INPUT</span></div><div class="panelbody"><label class="fieldlabel" for="token">Access token (only if configured by host)</label><input id="token" class="field" type="password" placeholder="Bearer token for remote deployment" autocomplete="off"><div class="divider"></div><div class="sectionlabel">Model-driven segmentation</div><label class="fieldlabel" for="image">Image · PNG/JPEG</label><div class="filebox"><input id="image" type="file" accept="image/png,image/jpeg"></div><label class="fieldlabel" for="prompts">Objects, back to front</label><textarea class="field" id="prompts" spellcheck="false">wooden table, saucer, coffee cup, spoon</textarea><div class="helper">Short English noun phrases. One instance may produce multiple object layers. Visibility and object boundaries require human review.</div><button id="run" class="primary full" style="margin-top:14px" type="button">Run SAM 3 analysis</button><div class="divider"></div><div class="sectionlabel">Human-guided photo segmentation</div>
+<section class="panel"><div class="panelhdr">01 · Source &amp; inference <span class="tag">INPUT</span></div><div class="panelbody"><div class="sectionlabel">Model-driven segmentation</div><label class="fieldlabel" for="image">Image · PNG/JPEG</label><div class="filebox"><input id="image" type="file" accept="image/png,image/jpeg"></div><label class="fieldlabel" for="prompts">Objects, back to front</label><textarea class="field" id="prompts" spellcheck="false">wooden table, saucer, coffee cup, spoon</textarea><div class="helper">Short English noun phrases. One instance may produce multiple object layers. Visibility and object boundaries require human review.</div><button id="run" class="primary full" style="margin-top:14px" type="button">Run SAM 3 analysis</button><div class="divider"></div><div class="sectionlabel">Human-guided photo segmentation</div>
 <label class="fieldlabel" for="seedFile">Seed PNG · same dimensions as the photo</label><input id="seedFile" type="file" accept="image/png">
 <p class="helper">Uses the photo selected above. Seed gray values: 0 certain background, 85 probable background, 170 probable foreground, 255 certain foreground. This is assisted GrabCut, not automatic multi-object recognition.</p>
 <button id="guidedRun" class="secondary full" type="button">Segment with my seed map</button>
@@ -61,11 +65,30 @@ footer{color:#98a1ac;font-size:11px;margin-top:25px;line-height:1.7}.errors{colo
 <script>
 const by=id=>document.getElementById(id), API='/api/v1';let activeId=null, polling=null, blobUrls=[];
 function headers(){let t=by('token').value.trim();return t?{'Authorization':'Bearer '+t}:{}}
-async function api(path,opts={}){const r=await fetch(API+path,{...opts,headers:{...headers(),...(opts.headers||{})}});let data;let ct=r.headers.get('content-type')||'';try{data=ct.includes('json')?await r.json():await r.text()}catch(e){data='Malformed server response'}if(!r.ok)throw new Error(typeof data==='object'?JSON.stringify(data.detail||data):String(data));return data}
+async function api(path,opts={}){
+ const r=await fetch(API+path,{...opts,headers:{...headers(),...(opts.headers||{})}});
+ let data;
+ try{data=(r.headers.get('content-type')||'').includes('json')?await r.json():await r.text()}catch(e){data='Malformed server response'}
+ if(!r.ok){
+  const detail=data?.detail??data;
+  const err=new Error(typeof detail==='string'?detail:detail.message||JSON.stringify(detail));
+  err.status=r.status;throw err;
+ }
+ return data;
+}
 function error(x){by('error').textContent=x||'';by('error').style.display=x?'block':'none'}
 function state(text){by('status').textContent=text;by('stageFoot').textContent=text}
 function buttonBusy(yes){['run','demo','import'].forEach(k=>by(k).disabled=yes)}
-async function refreshCapability(){try{const c=await api('/capabilities');by('deviceStatus').textContent=c.model_ready?'SAM 3 configured · '+c.device:'Model not configured · review available';by('deviceDot').classList.toggle('on',!!c.model_ready);by('run').disabled=!c.model_ready}catch(e){by('deviceStatus').textContent='Authorization required';by('run').disabled=true}}
+async function refreshCapability(){
+ try{
+  const c=await api('/capabilities');
+  by('deviceStatus').textContent=c.model_ready?'SAM 3 configured · '+c.device:'Model not configured · review available';
+  by('deviceDot').classList.toggle('on',!!c.model_ready);by('run').disabled=!c.model_ready;
+ }catch(e){
+  by('deviceStatus').textContent=e.status===401?'Owner access token required':'Cannot reach the backend';
+  by('deviceDot').classList.remove('on');by('run').disabled=true;
+ }
+}
 async function imageBlob(path){const r=await fetch(API+path,{headers:headers()});if(!r.ok)throw new Error('Image endpoint error: '+r.status);const url=URL.createObjectURL(await r.blob());blobUrls.push(url);return url}
 async function downloadUrl(path,filename){const r=await fetch(API+path,{headers:headers()});if(!r.ok)throw new Error('File export failed: '+r.status);const url=URL.createObjectURL(await r.blob());const a=document.createElement('a');a.href=url;a.download=filename;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
 function activateLink(id,fn){let el=by(id);el.href='#';el.style.opacity='1';el.style.pointerEvents='auto';el.onclick=async evt=>{evt.preventDefault();try{await fn()}catch(e){error(e.message)}}}

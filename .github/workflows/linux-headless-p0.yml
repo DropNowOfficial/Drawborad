@@ -112,6 +112,20 @@ jobs:
           path: out/DrawboradHeadless-ubuntu24-x86_64.tar.gz
           if-no-files-found: error
           retention-days: 14
+      - name: Package the authenticated editor for a persistent host
+        run: |
+          tar czf out/DrawboradNativeEditor-ubuntu24-amd64.tar.gz \
+            -C tools/packaging/native-editor Dockerfile compose.yaml README.md .dockerignore \
+            -C "$GITHUB_WORKSPACE/out/linux-headless" DrawboradHeadless \
+            -C "$GITHUB_WORKSPACE" cloud/*.py cloud/requirements.txt cloud/static/index.html \
+              tools/segmentation/guided_grabcut.py tools/models/sam3_semantic.py tools/packaging/install-runtime-ubuntu.sh
+          (cd out && sha256sum DrawboradNativeEditor-ubuntu24-amd64.tar.gz > DrawboradNativeEditor-ubuntu24-amd64.tar.gz.sha256)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-editor-host-${{ github.sha }}
+          path: out/DrawboradNativeEditor-ubuntu24-amd64.tar.gz*
+          if-no-files-found: error
+          retention-days: 14
   runtime-install:
     needs: linux-headless
     runs-on: ubuntu-24.04
@@ -143,4 +157,54 @@ jobs:
           name: linux-headless-runtime-validation-${{ github.sha }}
           path: /tmp/runtime-evidence/
           if-no-files-found: error
+          retention-days: 14
+
+  native-editor-browser:
+    needs: linux-headless
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-editor-host-${{ github.sha }}
+          path: out/host
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-headless-p0-${{ github.sha }}
+          path: out/native-evidence
+      - name: Verify the deployable bundle
+        working-directory: out/host
+        run: |
+          sha256sum -c DrawboradNativeEditor-ubuntu24-amd64.tar.gz.sha256
+          tar xzf DrawboradNativeEditor-ubuntu24-amd64.tar.gz
+          if env -u DRAWBORAD_CLOUD_TOKEN docker compose config --quiet; then
+            echo 'Empty owner credential unexpectedly accepted' >&2
+            exit 1
+          fi
+      - name: Install browser test dependencies
+        run: |
+          python3 -m venv out/browser-venv
+          out/browser-venv/bin/pip install 'playwright>=1.50,<2' pillow
+          out/browser-venv/bin/python -m playwright install --with-deps chromium
+      - name: Exercise the delivered editor in Chromium
+        working-directory: out/host
+        env:
+          COMPOSE_PROJECT_NAME: drawborad-native-ci
+          DRAWBORAD_NATIVE_PORT: "18767"
+        run: |
+          set -euo pipefail
+          export DRAWBORAD_CLOUD_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+          echo "::add-mask::$DRAWBORAD_CLOUD_TOKEN"
+          trap 'docker compose logs --no-color editor; docker compose down --volumes' EXIT
+          docker compose up -d --build --wait --wait-timeout 90
+          ../browser-venv/bin/python ../../tests/cloud/browser_native_acceptance.py ../native-evidence/real-input ../browser-evidence
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-editor-browser-${{ github.sha }}
+          path: out/browser-evidence/
+          if-no-files-found: warn
           retention-days: 14
