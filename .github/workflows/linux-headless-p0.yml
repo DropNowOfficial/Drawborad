@@ -57,6 +57,8 @@ jobs:
         run: |
           ctest --test-dir out/linux-headless --show-only=json-v1 > out/evidence/ctest-inventory.json
           ctest --test-dir out/linux-headless --output-on-failure --no-tests=error --output-junit "$PWD/out/evidence/ctest.xml" 2>&1 | tee out/evidence/ctest.log
+      - name: Verify real-photo review board tool
+        run: python3 -m unittest discover -s tests/qa -p 'test_real_photo_review.py' -v
       - name: Generate genuine C++ painting artifacts
         run: out/linux-headless/DrawboradHeadless smoke --output out/evidence/painting > out/evidence/smoke-stdout.json
       - name: Independently verify ORA and collect receipts
@@ -69,6 +71,7 @@ jobs:
           python3 tools/experiments/real_photo.py out/evidence/real-input
           out/linux-headless/DrawboradHeadless run --manifest "$PWD/out/evidence/real-input/manifest.json" --output out/evidence/real-painting --accept-all > out/evidence/real-photo-run.json
           python3 tests/headless/verify_artifacts.py out/evidence/real-painting > out/evidence/real-photo-ora.json
+          python3 tools/qa/real_photo_review.py out/evidence/real-input/source.png out/evidence/real-input/object-1.png out/evidence/real-painting/final.png out/evidence/real-painting/report.json out/evidence/real-photo-review.png
       - name: Upload build evidence
         if: always()
         uses: actions/upload-artifact@v4
