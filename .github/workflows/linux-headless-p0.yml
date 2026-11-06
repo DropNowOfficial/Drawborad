@@ -12,6 +12,7 @@ on:
       - 'tools/qa/headless_evidence.py'
       - 'tools/packaging/**'
       - 'tools/experiments/**'
+      - 'tools/segmentation/**'
       - 'tests/**'
       - '.github/workflows/linux-headless-p0.yml'
   pull_request:
@@ -25,6 +26,7 @@ on:
       - 'tools/qa/headless_evidence.py'
       - 'tools/packaging/**'
       - 'tools/experiments/**'
+      - 'tools/segmentation/**'
       - 'tests/**'
       - '.github/workflows/linux-headless-p0.yml'
 permissions:
@@ -66,6 +68,7 @@ jobs:
       - name: Reconstruct a public real photograph
         run: |
           sudo apt-get install -y python3-skimage python3-opencv
+          python3 tools/segmentation/test_guided_grabcut.py | tee out/evidence/guided-segmentation-tests.log
           python3 tools/experiments/real_photo.py out/evidence/real-input
           out/linux-headless/DrawboradHeadless run --manifest "$PWD/out/evidence/real-input/manifest.json" --output out/evidence/real-painting --accept-all > out/evidence/real-photo-run.json
           python3 tests/headless/verify_artifacts.py out/evidence/real-painting > out/evidence/real-photo-ora.json
