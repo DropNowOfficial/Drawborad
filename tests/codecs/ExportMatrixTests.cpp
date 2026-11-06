@@ -290,3 +290,45 @@ TEST("C06 document preflight binds export dimensions and document color mode"){
     r.size={31,16};
     CHECK(!preflightExport(s,r));
 }
+
+namespace {
+Bytes storedZipEntry(const Bytes& zip,const std::string& wanted){
+    for(std::size_t at=0;at+30<=zip.size();){
+        if(zip[at]!='P'||zip[at+1]!='K'||zip[at+2]!=3||zip[at+3]!=4)break;
+        const auto n=std::size_t(zip[at+26])+(std::size_t(zip[at+27])<<8);
+        const auto extra=std::size_t(zip[at+28])+(std::size_t(zip[at+29])<<8);
+        std::size_t length=0;for(unsigned k=0;k<4;++k)length|=std::size_t(zip[at+18+k])<<(8*k);
+        const auto start=at+30+n+extra;CHECK(start<=zip.size());CHECK(length<=zip.size()-start);
+        if(std::string(zip.begin()+std::ptrdiff_t(at+30),zip.begin()+std::ptrdiff_t(at+30+n))==wanted)
+            return Bytes(zip.begin()+std::ptrdiff_t(start),zip.begin()+std::ptrdiff_t(start+length));
+        at=start+length;
+    }
+    return {};
+}
+}
+TEST("C06 ORA export omits group markers and preserves hidden masked leaves") {
+    const auto path=std::filesystem::temp_directory_path()/"drawborad-ora-masked-test.ora";
+    std::filesystem::remove(path);
+    auto pixels=rgba8();PsdLayerPixels leaf;leaf.name="Cup / Paint";leaf.pixels=pixels;
+    leaf.visible=false;leaf.mask={0,255,128,255};leaf.maskBounds={0,0,2,2};
+    PsdLayerPixels end;end.name="</Layer group>";end.sectionType=3;end.pixels=pixels;
+    PsdLayerPixels group;group.name="Cup";group.sectionType=2;group.pixels=pixels;
+    for(const bool hiddenParent:{false,true}){
+    leaf.visible=hiddenParent;group.visible=!hiddenParent;
+    const std::array<PsdLayerPixels,3> layers{end,leaf,group};
+    ExportRequest request;request.format=ExportFormat::Ora;request.path=path;request.size={2,2};
+    auto plan=preflightExport(ColorMode::RGB,request);CHECK(plan);
+    CHECK(ExportService{}.write(plan.value(),pixels,layers,{}));
+    NativeFileIO io;auto zip=io.read(path,1024*1024);CHECK(zip);
+    const auto xml=storedZipEntry(zip.value(),"stack.xml");const std::string text(xml.begin(),xml.end());
+    CHECK(text.find("visibility=\"hidden\"")!=std::string::npos);
+    CHECK(text.find("data/layer1.png")==std::string::npos);
+    const auto png=storedZipEntry(zip.value(),"data/layer0.png");CHECK(!png.empty());
+    const auto layerPath=path.string()+".png";CHECK(io.write(layerPath,png,false));
+    auto decoded=decodeImage(layerPath,{});CHECK(decoded);CHECK(decoded.value().decodedPixels);
+    const auto& bytes=decoded.value().decodedPixels->bytes;
+    CHECK(bytes[3]==0);CHECK(bytes[7]==128);CHECK(bytes[11]==128);CHECK(bytes[15]==0);
+    CHECK(leaf.pixels.bytes==pixels.bytes);
+    std::filesystem::remove(layerPath);std::filesystem::remove(path);
+    }
+}

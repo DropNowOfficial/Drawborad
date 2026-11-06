@@ -4,6 +4,7 @@
 #include "codecs/RasterWriters.h"
 #include "codecs/LayerArchive.h"
 #include <atomic>
+#include <algorithm>
 #include <chrono>
 namespace drawborad {
 Result<ExportPlan> preflightExport(ColorMode mode,const ExportRequest&r){
@@ -103,14 +104,57 @@ Result<ExportReport> ExportService::write(const ExportPlan& plan,const TileData&
 
     std::vector<ArchiveLayer> archive;
     archive.reserve(layers.size());
-    for(const auto& layer:layers){
+    // PSD records arrive back-to-front. ORA stack.xml is front-to-back.
+    std::vector<std::pair<std::string,bool>> groups;
+    for(auto it=layers.rbegin();it!=layers.rend();++it){
+        const auto& layer=*it;
+        if(layer.sectionType && (*layer.sectionType==1 || *layer.sectionType==2)){
+            groups.emplace_back(layer.name,layer.visible && (groups.empty() || groups.back().second));
+            continue;
+        }
+        if(layer.sectionType && *layer.sectionType==3){
+            if(groups.empty())return error(ErrorCode::CorruptData,"export.group-boundary");
+            groups.pop_back();continue;
+        }
         ArchiveLayer a;
-        a.name=layer.name;
+        std::string prefix;
+        for(const auto& group:groups)prefix+=group.first+" / ";
+        a.name=layer.name.starts_with(prefix)?layer.name:prefix+layer.name;
         a.pixels=layer.pixels;
         a.opacity=double(layer.opacity)/255.0;
         a.blend=layer.blend;
+        a.visible=layer.visible && (groups.empty() || groups.back().second);
+        if(!layer.mask.empty()){
+            const auto& bounds=layer.maskBounds;
+            auto maskSize=checkedMultiply(bounds.width,bounds.height);
+            const auto channels=a.pixels.format.channelCount();
+            const auto sampleBytes=a.pixels.format.depth==Depth::U16?2u:1u;
+            auto bytes=checkedMultiply(a.pixels.rowStride,a.pixels.height);
+            if(!maskSize || maskSize.value()!=layer.mask.size() || !a.pixels.format.alpha ||
+               !bytes || bytes.value()>a.pixels.bytes.size() ||
+               a.pixels.rowStride<std::uint64_t(a.pixels.width)*channels*sampleBytes)
+                return error(ErrorCode::InvalidInput,"export.mask-layout");
+            for(std::uint32_t y=0;y<a.pixels.height;++y)for(std::uint32_t x=0;x<a.pixels.width;++x){
+                auto coverage=layer.maskDefault;
+                // Compare before subtracting to avoid overflow for external bounds.
+                if(bounds.x<=std::int64_t(x) && bounds.y<=std::int64_t(y)){
+                    const auto mx=std::uint64_t(x)-std::uint64_t(bounds.x);
+                    const auto my=std::uint64_t(y)-std::uint64_t(bounds.y);
+                    if(mx<bounds.width && my<bounds.height)coverage=layer.mask[std::size_t(my*bounds.width+mx)];
+                }
+                const auto at=std::size_t(y*a.pixels.rowStride+(std::uint64_t(x)*channels+channels-1)*sampleBytes);
+                auto alpha=unsigned(a.pixels.bytes[at]);
+                if(sampleBytes==2)alpha|=unsigned(a.pixels.bytes[at+1])<<8;
+                alpha=(alpha*coverage+127)/255;
+                a.pixels.bytes[at]=std::uint8_t(alpha);
+                if(sampleBytes==2)a.pixels.bytes[at+1]=std::uint8_t(alpha>>8);
+            }
+        }
         archive.push_back(std::move(a));
     }
+    if(!groups.empty())return error(ErrorCode::CorruptData,"export.group-boundary");
+    // LayerZip retains its existing back-to-front manifest convention.
+    if(plan.request.format==ExportFormat::LayerZip)std::reverse(archive.begin(),archive.end());
     Result<Bytes> encoded=error(ErrorCode::UnsupportedFeature,"export.format");
     if(plan.request.format==ExportFormat::Ora)
         encoded=encodeOra(plan.request.size,archive,merged,options);

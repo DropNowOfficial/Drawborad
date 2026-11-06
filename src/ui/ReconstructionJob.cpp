@@ -159,7 +159,7 @@ Result<Bytes> runReconstructionJob(const DocumentSnapshot& input,std::stop_token
             const auto layer=stageId(input,object,stage);
             PlanningRegion region{planning,object,layer,{0,0,size.width,size.height},reviewed.masks[i],&source,seedFor(layer),8192,250000,stop};
             region.clipToReviewedMask=std::string_view(stage)=="base";
-            auto generated=std::string_view(stage)=="guides"?planContours(region):planBasePigment(region,StyleSettings{"marker",4,2,1,.06});
+            auto generated=std::string_view(stage)=="guides"?planContours(region):planBasePigment(region,StyleSettings{"marker",2,1,1,.04});
             // Guides are optional for a thin visible object: conservative nib
             // erosion may leave no contour while its clipped pigment is valid.
             // All other guide errors, including cancellation/budgets, propagate.
