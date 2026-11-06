@@ -10,3 +10,13 @@ Architecture: existing HTML/FastAPI -> serialized private JSONL process -> Appli
 5. Connect existing guided input/reconstruction and verify real-photo full edit loop, independent HTTP and browser.
 
 Acceptance pending until actual execution; no remote public deployment is authorized. Current local host lacks CMake/Qt development libraries. CI performs complete native build. Dedicated branch only, no main merge.
+
+## Final implementation checkpoint
+
+- Native RecolorStroke and persistent session implemented; session contract passes.
+- Project API implemented; native response is the only state projection. Auth, busy, stale, lock and unavailable errors remain distinct.
+- Existing page editor and human-guided photo entry implemented. Syntax checked; browser interaction and visual QA blocked by explicit cloud-browser URL policy.
+- Actual Chelsea photograph independent HTTP acceptance completed: 4,391 strokes; only selected stroke recolored; save/reopen/replay after removing references; independent ORA max error 0; server restart restores saved revision. This is backend acceptance, not browser acceptance.
+- Independent review completed once; bounded fixes made for failed replacement/history, oversized IPC and rejected UI properties. Server regression tests pass.
+- PR #6 is draft. No merge or public deployment. Final CI is attached to the implementation commit; inspect the run, not historical green status.
+- Resume with authorized browser access and actual end-to-end UI verification.

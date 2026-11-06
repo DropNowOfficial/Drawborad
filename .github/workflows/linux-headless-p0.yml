@@ -72,7 +72,8 @@ jobs:
         run: |
           python3 -m venv --system-site-packages out/api-venv
           out/api-venv/bin/pip install -r cloud/requirements.txt pytest httpx opencv-python-headless
-          DRAWBORAD_TEST_ENGINE="$PWD/out/linux-headless/DrawboradHeadless" out/api-venv/bin/python -m pytest tests/cloud -q
+          export PATH="$PWD/out/api-venv/bin:$PATH"
+          DRAWBORAD_TEST_ENGINE="$PWD/out/linux-headless/DrawboradHeadless" python -m pytest tests/cloud -q
       - name: Generate genuine C++ painting artifacts
         run: out/linux-headless/DrawboradHeadless smoke --output out/evidence/painting > out/evidence/smoke-stdout.json
       - name: Independently verify ORA and collect receipts
