@@ -55,3 +55,22 @@ def test_real_native_edit_save_reconnect_and_restart(tmp_path, monkeypatch):
         assert reopened.json()['revision']==saved['revision']
         assert not reopened.json()['dirty']
         assert restarted.get(prefix+'/preview.png').content==after
+
+def test_failed_replacement_and_oversized_command_preserve_history(tmp_path,monkeypatch):
+    engine=os.environ.get('DRAWBORAD_TEST_ENGINE')
+    if not engine:pytest.skip('Supply real native engine')
+    monkeypatch.setenv('DRAWBORAD_NATIVE_ENGINE',str(Path(engine).resolve()))
+    config=Config(tmp_path,None,Path('missing'),'cpu','python','')
+    with TestClient(create_app(config)) as c:
+        s=c.post('/api/v1/projects',json={}).json();p='/api/v1/projects/'+s['id']
+        saved=c.post(p+'/save',json={'expected_revision':s['revision']}).json()
+        root=next(n for n in saved['nodes'] if n['kind']==0)
+        changed=c.post(p+'/commands',json={'expected_revision':saved['revision'],'type':'set_properties','node_id':root['id'],'visible':False}).json()
+        bad=c.post(p+'/commands',json={'expected_revision':changed['revision'],'type':'recolor_stroke','stroke_id':'x'*1100000,'color':'#000000'})
+        assert bad.status_code==413,bad.text
+        assert c.get(p).json()['revision']==changed['revision'] and c.get(p).json()['dirty']
+        saved=c.post(p+'/save',json={'expected_revision':changed['revision']}).json()
+        assert c.post('/api/v1/projects/import',files={'project':('bad.draw',b'corrupt')}).status_code>=400
+        undo=c.post(p+'/undo',json={'expected_revision':saved['revision']})
+        assert undo.status_code==200,undo.text
+        assert next(n for n in undo.json()['nodes'] if n['kind']==0)['visible']

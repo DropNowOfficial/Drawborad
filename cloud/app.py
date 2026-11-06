@@ -185,7 +185,7 @@ def create_app(config: Config | None = None) -> FastAPI:
                 raise HTTPException(401,'Bearer token required')
 
     from .projects import install_projects
-    install_projects(app, config, authorized)
+    native_projects = install_projects(app, config, authorized)
 
     def get_job(jid: str) -> dict:
         return _status(config,_clean_id(jid))
@@ -204,7 +204,7 @@ def create_app(config: Config | None = None) -> FastAPI:
                 'model_checkpoint_available':bool(config.checkpoint and config.checkpoint.is_file()),
                 'model_package_installed':importlib.util.find_spec('sam3') is not None,
                 'runner_available':config.script.is_file(),
-                'device':config.device,'native_cpp_painting':False,
+                'device':config.device,'native_cpp_painting':bool(shutil.which(native_projects.engine)), 'native_engine_configured':bool(shutil.which(native_projects.engine)),
                 'supported_exports':['OpenRaster RGBA layers','PNG layer cutouts','SAM3 native manifest'],
                 'note':'A healthy server does not imply successful SAM3 inference or native C++ brush rendering'}
 
@@ -244,6 +244,56 @@ def create_app(config: Config | None = None) -> FastAPI:
         except (ValueError,OSError) as exc:
             shutil.rmtree(folder,ignore_errors=True)
             raise HTTPException(500,str(exc)) from exc
+
+    @app.post(f'{API}/guided', status_code=201, dependencies=[Depends(authorized)])
+    def guided(image: UploadFile=File(...), seeds: UploadFile=File(...)):
+        # Explicit seed map, no automatic recognition or SAM claim.
+        data=image.file.read(MAX_SOURCE_BYTES+1)
+        ext=_validate_upload(data,image.filename or '')
+        seed_data=seeds.file.read(MAX_SOURCE_BYTES+1)
+        if not seed_data or len(seed_data)>MAX_SOURCE_BYTES:
+            raise HTTPException(413,'Seed PNG exceeds the upload limit')
+        with native_projects.transaction():
+            jid=str(uuid4());folder=config.root/jid;folder.mkdir()
+            try:
+                source=folder/('input'+ext);source.write_bytes(data)
+                seed_path=folder/'seeds.png';seed_path.write_bytes(seed_data)
+                with (folder/'worker.log').open('wb') as log:
+                    result=subprocess.run([sys.executable,str(BASE/'tools/segmentation/guided_grabcut.py'),
+                        '--image',str(source),'--seeds',str(seed_path),'--output',str(folder/'result')],
+                        stdout=log,stderr=subprocess.STDOUT,timeout=120)
+                if result.returncode:
+                    raise HTTPException(422,{'code':'guided_failed','message':'Guided segmentation failed; check seed labels and image dimensions'})
+                return _done(config,jid,origin='human-guided',message='Human-guided GrabCut: two visible regions, not automatic multi-object recognition. Review masks before generating strokes.')
+            except subprocess.TimeoutExpired:
+                shutil.rmtree(folder,ignore_errors=True)
+                raise HTTPException(504,'Guided segmentation timed out')
+            except Exception:
+                shutil.rmtree(folder,ignore_errors=True)
+                raise
+
+    @app.post(f'{API}/projects/from-job/{{jid}}', status_code=201, dependencies=[Depends(authorized)])
+    def reconstruct_job(jid: str, body: dict):
+        record=get_job(jid)
+        if record.get('state')!='succeeded' or body.get('accept_all') is not True:
+            raise HTTPException(422,'Review the masks and explicitly accept all objects first')
+        with native_projects.transaction():
+            native_projects.prepare_switch()
+            import tempfile
+            with tempfile.TemporaryDirectory(dir=config.root) as tmp:
+                output=Path(tmp)/'painting'
+                try:
+                    with (config.root/jid/'reconstruction.log').open('wb') as log:
+                        result=subprocess.run([native_projects.engine,'run','--manifest',
+                            str(config.root/jid/'result/manifest.json'),'--output',str(output),'--accept-all'],
+                            stdout=log,stderr=subprocess.STDOUT,timeout=180)
+                except subprocess.TimeoutExpired:
+                    raise HTTPException(504,{'code':'reconstruction_timeout','message':'Native reconstruction timed out'})
+                except OSError:
+                    raise HTTPException(503,{'code':'engine_unavailable','message':'Native reconstruction could not start'})
+                if result.returncode:
+                    raise HTTPException(422,{'code':'reconstruction_failed','message':'Native engine rejected this input; no project was replaced'})
+                return native_projects.import_file(output/'project.draw')
 
     def _work(jid: str, args: list[str]):
         folder=config.root/jid

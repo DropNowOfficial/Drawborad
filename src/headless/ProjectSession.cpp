@@ -178,10 +178,16 @@ public:
 }
 int runProjectSession() {
     Session session;std::string line;
-    while(std::getline(std::cin,line)) {
+    while(std::cin.good()) {
+        line.clear();bool oversized=false;char ch;
+        while(std::cin.get(ch) && ch!='\n') {
+            if(line.size()<65536) line.push_back(ch);
+            else oversized=true;
+        }
+        if(line.empty() && !oversized && std::cin.eof()) break;
         QJsonObject response;
         try {
-            need(line.size()<=1024*1024,"session.request-size");QJsonParseError parse;
+            need(!oversized,"session.request-size");QJsonParseError parse;
             auto doc=QJsonDocument::fromJson(QByteArray::fromStdString(line),&parse);
             need(parse.error==QJsonParseError::NoError && doc.isObject(),"session.json");auto req=doc.object();
             response.insert("request_id",req.value("request_id"));

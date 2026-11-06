@@ -6,6 +6,7 @@ on:
       - 'CMakeLists.txt'
       - 'cmake/**'
       - 'apps/headless/**'
+      - 'cloud/**'
       - 'src/**'
       - 'src/ui/**'
       - 'src/codecs/**'
@@ -20,6 +21,7 @@ on:
       - 'CMakeLists.txt'
       - 'cmake/**'
       - 'apps/headless/**'
+      - 'cloud/**'
       - 'src/**'
       - 'src/ui/**'
       - 'src/codecs/**'
@@ -69,8 +71,8 @@ jobs:
       - name: Python project API and existing runtime tests
         run: |
           python3 -m venv --system-site-packages out/api-venv
-          out/api-venv/bin/pip install -r cloud/requirements.txt pytest httpx
-          DRAWBORAD_TEST_ENGINE="$PWD/out/linux-headless/DrawboradHeadless" out/api-venv/bin/python -m pytest tests/cloud/test_native_projects.py tests/cloud/test_cloud_runtime.py -q
+          out/api-venv/bin/pip install -r cloud/requirements.txt pytest httpx opencv-python-headless
+          DRAWBORAD_TEST_ENGINE="$PWD/out/linux-headless/DrawboradHeadless" out/api-venv/bin/python -m pytest tests/cloud -q
       - name: Generate genuine C++ painting artifacts
         run: out/linux-headless/DrawboradHeadless smoke --output out/evidence/painting > out/evidence/smoke-stdout.json
       - name: Independently verify ORA and collect receipts
@@ -84,6 +86,8 @@ jobs:
           python3 tools/experiments/real_photo.py out/evidence/real-input
           out/linux-headless/DrawboradHeadless run --manifest "$PWD/out/evidence/real-input/manifest.json" --output out/evidence/real-painting --accept-all > out/evidence/real-photo-run.json
           python3 tests/headless/verify_artifacts.py out/evidence/real-painting > out/evidence/real-photo-ora.json
+      - name: Independent real-photo HTTP editing acceptance
+        run: out/api-venv/bin/python tests/cloud/http_native_acceptance.py out/linux-headless/DrawboradHeadless out/evidence/real-input out/evidence/editor
       - name: Upload build evidence
         if: always()
         uses: actions/upload-artifact@v4

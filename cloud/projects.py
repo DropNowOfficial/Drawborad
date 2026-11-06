@@ -56,16 +56,29 @@ class Projects:
         try:
             self.log=(self.root/'engine.log').open('ab')
             self.proc=subprocess.Popen([self.engine,'session'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self.log,bufsize=0)
+            os.set_blocking(self.proc.stdin.fileno(),False)
         except OSError:
             self.stop();fail(503,'engine_unavailable','Native engine could not start')
 
     def rpc(self, method, **params):
-        self.start();self.sequence+=1
+        self.sequence+=1
         request_id=str(self.sequence)
         request=dict(request_id=request_id,method=method,params=params)
+        try: payload=(json.dumps(request,allow_nan=False)+'\n').encode()
+        except (ValueError,TypeError):fail(422,'invalid_input','Request must contain finite JSON values')
+        if len(payload)>65536:fail(413,'invalid_input','Native command exceeds 64 KiB')
+        self.start()
         try:
-            self.proc.stdin.write((json.dumps(request,allow_nan=False)+'\n').encode())
-            data=bytearray();deadline=time.monotonic()+120
+            deadline=time.monotonic()+120
+            with selectors.DefaultSelector() as writer:
+                writer.register(self.proc.stdin,selectors.EVENT_WRITE)
+                position=0
+                while position<len(payload):
+                    remaining=deadline-time.monotonic()
+                    if remaining<=0 or not writer.select(remaining):raise TimeoutError()
+                    try:position+=os.write(self.proc.stdin.fileno(),payload[position:])
+                    except BlockingIOError:continue
+            data=bytearray()
             with selectors.DefaultSelector() as selector:
                 selector.register(self.proc.stdout,selectors.EVENT_READ)
                 while not data.endswith(b'\n'):
@@ -101,24 +114,24 @@ class Projects:
         if self.active:
             current=self.rpc('state')
             if current['dirty']:fail(409,'unsaved_changes','Save or explicitly close the current project before switching')
-            self.rpc('close',expected_revision=current['revision'])
-            self.active=None
+            return {'expected_revision':current['revision']}
+        return {}
 
     def select(self,pid):
         path=self.project_path(pid)
         self.start()
         if self.active!=pid:
             if not path.is_file():fail(404,'not_found','No saved project exists at this ID')
-            self.prepare_switch()
-            self.rpc('open',path=str(path));self.active=pid
+            params=self.prepare_switch()
+            self.rpc('open',path=str(path),**params);self.active=pid
         return self.state(self.rpc('state'))
 
     def import_file(self,source):
-        self.prepare_switch()
+        params=self.prepare_switch()
         pid=str(uuid4());folder=self.root/pid;folder.mkdir()
         try:
             shutil.copyfile(source,folder/'project.draw')
-            state=self.rpc('open',path=str(folder/'project.draw'));self.active=pid
+            state=self.rpc('open',path=str(folder/'project.draw'),**params);self.active=pid
             return self.state(state)
         except Exception:
             shutil.rmtree(folder,ignore_errors=True)
@@ -132,7 +145,7 @@ class Projects:
             if event_limit is not None:params['event_limit']=event_limit
             result=self.rpc('export',**params)
             return Response(path.read_bytes(),media_type='image/png' if format=='png' else 'image/openraster',
-                            headers={'Cache-Control':'no-store','X-Drawborad-Revision':result['revision']})
+                            headers={'Cache-Control':'no-store','X-Drawborad-Revision':result['revision'],'X-Drawborad-Source-Asset-Reads':result['source_asset_reads']})
 
 
 def install_projects(app,config,authorized):
@@ -150,8 +163,8 @@ def install_projects(app,config,authorized):
     @router.post('',status_code=201)
     def create(body:dict):
         with projects.transaction():
-            projects.prepare_switch()
-            state=projects.rpc('create',width=body.get('width','512'),height=body.get('height','512'))
+            params=projects.prepare_switch()
+            state=projects.rpc('create',width=body.get('width','512'),height=body.get('height','512'),**params)
             projects.active=str(uuid4());projects.project_path(projects.active).parent.mkdir()
             return projects.state(state)
 
