@@ -1,8 +1,24 @@
 # Deploy the native editor
 
-Use the `native-editor-host-…` artifact from the Linux headless workflow. It includes the compiled x86-64 engine, FastAPI editor, guided segmentation, and the Compose files. The target is a persistent x86-64 Linux machine with Docker Engine and Compose v2. The host downloads Ubuntu packages and Python wheels at image build time. C++ compilation runs in CI.
+Use the `native-editor-host-…` artifact from the Linux headless workflow. It includes the precompiled Ubuntu 24.04 x86-64 engine, FastAPI editor, guided segmentation, a foreground session launcher, and Compose files.
 
-## Start the owner workspace
+## Use the editor on a Dot's cloud computer
+
+Download the artifact for the push to the current PR branch commit through the connected GitHub account. Unzip it into a writable directory on the cloud computer. Then run:
+
+```sh
+sha256sum -c DrawboradNativeEditor-ubuntu24-amd64.tar.gz.sha256
+tar xzf DrawboradNativeEditor-ubuntu24-amd64.tar.gz
+bash start-cloud-session.sh
+```
+
+Run this in a terminal that can stay open. Once the server is ready, open **http://127.0.0.1:8767** in the browser on that same computer, or use its approved private port preview. Enter the owner token from the file path printed in the terminal. Keep the token in the cloud computer and out of chat or screenshots.
+
+The first start sets up a private Python environment and downloads wheels. If the launcher reports missing system libraries, `bash start-cloud-session.sh --install-deps` can install the packaged Ubuntu dependencies where noninteractive administrator access is allowed. The editor itself runs as the calling user. It binds to loopback and stays available while its process runs.
+
+Saved drawings live under `${XDG_DATA_HOME:-$HOME/.local/share}/drawborad-native-session/data/projects`. Use **Save project** and download the `.draw` if the cloud workspace is temporary. Stop the server with Ctrl+C. Running the same command again reuses the owner token and saved projects. Set `DRAWBORAD_SESSION_HOME` for a different persistent directory or `DRAWBORAD_CLOUD_PORT` for a different loopback port.
+
+## Run a persistent host with Docker Compose
 
 Unzip the GitHub artifact in a new directory on the host, then run:
 

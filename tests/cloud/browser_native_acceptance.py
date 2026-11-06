@@ -60,7 +60,7 @@ def download(page, button, output, filename):
     return target
 
 
-def exercise(context, page, source, output, url, token):
+def exercise(context, page, source, output, url, token, restart):
     authenticate(page, url, token)
     page.get_by_text("Photo segmentation & source-layer review", exact=True).click()
     page.locator("#image").set_input_files(source / "source.png")
@@ -132,11 +132,10 @@ def exercise(context, page, source, output, url, token):
         assert merged.size == exported.size
         assert merged.tobytes() == exported.convert("RGBA").tobytes()
 
-    # Leave a real unsaved edit in the old process before replacing the container.
+    # Only the saved revision should survive replacement of the owning process.
     click_post(page, lock, "/commands")
     expect(page.locator("#nativeDownload")).to_be_disabled()
-    subprocess.run(["docker", "compose", "up", "-d", "--force-recreate", "--wait",
-                    "--wait-timeout", "90", "editor"], check=True)
+    restart()
     page.once("dialog", lambda dialog: dialog.accept())
     authenticate(page, url, token, reconnect=True)
     expect(page.locator("#nativeStatus")).to_contain_text("Saved · revision " + saved["revision"])
@@ -151,23 +150,19 @@ def exercise(context, page, source, output, url, token):
     changed_pixels = sum(before[i:i+3] != after[i:i+3] for i in range(0, len(after), 3))
     return {"project": saved["id"], "strokes": saved["stroke_count"], "stroke": stroke["id"],
             "changed_browser_pixels": changed_pixels, "saved_revision": saved["revision"],
-            "stale_status": 409, "locked_status": 423, "container_recovery": "saved revision",
-            "exports": [draw.name, png.name, ora.name], "target": "packaged editor on CI loopback"}
+            "stale_status": 409, "locked_status": 423, "exports": [draw.name, png.name, ora.name]}
 
 
-if __name__ == "__main__":
-    if os.environ.get("COMPOSE_PROJECT_NAME") != "drawborad-native-ci":
-        sys.exit("This acceptance recreates a container. Use the isolated drawborad-native-ci project.")
-    source, output = (Path(arg).resolve() for arg in sys.argv[1:])
+def verify_in_chromium(source, output, url, token, restart, environment):
     output.mkdir(parents=True, exist_ok=True)
-    url = "http://127.0.0.1:" + os.environ["DRAWBORAD_NATIVE_PORT"]
     with sync_playwright() as p:
         browser = p.chromium.launch()
         context = browser.new_context(viewport={"width": 1440, "height": 1000}, reduced_motion="reduce")
         context.set_default_timeout(90000)
         page = context.new_page()
         try:
-            receipt = exercise(context, page, source, output, url, os.environ["DRAWBORAD_CLOUD_TOKEN"])
+            receipt = exercise(context, page, source, output, url, token, restart)
+            receipt.update(environment)
             receipt["browser"] = "Chromium " + browser.version
             (output / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
             print(json.dumps(receipt))
@@ -176,3 +171,17 @@ if __name__ == "__main__":
             raise
         finally:
             browser.close()
+
+
+if __name__ == "__main__":
+    if os.environ.get("COMPOSE_PROJECT_NAME") != "drawborad-native-ci":
+        sys.exit("This acceptance recreates a container. Use the isolated drawborad-native-ci project.")
+    source, output = (Path(arg).resolve() for arg in sys.argv[1:])
+    url = "http://127.0.0.1:" + os.environ["DRAWBORAD_NATIVE_PORT"]
+
+    def recreate_container():
+        subprocess.run(["docker", "compose", "up", "-d", "--force-recreate", "--wait",
+                        "--wait-timeout", "90", "editor"], check=True)
+
+    verify_in_chromium(source, output, url, os.environ["DRAWBORAD_CLOUD_TOKEN"], recreate_container,
+                       {"target": "packaged editor on CI loopback", "container_recovery": "saved revision"})

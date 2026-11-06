@@ -115,7 +115,7 @@ jobs:
       - name: Package the authenticated editor for a persistent host
         run: |
           tar czf out/DrawboradNativeEditor-ubuntu24-amd64.tar.gz \
-            -C tools/packaging/native-editor Dockerfile compose.yaml README.md .dockerignore \
+            -C tools/packaging/native-editor Dockerfile compose.yaml README.md start-cloud-session.sh .dockerignore \
             -C "$GITHUB_WORKSPACE/out/linux-headless" DrawboradHeadless \
             -C "$GITHUB_WORKSPACE" cloud/*.py cloud/requirements.txt cloud/static/index.html \
               tools/segmentation/guided_grabcut.py tools/models/sam3_semantic.py tools/packaging/install-runtime-ubuntu.sh
@@ -206,5 +206,15 @@ jobs:
         with:
           name: native-editor-browser-${{ github.sha }}
           path: out/browser-evidence/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Exercise the foreground cloud-computer session in Chromium
+        working-directory: out/host
+        run: ../browser-venv/bin/python ../../tests/cloud/cloud_session_acceptance.py ../native-evidence/real-input ../cloud-session-evidence
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-editor-cloud-session-${{ github.sha }}
+          path: out/cloud-session-evidence/
           if-no-files-found: warn
           retention-days: 14
