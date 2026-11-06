@@ -54,6 +54,11 @@ jobs:
       - name: Build
         shell: bash
         run: cmake --build out/linux-headless --parallel 2 2>&1 | tee out/evidence/build.log
+      - name: Preserve native binary for integration debugging
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-editor-binary-${{ github.sha }}
+          path: out/linux-headless/DrawboradHeadless
       - name: Run portable and headless tests
         shell: bash
         run: |
@@ -61,6 +66,11 @@ jobs:
           ctest --test-dir out/linux-headless --output-on-failure --no-tests=error --output-junit "$PWD/out/evidence/ctest.xml" 2>&1 | tee out/evidence/ctest.log
       - name: Native persistent editing contract
         run: python3 tests/headless/test_session.py out/linux-headless/DrawboradHeadless
+      - name: Python project API and existing runtime tests
+        run: |
+          python3 -m venv --system-site-packages out/api-venv
+          out/api-venv/bin/pip install -r cloud/requirements.txt pytest httpx
+          DRAWBORAD_TEST_ENGINE="$PWD/out/linux-headless/DrawboradHeadless" out/api-venv/bin/python -m pytest tests/cloud/test_native_projects.py tests/cloud/test_cloud_runtime.py -q
       - name: Generate genuine C++ painting artifacts
         run: out/linux-headless/DrawboradHeadless smoke --output out/evidence/painting > out/evidence/smoke-stdout.json
       - name: Independently verify ORA and collect receipts

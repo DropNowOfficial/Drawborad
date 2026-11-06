@@ -184,6 +184,9 @@ def create_app(config: Config | None = None) -> FastAPI:
             if not hmac.compare_digest(provided,'Bearer '+config.token):
                 raise HTTPException(401,'Bearer token required')
 
+    from .projects import install_projects
+    install_projects(app, config, authorized)
+
     def get_job(jid: str) -> dict:
         return _status(config,_clean_id(jid))
 

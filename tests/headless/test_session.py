@@ -30,11 +30,20 @@ with tempfile.TemporaryDirectory() as tmp:
     try:
         state = ok('open', path=str(root/'generated/project.draw'))
         assert state['strokes'] and not state['dirty']
-        event = state['strokes'][0]
+        # The earliest guide may be covered in the final composite. Verify
+        # its edit at its replay position, then use the last visible event.
+        first = state['strokes'][0]
+        ok('export', path=str(root/'guide-before.png'), format='png', event_limit='1')
+        guide = command(state, type='recolor_stroke', stroke_id=first['id'], color='#00ff00')
+        assert guide['strokes'][0]['color'] != first['color']
+        ok('export', path=str(root/'guide-after.png'), format='png', event_limit='1')
+        assert (root/'guide-before.png').read_bytes() != (root/'guide-after.png').read_bytes()
+        state = ok('undo', expected_revision=guide['revision'])
+        event = state['strokes'][-1]
         before = ok('export', path=str(root/'before.png'), format='png')
         changed = command(state, type='recolor_stroke', stroke_id=event['id'], color='#00ff00')
         assert changed['revision'] != state['revision'] and changed['dirty']
-        assert changed['strokes'][0]['id'] == event['id']
+        assert changed['strokes'][-1]['id'] == event['id']
         ok('export', path=str(root/'after.png'), format='png')
         assert (root/'before.png').read_bytes() != (root/'after.png').read_bytes()
         stale = call('command', expected_revision=state['revision'], type='recolor_stroke', stroke_id=event['id'], color='#ff00ff')
