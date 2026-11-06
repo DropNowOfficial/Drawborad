@@ -1,7 +1,7 @@
 name: Drawborad Linux headless P0
 on:
   push:
-    branches: [work/linux-headless-engine-20261104]
+    branches: [work/linux-headless-engine-20261104, work/native-stroke-editor-20261106]
     paths:
       - 'CMakeLists.txt'
       - 'cmake/**'
@@ -59,6 +59,8 @@ jobs:
         run: |
           ctest --test-dir out/linux-headless --show-only=json-v1 > out/evidence/ctest-inventory.json
           ctest --test-dir out/linux-headless --output-on-failure --no-tests=error --output-junit "$PWD/out/evidence/ctest.xml" 2>&1 | tee out/evidence/ctest.log
+      - name: Native persistent editing contract
+        run: python3 tests/headless/test_session.py out/linux-headless/DrawboradHeadless
       - name: Generate genuine C++ painting artifacts
         run: out/linux-headless/DrawboradHeadless smoke --output out/evidence/painting > out/evidence/smoke-stdout.json
       - name: Independently verify ORA and collect receipts

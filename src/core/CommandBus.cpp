@@ -271,6 +271,17 @@ Result<ChangeSet> Document::apply(const Command& cmd, Revision expected) {
                         for (auto id : n.children)
                             insert(*ns, n.parent, id, at++);
                         ns->erase(n.id);
+                    } else if constexpr (std::is_same_v<O, RecolorStroke>) {
+                        if (!ev)
+                            ev = std::make_shared<EventList>(*next.eventIndex);
+                        auto found = std::find_if(ev->begin(), ev->end(),
+                            [&](const auto& event) { return event.id == o.id; });
+                        require(found != ev->end(), ErrorCode::InvalidInput, "stroke.missing");
+                        exists(found->layerId);
+                        require(!locked(*ns, found->layerId), ErrorCode::Locked, "stroke.locked");
+                        found->color = o.color;
+                        next.eventIndex = ev;
+                        mark(found->layerId);
                     } else if constexpr (std::is_same_v<O, Paint>) {
                         const auto& e = o.event;
                         exists(e.layerId);

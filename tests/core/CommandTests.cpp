@@ -249,3 +249,32 @@ TEST("undo reports IDs of nodes removed by the inverse transaction") {
     CHECK(std::find(change.value().changedNodes.begin(), change.value().changedNodes.end(), id) !=
           change.value().changedNodes.end());
 }
+TEST("recolor preserves stroke identity and is reversible and atomic") {
+    auto d = fixture();
+    StrokeEvent e; e.id=Id::fromNumber(99); e.objectId=Id::fromNumber(2);
+    e.layerId=Id::fromNumber(3); e.parentRevision=d.snapshot().revision;
+    e.toolId="pencil"; e.endUs=16; e.seed=123;
+    e.geometry={{1,2,1,{}, {},0,0,0},{3,4,.5,{}, {},16,0,0}};
+    ok(d,Paint{e,{0,0,10,10}});
+    const auto before=d.snapshot();
+    auto color=e.color; color.channels={1,.2,.3,0};
+    auto changed=oprev(d,RecolorStroke{e.id,color}); CHECK(changed);
+    CHECK(!changed.value().dirtyRegions.empty());
+    auto expected=e; expected.color=color;
+    CHECK(d.snapshot().eventIndex->front()==expected);
+    CHECK(before.eventIndex->front()==e);
+    CHECK(d.undo()); CHECK(d.snapshot().sameContent(before));
+    CHECK(d.redo()); CHECK(d.snapshot().eventIndex->front()==expected);
+    const auto good=d.snapshot();
+    CHECK(d.apply(Command{RecolorStroke{e.id,e.color}},good.revision-1).error().code==ErrorCode::StaleRevision);
+    CHECK(!oprev(d,RecolorStroke{Id::fromNumber(999),color}));
+    color.channels[0]=NAN;
+    CHECK(!oprev(d,RecolorStroke{e.id,color}));
+    CHECK(d.snapshot().sameContent(good)); CHECK(d.snapshot().revision==good.revision);
+    Command batch; batch.operations={RenameNode{e.layerId,"rollback"},RecolorStroke{e.id,color}};
+    CHECK(!d.apply(batch,good.revision)); CHECK(d.snapshot().sameContent(good));
+    SetProperties lock; lock.id=e.objectId; lock.locked=true; ok(d,lock);
+    auto locked=d.snapshot();
+    CHECK(oprev(d,RecolorStroke{e.id,e.color}).error().code==ErrorCode::Locked);
+    CHECK(d.snapshot().sameContent(locked));
+}
