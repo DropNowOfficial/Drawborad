@@ -114,7 +114,28 @@ jobs:
       - name: Python project API and existing runtime tests
         run: |
           python3 -m venv --system-site-packages out/api-venv
-          out/api-venv/bin/pip install -r cloud/requirements.txt pytest httpx opencv-python-headless
+          # Use the distro-matched OpenCV/NumPy/SciPy stack inherited above.
+          # Installing a second OpenCV wheel can upgrade NumPy past distro SciPy's ABI range.
+          out/api-venv/bin/pip install -r cloud/requirements.txt pytest httpx
+          out/api-venv/bin/python -m pip check
+          out/api-venv/bin/python - <<'PYTHON'
+          import json
+          import cv2
+          import numpy as np
+          import scipy
+          import skimage
+          from pathlib import Path
+          from scipy import ndimage, linalg
+          from skimage.transform import resize
+          sample = np.arange(25, dtype=np.float32).reshape(5, 5)
+          for result in (cv2.GaussianBlur(sample, (3, 3), 0), ndimage.gaussian_filter(sample, 1), resize(sample, sample.shape)):
+              assert result.shape == sample.shape and np.isfinite(result).all()
+          assert np.isclose(linalg.det(np.eye(3)), 1)
+          modules = {name: {"version": module.__version__, "path": str(Path(module.__file__).resolve())}
+                     for name, module in (("numpy", np), ("scipy", scipy), ("opencv", cv2), ("skimage", skimage))}
+          assert all(item["path"].startswith("/usr/lib/python3/dist-packages/") for item in modules.values()), modules
+          print(json.dumps({"modules": modules, "numeric_abi_smoke": "passed"}))
+          PYTHON
           export PATH="$PWD/out/api-venv/bin:$PATH"
           DRAWBORAD_TEST_ENGINE="$PWD/out/linux-headless/DrawboradHeadless" python -m pytest tests/cloud -q
       - name: Generate genuine C++ painting artifacts
