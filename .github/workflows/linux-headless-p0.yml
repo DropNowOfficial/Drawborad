@@ -117,6 +117,10 @@ jobs:
         run: |
           bash tools/experimental/hybrid_planner/build.sh
           python3 -m unittest discover -s tools/experimental/hybrid_planner -p 'test_hybrid.py' -v 2>&1 | tee out/evidence/native-hybrid-tests.log
+      - name: Verify isolated locality-reorder experiment
+        run: |
+          bash tools/experimental/locality_reorder/build.sh "$PWD/out/locality-reorder/native-locality"
+          DRAWBORAD_NATIVE_LOCALITY="$PWD/out/locality-reorder/native-locality" python3 -m unittest discover -s tools/experimental/locality_reorder -p 'test_locality.py' -v 2>&1 | tee out/evidence/locality-reorder-tests.log
       - name: Native persistent editing contract
         run: python3 tests/headless/test_session.py out/linux-headless/DrawboradHeadless
       - name: Python project API and existing runtime tests
