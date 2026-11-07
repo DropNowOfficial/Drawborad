@@ -31,6 +31,9 @@ struct StyleSettings {
     // Zero retains the original long-stroke behavior. Positive values bound
     // within-stroke source color variation by splitting coherent sweep runs.
     double maxColorVariation{};
+    // Experimental form-following paths for persisted native binary masks.
+    // Explicit opt-in: arbitrary images may need more strokes than sweeps.
+    bool followContours{};
 };
 
 struct SchedulePolicy {
@@ -47,3 +50,4 @@ Result<EventBatch> planBasePigment(const PlanningRegion&, const StyleSettings&);
 Result<EventBatch> scheduleStrokes(const EventBatch&, const SchedulePolicy&);
 
 } // namespace drawborad
+

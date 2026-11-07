@@ -21,7 +21,7 @@ MAX_SOURCE_BYTES = 32 * 1024 * 1024
 MAX_MANIFEST_BYTES = 256 * 1024
 _MASK_PATH = re.compile(r"masks/layer-\d{2}\.u8\Z")
 _ALLOWED_IMAGE = {'source.png', 'source.jpg', 'source.jpeg'}
-_ALLOWED_BACKENDS = {'sam3-image', 'fixture-no-ai'}
+_ALLOWED_BACKENDS = {'sam3-image', 'fixture-no-ai', 'opencv-grabcut'}
 
 
 class ManifestError(ValueError):

@@ -1,4 +1,5 @@
 #include "PlanningInternal.h"
+#include "ContourPigment.h"
 #include <functional>
 
 namespace drawborad {
@@ -15,6 +16,11 @@ Result<EventBatch> planBasePigment(const PlanningRegion& region,const StyleSetti
     auto raster=planning::makeSafe(region,style.width);
     if(!raster)return raster.error();
     const auto& safe=raster.value();
+    if(style.followContours) {
+        if(!region.clipToReviewedMask)
+            return error(ErrorCode::UnsupportedFeature,"reconstruct.contour-flow-requires-native-mask");
+        return planning::planContourPigment(region,style,safe);
+    }
     const auto& source=*region.source;
     double gradientX=0,gradientY=0;
     const auto skip=std::max(1,int(std::max(safe.width,safe.height)/128));
@@ -120,3 +126,4 @@ Result<EventBatch> planBasePigment(const PlanningRegion& region,const StyleSetti
     return validateReconstructionBatch(batch);
 }
 } // namespace drawborad
+

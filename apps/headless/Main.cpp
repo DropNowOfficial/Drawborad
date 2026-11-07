@@ -1,4 +1,5 @@
 #include "headless/HeadlessWorkflow.h"
+#include "headless/ProjectSession.h"
 #include "codecs/ImageReader.h"
 #include "ui/ReviewJob.h"
 #include <QCoreApplication>
@@ -29,6 +30,7 @@ Result<SemanticManifestImport> smokeFixture(const QString& path){
     return input;
 }
 int execute(const QStringList& args){
+    if(args.size()==2 && args[1]=="session")return runProjectSession();
     QTextStream out(stdout),err(stderr);
     if(args.size()==2 && (args[1]=="--help" || args[1]=="-h")){
         out<<"DrawboradHeadless\nUsage:\n"

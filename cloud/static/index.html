@@ -3,7 +3,7 @@
 <style>
 :root { color-scheme: light; --bg:#f4f5f7; --ink:#172032; --muted:#707988; --line:#e4e7ed; --accent:#3367d6; --card:rgba(255,255,255,.94); --soft:#f7f8fb; --shadow:0 12px 48px rgba(27,40,58,.065) }
 *{box-sizing:border-box}body{margin:0;background:var(--bg);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;color:var(--ink);font-size:14px;line-height:1.45}
-button,input,textarea{font:inherit}button{cursor:pointer}button:disabled{opacity:.5;cursor:not-allowed}button:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid #9bbcff;outline-offset:2px}
+button,input,textarea,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.5;cursor:not-allowed}button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:3px solid #9bbcff;outline-offset:2px}
 .top{display:flex;align-items:center;justify-content:space-between;padding:20px clamp(20px,4vw,60px);border-bottom:1px solid var(--line);background:#fff}
 .brand{display:flex;align-items:center;gap:10px;font-size:19px;font-weight:750;letter-spacing:-.6px}.logo{display:grid;place-items:center;background:linear-gradient(135deg,#5e87ff,#2b4fb2);width:34px;height:34px;color:#fff;border-radius:10px;font-weight:800;box-shadow:0 4px 12px #5e87ff40}.title-note{font-size:12px;font-weight:550;color:var(--muted);margin-left:8px;letter-spacing:0}.topright{display:flex;gap:18px;align-items:center;color:var(--muted);font-size:12px}.topright a{color:var(--accent);text-decoration:none}
 .shell{max-width:1570px;margin:0 auto;padding:32px clamp(18px,4vw,60px) 70px}.heading{display:flex;align-items:end;justify-content:space-between;gap:20px;margin-bottom:25px}.eyebrow{font-size:11px;letter-spacing:1.7px;font-weight:800;color:var(--accent)}h1{font-size:clamp(27px,3vw,42px);line-height:1.1;letter-spacing:-1.8px;font-weight:760;margin:9px 0 8px}.sub{margin:0;color:var(--muted);max-width:750px}.chip{display:inline-flex;padding:7px 11px;gap:7px;border-radius:18px;border:1px solid #e1e5ed;background:white;font-size:12px;color:#4f5b71;align-items:center;white-space:nowrap}.dot{width:7px;height:7px;background:#eaac43;border-radius:50%}.dot.on{background:#2fae71}
@@ -12,29 +12,107 @@ button,input,textarea{font:inherit}button{cursor:pointer}button:disabled{opacity
 .layerlist{padding:5px 12px 12px}.layer{display:flex;align-items:center;gap:9px;padding:11px 8px;border-radius:10px;border:1px solid transparent}.layer:hover{background:#f6f8fb}.layer input{accent-color:var(--accent);width:16px;height:16px}.thumb{width:37px;height:37px;border:1px solid #e2e6ed;border-radius:7px;object-fit:contain;background:linear-gradient(45deg,#e9ecf0 25%,transparent 25%),linear-gradient(-45deg,#e9ecf0 25%,transparent 25%);background-color:#fff;background-size:11px 11px}.layername{font-weight:650;font-size:12px;line-height:1.25}.layermeta{font-size:10px;color:var(--muted);margin-top:3px}.layertext{min-width:0;flex:1}.status{font-size:12px;color:#52637b;margin:4px 0 12px;white-space:pre-wrap;word-break:break-word}.tag{display:inline-flex;font-size:10px;font-weight:700;padding:4px 7px;border-radius:6px;background:#eaf0fc;color:#4166af}.tag.warn{background:#fff2dc;color:#8f671d}.export{display:grid;gap:9px}.export a{color:var(--accent);text-decoration:none;font-size:12px}.linkbtn{display:block;text-align:center;border:1px solid #d6deea;padding:11px;border-radius:9px;background:#fff;font-weight:680}.kpi{display:flex;gap:12px;margin:12px 0 0;font-size:11px;color:var(--muted)}.kpi strong{color:#26384f;font-size:15px;display:block}
 footer{color:#98a1ac;font-size:11px;margin-top:25px;line-height:1.7}.errors{color:#a82c42;background:#fff0f2;padding:10px 12px;border-radius:8px;white-space:pre-wrap;font-size:12px;display:none}.fine{font-size:11px;color:#8b96a7}a{color:var(--accent)}
 @media(max-width:1180px){.workspace{grid-template-columns:300px 1fr}.workspace>.panel:last-child{grid-column:2;grid-row:2}.viewportpanel{min-height:570px}}@media(max-width:760px){.workspace{display:flex;flex-direction:column}.panel{width:100%}.heading{display:block}.chip{margin-top:12px}.viewport{min-height:300px}.topright span{display:none}.shell{padding-top:24px}}
+.nativebar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.nativegrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(340px,390px)}
+.native-layers-header{display:flex;align-items:center;justify-content:space-between;gap:8px}.native-layers-header .sectionlabel{margin:0}.native-all{padding:7px 10px;white-space:nowrap;font-size:12px}.native-all[aria-pressed="true"]{background:#eaf0fc;border-color:#9bbcff;color:#244f9e}
+.native-nodes{max-height:clamp(360px,54vh,600px);overflow:auto;overscroll-behavior:contain;margin:12px -8px;padding:2px 4px}.native-node{gap:6px;padding:5px 6px;align-items:stretch}.native-node[hidden]{display:none}.native-node.selected{border-color:#9bbcff;background:#edf3ff}.native-node-select{flex:1;min-width:0;text-align:left;border:0;background:transparent;border-radius:6px;padding:7px 3px;color:var(--ink)}.native-node-select .layername{display:block;overflow-wrap:anywhere}.native-node-select .layermeta{display:block}.native-node.selected .layername{color:#244f9e}.native-node-controls{display:flex;gap:6px;align-items:center}.native-node-controls label{display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer}.native-node-controls input{margin:0}.native-scope{padding:10px 12px;border-radius:9px;background:var(--soft);font-size:12px;overflow-wrap:anywhere}.native-sidebar{min-width:0;border-left:1px solid var(--line)}
+@media(max-width:760px){.nativegrid{display:block}.native-sidebar{border-left:0;border-top:1px solid var(--line)}.native-nodes{max-height:440px}}
 </style></head><body>
 <header class="top"><div class="brand"><span class="logo">D</span><span>Drawborad <span style="font-weight:470;color:#87909d">Cloud Studio</span></span><span class="title-note">AGENT RUNTIME / 0.1</span></div><div class="topright"><span>Self-hosted · Local-first data</span><a href="/docs" target="_blank" rel="noopener">API docs</a></div></header>
-<main class="shell"><div class="heading"><div><div class="eyebrow">IMAGE → SEMANTIC LAYERS → CREATIVE CONTROL</div><h1>Make every object its own layer.</h1><p class="sub">A real cloud-operable Drawborad layer workspace. Run SAM 3 with your licensed model, or inspect an existing model result. No Linux installation on your computer required.</p></div><div class="chip"><span id="deviceDot" class="dot"></span><span id="deviceStatus">Checking model runtime…</span></div></div>
-<div class="workspace">
-<section class="panel"><div class="panelhdr">01 · Source &amp; inference <span class="tag">INPUT</span></div><div class="panelbody"><label class="fieldlabel" for="token">Access token (only if configured by host)</label><input id="token" class="field" type="password" placeholder="Bearer token for remote deployment" autocomplete="off"><div class="divider"></div><div class="sectionlabel">Model-driven segmentation</div><label class="fieldlabel" for="image">Image · PNG/JPEG</label><div class="filebox"><input id="image" type="file" accept="image/png,image/jpeg"></div><label class="fieldlabel" for="prompts">Objects, back to front</label><textarea class="field" id="prompts" spellcheck="false">wooden table, saucer, coffee cup, spoon</textarea><div class="helper">Short English noun phrases. One instance may produce multiple object layers. Visibility and object boundaries require human review.</div><button id="run" class="primary full" style="margin-top:14px" type="button">Run SAM 3 analysis</button><div class="divider"></div><div class="sectionlabel">Without a model · test the workflow</div><button id="demo" class="secondary full" type="button">Open synthetic sample</button><div class="helper">Sample is generated geometry, not model inference or a quality benchmark.</div><label class="fieldlabel" for="archive" style="margin-top:17px">Import a previously generated model manifest (.zip)</label><div class="filebox"><input id="archive" type="file" accept=".zip,application/zip"></div><button id="import" class="secondary full" type="button">Inspect layered project</button><p class="errors" id="error"></p></div></section>
+<main class="shell"><div class="heading"><div><div class="eyebrow">IMAGE → SEMANTIC LAYERS → CREATIVE CONTROL</div><h1>Make the painting yours.</h1><p class="sub">Open a native painting, choose a brush stroke, and make your edit. Save the complete project to keep painting later.</p></div><div class="chip"><span id="deviceDot" class="dot"></span><span id="deviceStatus">Checking model runtime…</span></div></div>
+<section class="panel" id="nativeEditor" aria-label="Native painting editor" style="margin-bottom:28px">
+<div class="panelhdr">Your painting <span class="tag">NATIVE PROJECT</span></div>
+<div class="panelbody" style="max-width:360px;padding-bottom:0">
+<label class="fieldlabel" for="token">Access token</label>
+<input id="token" class="field" type="password" placeholder="Required on protected hosts" autocomplete="off">
+<details id="tokenFilePanel" style="margin-top:12px"><summary>Use a local owner-token file</summary>
+<p id="tokenFileHelp" class="helper">Choose the plain owner-token file on the computer running this browser. Selection only reads it locally. Apply sends the token to this editor's same-origin server in the existing authorization header and enables later API requests. The app does not save the token in browser storage. The decoded token must be printable ASCII without spaces; a UTF-8 BOM is allowed. Do not select an environment file or share your token in chat.</p>
+<label class="fieldlabel" for="tokenFile">Local token file (maximum 4 KiB)</label>
+<input id="tokenFile" type="file" aria-describedby="tokenFileHelp">
+<label class="fieldlabel" for="tokenCandidate" style="margin-top:12px">Selected token (not applied)</label>
+<input id="tokenCandidate" class="field" type="password" readonly autocomplete="off" aria-describedby="tokenFileHelp">
+<div class="actions"><button id="tokenFileApply" type="button" class="secondary" disabled>Apply token to this server</button><button id="tokenFileClear" type="button" class="secondary">Clear selection</button></div>
+<p id="tokenFileStatus" class="helper" role="status" aria-live="polite">No file selected.</p>
+</details>
+</div>
+<div class="panelbody nativebar">
+<label class="fieldlabel" for="nativeFile">Open .draw <input id="nativeFile" type="file" accept=".draw"></label>
+<button id="nativeImport" class="secondary" type="button">Open project</button>
+<button id="nativeNew" class="secondary" type="button">New canvas</button>
+<button id="nativeUndo" class="secondary" type="button" disabled>Undo</button>
+<button id="nativeRedo" class="secondary" type="button" disabled>Redo</button>
+<button id="nativeSave" class="primary" type="button" disabled>Save project</button>
+</div>
+<div class="nativegrid">
+<div>
+<div class="viewport" style="min-height:400px"><img id="nativePreview" alt="Native painting preview" hidden style="max-width:100%;max-height:560px;object-fit:contain"><p id="nativeEmpty">Open a .draw project to edit its original brush strokes.</p></div>
+<div class="panelbody"><label class="fieldlabel" for="nativeReplay">Replay · <span id="nativeReplayCount">0</span> strokes</label><input id="nativeReplay" type="range" min="0" max="0" value="0" disabled style="width:100%"><p class="fine">Replay reads saved brush events. The reference photograph is not required.</p></div>
+</div>
+<aside class="panelbody native-sidebar">
+<p id="nativeStatus" role="status" aria-live="polite">No painting open</p>
+<p id="nativeError" role="alert" class="errors"></p>
+<div class="native-layers-header"><div class="sectionlabel">Objects &amp; painting layers</div><button id="nativeAllStrokes" class="secondary native-all" type="button" aria-pressed="true" disabled>All strokes</button></div>
+<p id="nativeLayerSummary" class="helper"></p>
+<label class="helper"><input id="nativeShowSublayers" type="checkbox" disabled> Show painting sublayers</label>
+<div id="nativeNodes" class="native-nodes" role="group" aria-label="Select an object or painting layer"></div>
+<p id="nativeScope" class="native-scope" role="status" aria-live="polite">No layer selected</p>
+<p class="fine">Select a name to filter strokes. Show and Lock apply to that node. The preview and replay show the whole painting.</p>
+<label class="fieldlabel" for="nativeStrokes">Select an existing stroke</label><select id="nativeStrokes" class="field" disabled></select>
+<p id="nativeStrokeInfo" class="helper">Every entry refers to a stable native stroke ID.</p>
+<label class="fieldlabel" for="nativeColor">New color · sRGB</label><input id="nativeColor" type="color" value="#00ff00" disabled>
+<button id="nativeRecolor" class="primary" type="button" disabled>Apply color</button>
+<div class="divider"></div><div class="export">
+<button id="nativeDownload" class="secondary" type="button" disabled>Download saved .draw</button>
+<button id="nativePng" class="secondary" type="button" disabled>Export painting PNG</button>
+<button id="nativeOra" class="secondary" type="button" disabled>Export painted layers ORA</button>
+<button id="nativeClose" class="secondary" type="button" disabled>Close project</button>
+<label class="helper"><input id="nativeDiscard" type="checkbox"> Discard unsaved edits when closing</label>
+</div><p class="fine">Refreshing reconnects to the live session. Restarting the server restores only the last successful save; undo history is not persisted.</p>
+</aside></div></section>
+
+<details><summary style="margin:20px 0;cursor:pointer">Photo segmentation &amp; source-layer review</summary><div class="workspace">
+<section class="panel"><div class="panelhdr">01 · Source &amp; inference <span class="tag">INPUT</span></div><div class="panelbody"><div class="sectionlabel">Model-driven segmentation</div><label class="fieldlabel" for="image">Image · PNG/JPEG</label><div class="filebox"><input id="image" type="file" accept="image/png,image/jpeg"></div><label class="fieldlabel" for="prompts">Objects, back to front</label><textarea class="field" id="prompts" spellcheck="false">wooden table, saucer, coffee cup, spoon</textarea><div class="helper">Short English noun phrases. One instance may produce multiple object layers. Visibility and object boundaries require human review.</div><button id="run" class="primary full" style="margin-top:14px" type="button">Run SAM 3 analysis</button><div class="divider"></div><div class="sectionlabel">Human-guided photo segmentation</div>
+<label class="fieldlabel" for="seedFile">Seed PNG · same dimensions as the photo</label><input id="seedFile" type="file" accept="image/png">
+<p class="helper">Uses the photo selected above. Seed gray values: 0 certain background, 85 probable background, 170 probable foreground, 255 certain foreground. This is assisted GrabCut, not automatic multi-object recognition.</p>
+<button id="guidedRun" class="secondary full" type="button">Segment with my seed map</button>
+<button id="nativeFromJob" class="primary full" type="button" disabled style="margin-top:10px">Accept reviewed masks &amp; generate strokes</button>
+<div class="divider"></div><div class="sectionlabel">Without a model · test the workflow</div><button id="demo" class="secondary full" type="button">Open synthetic sample</button><div class="helper">Sample is generated geometry, not model inference or a quality benchmark.</div><label class="fieldlabel" for="archive" style="margin-top:17px">Import a previously generated model manifest (.zip)</label><div class="filebox"><input id="archive" type="file" accept=".zip,application/zip"></div><button id="import" class="secondary full" type="button">Inspect layered project</button><p class="errors" id="error"></p></div></section>
 <section class="panel viewportpanel"><div class="panelhdr">02 · Canvas <span class="tag">LIVE LAYERS</span></div><div class="viewportmeta"><span id="projectLabel">No project loaded</span><span id="dimensions">—</span></div><div class="viewport" id="viewport"><div class="empty" id="empty"><div class="emptyicon">▧</div><h2>Object layers, not flattened pictures.</h2><p>Run a model, import a result, or load the sample. Every mask becomes a separately visible RGBA layer.</p></div><div class="canvas" id="canvas" style="display:none"></div></div><div class="stagefoot" id="stageFoot">Agent-readable status, native SAM3 manifest and OpenRaster files will appear here after processing.</div></section>
 <section class="panel"><div class="panelhdr">03 · Object layers <span class="tag">REVIEW</span></div><div class="panelbody" style="padding-bottom:9px"><p class="status" id="status">No active job. Waiting for source.</p><div class="kpi"><div><strong id="layerCount">—</strong>Layers</div><div><strong id="pixelCount">—</strong>Pixels</div><div><strong id="modelType">—</strong>Backend</div></div></div><div class="divider" style="margin:15px 0 3px"></div><div class="layerlist" id="layerList"><p class="helper" style="padding:0 10px 8px">Individual layer controls will appear here.</p></div><div class="panelbody" style="padding-top:4px"><div class="sectionlabel">Deliverables</div><div class="export"><a id="ora" class="linkbtn" style="pointer-events:none;opacity:.45" href="#">Export OpenRaster (.ora)</a><a id="manifest" href="#" style="pointer-events:none;opacity:.45">View validated manifest.json</a><a id="log" href="#" style="pointer-events:none;opacity:.45">View job diagnostics</a></div><div class="hint">This workspace exports <strong>real independent visible RGBA layers</strong>, not reconstructed hidden pixels. Native C++ brush rendering and full PSD qualification remain separate.</div></div></section>
-</div><footer>Drawborad Cloud Studio · Agent-neutral HTTP API · <span id="jobId">No job</span>. Server health ≠ model readiness. Segment labels are predictions; verify each object before professional use.</footer></main>
+</div></details><footer>Drawborad Cloud Studio · Agent-neutral HTTP API · <span id="jobId">No job</span>. Server health ≠ model readiness. Segment labels are predictions; verify each object before professional use.</footer></main>
 <script>
 const by=id=>document.getElementById(id), API='/api/v1';let activeId=null, polling=null, blobUrls=[];
 function headers(){let t=by('token').value.trim();return t?{'Authorization':'Bearer '+t}:{}}
-async function api(path,opts={}){const r=await fetch(API+path,{...opts,headers:{...headers(),...(opts.headers||{})}});let data;let ct=r.headers.get('content-type')||'';try{data=ct.includes('json')?await r.json():await r.text()}catch(e){data='Malformed server response'}if(!r.ok)throw new Error(typeof data==='object'?JSON.stringify(data.detail||data):String(data));return data}
+async function api(path,opts={}){
+ const r=await fetch(API+path,{...opts,headers:{...headers(),...(opts.headers||{})}});
+ let data;
+ try{data=(r.headers.get('content-type')||'').includes('json')?await r.json():await r.text()}catch(e){data='Malformed server response'}
+ if(!r.ok){
+  const detail=data?.detail??data;
+  const err=new Error(typeof detail==='string'?detail:detail.message||JSON.stringify(detail));
+  err.status=r.status;throw err;
+ }
+ return data;
+}
 function error(x){by('error').textContent=x||'';by('error').style.display=x?'block':'none'}
 function state(text){by('status').textContent=text;by('stageFoot').textContent=text}
 function buttonBusy(yes){['run','demo','import'].forEach(k=>by(k).disabled=yes)}
-async function refreshCapability(){try{const c=await api('/capabilities');by('deviceStatus').textContent=c.model_ready?'SAM 3 configured · '+c.device:'Model not configured · review available';by('deviceDot').classList.toggle('on',!!c.model_ready);by('run').disabled=!c.model_ready}catch(e){by('deviceStatus').textContent='Authorization required';by('run').disabled=true}}
+async function refreshCapability(){
+ try{
+  const c=await api('/capabilities');
+  by('deviceStatus').textContent=c.model_ready?'SAM 3 configured · '+c.device:'Model not configured · review available';
+  by('deviceDot').classList.toggle('on',!!c.model_ready);by('run').disabled=!c.model_ready;
+ }catch(e){
+  by('deviceStatus').textContent=e.status===401?'Owner access token required':'Cannot reach the backend';
+  by('deviceDot').classList.remove('on');by('run').disabled=true;
+ }
+}
 async function imageBlob(path){const r=await fetch(API+path,{headers:headers()});if(!r.ok)throw new Error('Image endpoint error: '+r.status);const url=URL.createObjectURL(await r.blob());blobUrls.push(url);return url}
 async function downloadUrl(path,filename){const r=await fetch(API+path,{headers:headers()});if(!r.ok)throw new Error('File export failed: '+r.status);const url=URL.createObjectURL(await r.blob());const a=document.createElement('a');a.href=url;a.download=filename;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
 function activateLink(id,fn){let el=by(id);el.href='#';el.style.opacity='1';el.style.pointerEvents='auto';el.onclick=async evt=>{evt.preventDefault();try{await fn()}catch(e){error(e.message)}}}
 async function show(data){if(!data||data.state!=='succeeded')return;
  clearInterval(polling);polling=null;blobUrls.forEach(url=>URL.revokeObjectURL(url));blobUrls=[];
- activeId=data.id;by('jobId').textContent=data.id;by('projectLabel').textContent=data.ai_inference?'Locally inferred SAM 3 layers':(data.backend==='sam3-image'?'Imported SAM 3 manifest · origin unverified':'Synthetic fixture · Not AI');by('dimensions').textContent=data.width+' × '+data.height+' px';
- by('layerCount').textContent=data.layers.length;by('pixelCount').textContent=(data.width*data.height).toLocaleString();by('modelType').textContent=data.backend==='sam3-image'?'SAM 3':'FIXTURE';
+ activeId=data.id;by('nativeFromJob').disabled=false;by('jobId').textContent=data.id;by('projectLabel').textContent=data.ai_inference?'Locally inferred SAM 3 layers':(data.backend==='sam3-image'?'Imported SAM 3 manifest · origin unverified':data.backend==='opencv-grabcut'?'Human-guided GrabCut · review required':'Synthetic fixture · Not AI');by('dimensions').textContent=data.width+' × '+data.height+' px';
+ by('layerCount').textContent=data.layers.length;by('pixelCount').textContent=(data.width*data.height).toLocaleString();by('modelType').textContent=data.backend==='sam3-image'?'SAM 3':data.backend==='opencv-grabcut'?'GUIDED':'FIXTURE';
  by('canvas').innerHTML='';by('canvas').style.display='block';by('empty').style.display='none';by('canvas').style.aspectRatio=data.width+'/'+data.height;
  by('layerList').innerHTML='';
  const items=[];for(let i=0;i<data.layers.length;i++){const layer=data.layers[i];const url=await imageBlob('/jobs/'+data.id+'/layers/'+i+'.png');const img=document.createElement('img');img.src=url;img.alt=layer.name;img.style.zIndex=String(i);by('canvas').appendChild(img);items.push([layer,img,url]);}
@@ -45,11 +123,171 @@ async function show(data){if(!data||data.state!=='succeeded')return;
  activateLink('ora',()=>downloadUrl('/jobs/'+activeId+'/layers.ora','Drawborad-'+activeId+'.ora'));
  activateLink('manifest',()=>downloadUrl('/jobs/'+activeId+'/manifest.json','manifest.json'));
  if(data.origin==='local-model'){activateLink('log',()=>downloadUrl('/jobs/'+activeId+'/worker.log','worker.log'))}else{by('log').style.pointerEvents='none';by('log').style.opacity='.45';}
- state(data.ai_inference?'SAM 3 completed locally. Inspect individual semantic masks before use.':(data.backend==='sam3-image'?'External SAM 3 manifest imported; model origin was not independently verified by this server.':'Synthetic sample loaded — layer toggles and OpenRaster export are functional; no model inference occurred.'));buttonBusy(false);await refreshCapability();
+ state(data.ai_inference?'SAM 3 completed locally. Inspect individual semantic masks before use.':(data.backend==='sam3-image'?'External SAM 3 manifest imported; model origin was not independently verified by this server.':data.backend==='opencv-grabcut'?'Human-guided two-region segmentation. Inspect the masks before accepting them.':'Synthetic sample loaded — layer toggles and OpenRaster export are functional; no model inference occurred.'));buttonBusy(false);await refreshCapability();
 }
 async function begin(jid){activeId=jid;by('jobId').textContent=jid;clearInterval(polling);polling=setInterval(async()=>{try{const d=await api('/jobs/'+jid);state('Job '+d.state+(d.error?' · '+d.error:''));if(d.state==='succeeded'){await show(d)}else if(['failed','cancelled'].includes(d.state)){clearInterval(polling);buttonBusy(false);error(d.error||d.state)}}catch(e){clearInterval(polling);buttonBusy(false);error(e.message)}},1500)}
 by('run').onclick=async()=>{error('');if(!by('image').files.length){error('Select a local PNG or JPEG first.');return;}buttonBusy(true);state('Submitting to local model runner…');try{let form=new FormData();form.append('image',by('image').files[0]);form.append('prompts',by('prompts').value);const d=await api('/jobs',{method:'POST',body:form});begin(d.id)}catch(e){error(e.message);buttonBusy(false);refreshCapability()}};
 by('demo').onclick=async()=>{error('');buttonBusy(true);state('Loading labeled non-AI sample…');try{await show(await api('/demo',{method:'POST'}))}catch(e){error(e.message);buttonBusy(false)}};
 by('import').onclick=async()=>{error('');if(!by('archive').files.length){error('Select a model result ZIP.');return}buttonBusy(true);state('Validating source, masks and hashes…');try{let f=new FormData();f.append('archive',by('archive').files[0]);await show(await api('/import',{method:'POST',body:f}))}catch(e){error(e.message);buttonBusy(false)}};
 by('token').onchange=refreshCapability;refreshCapability();
+// A view of native responses only; the browser owns no painting model/history.
+let nativeState=null, nativeBusy=false, nativeImageUrl=null, nativeSelectedNodeId=null;
+let nativeStrokeScopes=new Map();
+const nativeActionIds=['nativeImport','nativeNew','nativeUndo','nativeRedo','nativeSave','nativeRecolor','nativeDownload','nativePng','nativeOra','nativeClose'];
+function nativeError(message){by('nativeError').textContent=message||'';by('nativeError').style.display=message?'block':'none'}
+function nativeControls(){
+ for(const id of nativeActionIds) by(id).disabled=nativeBusy||(!nativeState&&!['nativeImport','nativeNew'].includes(id));
+ const hasSelection=nativeScopedStrokes().length>0;
+ by('nativeRecolor').disabled=nativeBusy||!hasSelection;
+ by('nativeDownload').disabled=nativeBusy||!nativeState||nativeState.dirty;
+ for(const id of ['nativeStrokes','nativeColor'])by(id).disabled=nativeBusy||!hasSelection;
+ by('nativeReplay').disabled=nativeBusy||!nativeState||!nativeState.strokes.length;
+ by('nativeAllStrokes').disabled=nativeBusy||!nativeState;
+ by('nativeShowSublayers').disabled=nativeBusy||!nativeState;
+ by('nativeNodes').querySelectorAll('input,button').forEach(el=>el.disabled=nativeBusy);
+}
+async function nativePost(path,body={}){return api('/projects'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}
+async function nativePreview(limit){
+ const response=await fetch(API+'/projects/'+nativeState.id+'/preview.png'+(limit===undefined?'':'?event_limit='+encodeURIComponent(limit)),{headers:headers(),cache:'no-store'});
+ if(!response.ok)throw new Error('Native preview failed: '+await response.text());
+ const url=URL.createObjectURL(await response.blob());
+ by('nativePreview').src=url;by('nativePreview').hidden=false;by('nativeEmpty').hidden=true;
+ if(nativeImageUrl)URL.revokeObjectURL(nativeImageUrl);nativeImageUrl=url;
+}
+function nativeScopedStrokes(){
+ return nativeSelectedNodeId===null?(nativeState?.strokes||[]):(nativeStrokeScopes.get(nativeSelectedNodeId)||[]);
+}
+function nativeSelection(){
+ const event=nativeScopedStrokes().find(e=>e.id===by('nativeStrokes').value);
+ by('nativeStrokeInfo').textContent=event?'Stroke '+event.id+' · '+event.geometry_count+' samples. Earlier strokes may be covered by later paint.':(nativeSelectedNodeId===null?'No brush events in this canvas.':'No brush events in this selection. Choose another layer or All strokes.');
+}
+function nativeRenderSelection(selected=by('nativeStrokes').value){
+ const strokes=nativeScopedStrokes(), names=new Map((nativeState?.nodes||[]).map(n=>[n.id,n.name]));
+ by('nativeStrokes').replaceChildren();
+ strokes.forEach((e,i)=>{const o=document.createElement('option');o.value=e.id;o.textContent=(i+1)+' · '+(names.get(e.layer_id)||'Layer')+' · '+e.id.slice(-8);by('nativeStrokes').append(o)});
+ if(strokes.some(e=>e.id===selected))by('nativeStrokes').value=selected;
+ else if(strokes.length)by('nativeStrokes').value=strokes[strokes.length-1].id;
+ by('nativeAllStrokes').setAttribute('aria-pressed',String(nativeSelectedNodeId===null));
+ for(const line of by('nativeNodes').children){
+  const selected=line.dataset.nodeId===nativeSelectedNodeId;
+  line.classList.toggle('selected',selected);
+  line.hidden=!by('nativeShowSublayers').checked&&line.dataset.nodeKind!=='1';
+  line.querySelectorAll('button').forEach(button=>button.setAttribute('aria-pressed',String(selected)));
+ }
+ by('nativeScope').textContent=nativeState?(nativeSelectedNodeId===null?'All strokes':names.get(nativeSelectedNodeId))+' · '+strokes.length+' of '+nativeState.strokes.length+' strokes':'No layer selected';
+ nativeSelection();nativeControls();
+}
+function nativeSelectNode(id){
+ if(nativeBusy||!nativeState)return;
+ nativeSelectedNodeId=id;nativeRenderSelection();
+}
+async function nativeShow(value){
+ const sameProject=nativeState?.id===value.id, selected=sameProject?by('nativeStrokes').value:'';
+ if(!sameProject||!value.nodes.some(n=>n.id===nativeSelectedNodeId))nativeSelectedNodeId=null;
+ nativeState=value;localStorage.setItem('drawborad.project',value.id);
+ by('nativeStatus').textContent=(value.dirty?'Unsaved changes':'Saved')+' · revision '+value.revision+' · '+value.stroke_count+' strokes';
+ // Include descendants for object/group selection without changing native state or visibility.
+ const nodes=new Map(value.nodes.map(n=>[n.id,n]));
+ nativeStrokeScopes=new Map(value.nodes.map(n=>[n.id,[]]));
+ for(const stroke of value.strokes){
+  const visited=new Set();
+  for(let id of [stroke.layer_id,stroke.object_id]){
+   while(nodes.has(id)&&!visited.has(id)){visited.add(id);nativeStrokeScopes.get(id).push(stroke);id=nodes.get(id).parent_id}
+  }
+ }
+ const layers=value.nodes.filter(n=>n.kind===3), empty=layers.filter(n=>!nativeStrokeScopes.get(n.id).length).length;
+ by('nativeLayerSummary').textContent=value.nodes.filter(n=>n.kind===1).length+' objects · '+layers.length+' paint layers · '+empty+' without strokes';
+ by('nativeReplay').max=value.stroke_count;by('nativeReplay').value=value.stroke_count;by('nativeReplayCount').textContent=value.stroke_count;
+ by('nativeNodes').replaceChildren();
+ const rendered=new Set();
+ function row(node,depth){
+  if(rendered.has(node.id))return;rendered.add(node.id);
+  if(node.kind!==0){
+   const line=document.createElement('div');line.className='layer native-node';line.dataset.nodeId=node.id;line.dataset.nodeKind=String(node.kind);line.style.paddingLeft=(6+Math.min(depth,4)*12)+'px';
+   const select=document.createElement('button');select.type='button';select.disabled=nativeBusy;select.className='native-node-select';select.setAttribute('aria-label','Select '+node.name);select.onclick=()=>nativeSelectNode(node.id);
+   const name=document.createElement('span');name.className='layername';name.textContent=node.name;
+   const count=nativeStrokeScopes.get(node.id).length;
+   const meta=document.createElement('span');meta.className='layermeta';meta.textContent=(node.kind===1?'Object':node.kind===3?'Paint layer':'Group')+' · '+count+' strokes'+(count?'':' · empty');
+   select.append(name,meta);line.append(select);
+   const controls=document.createElement('span');controls.className='native-node-controls';
+   for(const key of ['visible','locked']){const label=document.createElement('label');label.className='fine';const cb=document.createElement('input');cb.type='checkbox';cb.disabled=nativeBusy;cb.checked=node[key];cb.setAttribute('aria-label',node.name+' '+key);cb.onchange=()=>nativeRun(async()=>nativeShow(await nativePost('/'+nativeState.id+'/commands',{expected_revision:nativeState.revision,type:'set_properties',node_id:node.id,[key]:cb.checked})));label.append(cb,document.createTextNode(key==='visible'?'Show':'Lock'));controls.append(label)}
+   line.append(controls);by('nativeNodes').append(line);
+  }
+  const children=node.children||value.nodes.filter(n=>n.parent_id===node.id).map(n=>n.id);
+  for(const id of children){const child=nodes.get(id);if(child)row(child,depth+(node.kind===0?0:1))}
+ }
+ for(const root of value.nodes.filter(n=>n.kind===0))row(root,0);
+ nativeRenderSelection(selected);await nativePreview();nativeControls();
+}
+async function nativeRun(action){
+ if(nativeBusy)return;nativeBusy=true;nativeError('');nativeControls();
+ try{await action()}catch(e){const message=e.message;if(nativeState){try{await nativeShow(await api('/projects/'+nativeState.id))}catch(refreshError){by('nativeStatus').textContent='Disconnected · last displayed state may be stale'}}nativeError(message)}finally{nativeBusy=false;nativeControls()}
+}
+by('nativeImport').onclick=()=>nativeRun(async()=>{const f=by('nativeFile').files[0];if(!f)throw new Error('Choose a .draw file first.');const form=new FormData();form.append('project',f);await nativeShow(await api('/projects/import',{method:'POST',body:form}))});
+by('nativeNew').onclick=()=>nativeRun(async()=>nativeShow(await nativePost('',{width:'512',height:'512'})));
+by('nativeStrokes').onchange=nativeSelection;
+by('nativeAllStrokes').onclick=()=>nativeSelectNode(null);
+by('nativeShowSublayers').onchange=()=>{
+ if(nativeBusy||!nativeState)return;
+ if(!by('nativeShowSublayers').checked&&nativeSelectedNodeId!==null){
+  const nodes=new Map(nativeState.nodes.map(n=>[n.id,n])), visited=new Set();
+  let node=nodes.get(nativeSelectedNodeId);
+  while(node&&node.kind!==1&&!visited.has(node.id)){visited.add(node.id);node=nodes.get(node.parent_id)}
+  nativeSelectedNodeId=node?.kind===1?node.id:null;
+ }
+ nativeRenderSelection();
+};
+by('nativeRecolor').onclick=()=>nativeRun(async()=>nativeShow(await nativePost('/'+nativeState.id+'/commands',{expected_revision:nativeState.revision,type:'recolor_stroke',stroke_id:by('nativeStrokes').value,color:by('nativeColor').value})));
+for(const action of ['Undo','Redo','Save'])by('native'+action).onclick=()=>nativeRun(async()=>nativeShow(await nativePost('/'+nativeState.id+'/'+action.toLowerCase(),{expected_revision:nativeState.revision})));
+by('nativeReplay').onchange=()=>nativeRun(async()=>{await nativePreview(by('nativeReplay').value);by('nativeReplayCount').textContent=by('nativeReplay').value});
+for(const [id,path,name] of [['nativeDownload','download','painting.draw'],['nativePng','preview.png','painting.png'],['nativeOra','export.ora','painting.ora']])by(id).onclick=()=>nativeRun(()=>downloadUrl('/projects/'+nativeState.id+'/'+path,name));
+by('nativeClose').onclick=()=>nativeRun(async()=>{await nativePost('/'+nativeState.id+'/close',{expected_revision:nativeState.revision,discard:by('nativeDiscard').checked});nativeState=null;nativeSelectedNodeId=null;nativeStrokeScopes.clear();localStorage.removeItem('drawborad.project');by('nativeStatus').textContent='No painting open';by('nativePreview').hidden=true;by('nativeEmpty').hidden=false;if(nativeImageUrl)URL.revokeObjectURL(nativeImageUrl);nativeImageUrl=null;by('nativePreview').removeAttribute('src');by('nativeNodes').replaceChildren();by('nativeLayerSummary').textContent='';by('nativeReplay').max=0;by('nativeReplay').value=0;by('nativeReplayCount').textContent='0';nativeRenderSelection();by('nativeDiscard').checked=false;});
+window.addEventListener('beforeunload',e=>{if(nativeState?.dirty){e.preventDefault();e.returnValue=''}});
+async function nativeReconnect(){const id=localStorage.getItem('drawborad.project');if(id)await nativeRun(async()=>nativeShow(await api('/projects/'+id)))}
+by('token').addEventListener('change',nativeReconnect);nativeReconnect();
+by('guidedRun').onclick=()=>nativeRun(async()=>{const photo=by('image').files[0],seeds=by('seedFile').files[0];if(!photo||!seeds)throw new Error('Select a photograph and a matching seed PNG.');const form=new FormData();form.append('image',photo);form.append('seeds',seeds);by('guidedRun').disabled=true;try{await show(await api('/guided',{method:'POST',body:form}))}finally{by('guidedRun').disabled=false}});
+by('nativeFromJob').onclick=()=>nativeRun(async()=>{if(!activeId)throw new Error('Review a completed segmentation first.');by('nativeFromJob').disabled=true;try{await nativeShow(await nativePost('/from-job/'+activeId,{accept_all:true}));by('nativeEditor').scrollIntoView({behavior:'smooth'})}finally{by('nativeFromJob').disabled=false}});
+
+
+// File selection is staged separately: existing requests cannot use it before Apply.
+let tokenFileReadVersion=0;
+function clearTokenFileSelection(message='No file selected.'){
+ ++tokenFileReadVersion;
+ by('tokenFile').value='';by('tokenCandidate').value='';
+ by('tokenFileApply').disabled=true;by('tokenFileStatus').textContent=message;
+}
+function parseOwnerTokenFile(text){
+ if(text.length>4096)throw new Error('Invalid token file');
+ // File.text() decodes UTF-8 and strips its BOM. Validate the decoded token.
+ // The launcher writes one raw token, optionally followed by one LF or CRLF.
+ const token=text.replace(/\r?\n$/,'');
+ if(!/^[\x21-\x7e]+$/.test(token))throw new Error('Invalid token file');
+ return token;
+}
+by('tokenFile').onchange=async()=>{
+ const file=by('tokenFile').files[0];
+ clearTokenFileSelection(file?'Reading selected file locally…':'No file selected.');
+ if(!file)return;
+ const version=tokenFileReadVersion;
+ try{
+  if(file.size<1||file.size>4096)throw new Error('Invalid token file');
+  const token=parseOwnerTokenFile(await file.text());
+  if(version!==tokenFileReadVersion)return;
+  by('tokenCandidate').value=token;by('tokenFileApply').disabled=false;
+  by('tokenFileStatus').textContent='Read locally. Click Apply to send this token to this server.';
+ }catch(e){
+  if(version===tokenFileReadVersion)clearTokenFileSelection('Cannot read this token file. Select a UTF-8 file of at most 4 KiB containing an ASCII token, with no spaces or extra lines (UTF-8 BOM allowed).');
+ }
+};
+by('tokenFileApply').onclick=()=>{
+ if(by('tokenFileApply').disabled||!by('tokenCandidate').value)return;
+ by('token').value=by('tokenCandidate').value;
+ clearTokenFileSelection('Applied to this page. Check the connection status above. Refreshing clears the token.');
+ by('token').dispatchEvent(new Event('change'));
+};
+by('tokenFileClear').onclick=()=>clearTokenFileSelection();
+by('tokenFile').addEventListener('cancel',()=>clearTokenFileSelection());
+by('tokenFilePanel').addEventListener('toggle',()=>{if(!by('tokenFilePanel').open)clearTokenFileSelection()});
+by('token').addEventListener('input',()=>clearTokenFileSelection());
+
 </script></body></html>

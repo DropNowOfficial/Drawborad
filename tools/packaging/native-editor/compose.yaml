@@ -1,0 +1,22 @@
+name: drawborad-native-editor
+services:
+  editor:
+    build: .
+    platform: linux/amd64
+    restart: unless-stopped
+    environment:
+      DRAWBORAD_CLOUD_TOKEN: ${DRAWBORAD_CLOUD_TOKEN:?Set the owner token in a private env file}
+    ports:
+      - "127.0.0.1:${DRAWBORAD_NATIVE_PORT:-8767}:8765"
+    volumes:
+      - paintings:/data
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  paintings:

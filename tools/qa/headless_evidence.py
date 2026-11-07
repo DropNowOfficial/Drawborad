@@ -36,7 +36,7 @@ summary.update(repository='DropNowOfficial/Drawborad', branch=os.environ.get('GI
 (bundle / 'readiness.json').write_text(json.dumps(summary, indent=2)+'\n')
 (bundle / 'P0_READINESS.md').write_text(
     '# Linux Headless P0 evidence\n\n'
-    f'Commit: `{sha}`\n\nUbuntu Release build and {len(cases)} CTest entries passed.\n\n'
+    f'Commit: `{sha}`\n\nLinux Release build and {len(cases)} CTest entries passed.\n\n'
     f"Fixture: `{report['backend']}`; objects: {report['objectCount']}; strokes: {report['strokeEvents']}; paint layers: {report['paintLayers']}.\n\n"
     'The C++ test removes its source image, reopens `.draw`, compares final pixels, and exercises ReplayEngine per layer. '
     'The independent Python verifier decodes ORA PNG leaves and composites them against final.png.\n\n'

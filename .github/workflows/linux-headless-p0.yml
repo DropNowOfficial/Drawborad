@@ -1,17 +1,19 @@
 name: Drawborad Linux headless P0
 on:
   push:
-    branches: [work/linux-headless-engine-20261104]
+    branches: [work/linux-headless-engine-20261104, work/native-stroke-editor-20261106]
     paths:
       - 'CMakeLists.txt'
       - 'cmake/**'
       - 'apps/headless/**'
+      - 'cloud/**'
       - 'src/**'
       - 'src/ui/**'
       - 'src/codecs/**'
       - 'tools/qa/headless_evidence.py'
       - 'tools/packaging/**'
       - 'tools/experiments/**'
+      - 'tools/experimental/**'
       - 'tools/segmentation/**'
       - 'tests/**'
       - '.github/workflows/linux-headless-p0.yml'
@@ -20,12 +22,14 @@ on:
       - 'CMakeLists.txt'
       - 'cmake/**'
       - 'apps/headless/**'
+      - 'cloud/**'
       - 'src/**'
       - 'src/ui/**'
       - 'src/codecs/**'
       - 'tools/qa/headless_evidence.py'
       - 'tools/packaging/**'
       - 'tools/experiments/**'
+      - 'tools/experimental/**'
       - 'tools/segmentation/**'
       - 'tests/**'
       - '.github/workflows/linux-headless-p0.yml'
@@ -34,31 +38,118 @@ permissions:
 concurrency:
   group: drawborad-linux-headless-p0-${{ github.ref }}
   cancel-in-progress: true
+defaults:
+  run:
+    shell: bash
 jobs:
   linux-headless:
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: ubuntu24.04-x86_64
+            image: ubuntu:24.04
+            os_id: ubuntu
+            version_id: "24.04"
+            jpeg_soname: libjpeg.so.8
+          - target: debian13-x86_64
+            image: debian:13
+            os_id: debian
+            version_id: "13"
+            jpeg_soname: libjpeg.so.62
+    # Compile and link against each target's Qt, glibc and JPEG ABI, not the host runner.
+    container: ${{ matrix.image }}
+    timeout-minutes: 45
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      RUNTIME_OS_ID: ${{ matrix.os_id }}
+      RUNTIME_VERSION_ID: ${{ matrix.version_id }}
     steps:
+      - name: Install distro-native build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git cmake ninja-build make g++ qt6-base-dev qt6-base-private-dev libpng-dev zlib1g-dev libjpeg-dev libtiff-dev libwebp-dev libheif-dev liblcms2-dev python3 python3-venv python3-pil python3-yaml python3-skimage python3-opencv python3-numpy python3-scipy
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Install Linux build dependencies
+      - name: Align isolated checkout ownership
         run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake ninja-build g++ qt6-base-dev qt6-base-private-dev libpng-dev zlib1g-dev libjpeg-dev libtiff-dev libwebp-dev libheif-dev liblcms2-dev python3 python3-pil
+          # The runner mounts its checkout into a root-owned job container.
+          # Match the throwaway checkout to this process instead of disabling Git's ownership guard.
+          test "$(pwd -P)" = "$(realpath "$GITHUB_WORKSPACE")"
+          chown -R -- "$(id -u):$(id -g)" "$GITHUB_WORKSPACE"
+          test "$(git rev-parse --show-toplevel)" = "$GITHUB_WORKSPACE"
+      - name: Check Linux packaging contracts
+        run: |
+          python3 tests/packaging/test_linux_runtime.py
+          python3 tests/packaging/test_bundle_assembly.py
+          test "$(python3 tools/packaging/runtime_platform.py identify)" = '${{ matrix.target }}'
       - name: Configure headless workflow
-        shell: bash
         run: |
           mkdir -p out/evidence
+          cp /etc/os-release out/evidence/build-os-release
           cmake -S . -B out/linux-headless -G Ninja -DCMAKE_BUILD_TYPE=Release -DDRAWBORAD_HEADLESS_WORKFLOW=ON -DDRAWBORAD_DESKTOP=OFF -DDRAWBORAD_QUALIFY=OFF -DDRAWBORAD_ONNXRUNTIME_ROOT= 2>&1 | tee out/evidence/configure.log
       - name: Build
-        shell: bash
-        run: cmake --build out/linux-headless --parallel 2 2>&1 | tee out/evidence/build.log
+        run: |
+          cmake --build out/linux-headless --parallel 2 2>&1 | tee out/evidence/build.log
+          ldd out/linux-headless/DrawboradHeadless | tee out/evidence/build-linked-libraries.txt
+          if grep -F 'not found' out/evidence/build-linked-libraries.txt; then echo 'Unresolved native library' >&2; exit 1; fi
+          grep -F '${{ matrix.jpeg_soname }}' out/evidence/build-linked-libraries.txt
+      - name: Preserve native binary for integration debugging
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-editor-binary-${{ matrix.target }}-${{ github.sha }}
+          path: out/linux-headless/DrawboradHeadless
       - name: Run portable and headless tests
-        shell: bash
         run: |
           ctest --test-dir out/linux-headless --show-only=json-v1 > out/evidence/ctest-inventory.json
           ctest --test-dir out/linux-headless --output-on-failure --no-tests=error --output-junit "$PWD/out/evidence/ctest.xml" 2>&1 | tee out/evidence/ctest.log
+      - name: Verify isolated automatic-stage experiment
+        run: |
+          bash tools/experimental/automatic_stages/build_native.sh "$PWD/out/automatic-stages/native-plan"
+          DRAWBORAD_NATIVE_PLAN="$PWD/out/automatic-stages/native-plan" python3 -m unittest discover -s tests/experimental -p 'test_automatic_stages.py' -v 2>&1 | tee out/evidence/automatic-stages-tests.log
+      - name: Verify isolated native-flow experiment
+        run: |
+          bash tools/experimental/flow_planner/build.sh
+          python3 -m unittest discover -s tools/experimental/flow_planner -p 'test_flow.py' -v 2>&1 | tee out/evidence/native-flow-tests.log
+      - name: Verify isolated hybrid experiment
+        run: |
+          bash tools/experimental/hybrid_planner/build.sh
+          python3 -m unittest discover -s tools/experimental/hybrid_planner -p 'test_hybrid.py' -v 2>&1 | tee out/evidence/native-hybrid-tests.log
+      - name: Verify isolated locality-reorder experiment
+        run: |
+          bash tools/experimental/locality_reorder/build.sh "$PWD/out/locality-reorder/native-locality"
+          DRAWBORAD_NATIVE_LOCALITY="$PWD/out/locality-reorder/native-locality" python3 -m unittest discover -s tools/experimental/locality_reorder -p 'test_locality.py' -v 2>&1 | tee out/evidence/locality-reorder-tests.log
+      - name: Native persistent editing contract
+        run: python3 tests/headless/test_session.py out/linux-headless/DrawboradHeadless
+      - name: Python project API and existing runtime tests
+        run: |
+          python3 -m venv --system-site-packages out/api-venv
+          # Use the distro-matched OpenCV/NumPy/SciPy stack inherited above.
+          # Installing a second OpenCV wheel can upgrade NumPy past distro SciPy's ABI range.
+          out/api-venv/bin/pip install -r cloud/requirements.txt pytest httpx
+          out/api-venv/bin/python -m pip check
+          out/api-venv/bin/python - <<'PYTHON'
+          import json
+          import cv2
+          import numpy as np
+          import scipy
+          import skimage
+          from pathlib import Path
+          from scipy import ndimage, linalg
+          from skimage.transform import resize
+          sample = np.arange(25, dtype=np.float32).reshape(5, 5)
+          for result in (cv2.GaussianBlur(sample, (3, 3), 0), ndimage.gaussian_filter(sample, 1), resize(sample, sample.shape)):
+              assert result.shape == sample.shape and np.isfinite(result).all()
+          assert np.isclose(linalg.det(np.eye(3)), 1)
+          modules = {name: {"version": module.__version__, "path": str(Path(module.__file__).resolve())}
+                     for name, module in (("numpy", np), ("scipy", scipy), ("opencv", cv2), ("skimage", skimage))}
+          assert all(item["path"].startswith("/usr/lib/python3/dist-packages/") for item in modules.values()), modules
+          print(json.dumps({"modules": modules, "numeric_abi_smoke": "passed"}))
+          PYTHON
+          export PATH="$PWD/out/api-venv/bin:$PATH"
+          DRAWBORAD_TEST_ENGINE="$PWD/out/linux-headless/DrawboradHeadless" python -m pytest tests/cloud -q
       - name: Generate genuine C++ painting artifacts
         run: out/linux-headless/DrawboradHeadless smoke --output out/evidence/painting > out/evidence/smoke-stdout.json
       - name: Independently verify ORA and collect receipts
@@ -67,63 +158,234 @@ jobs:
           python3 tools/qa/headless_evidence.py out/linux-headless out/evidence
       - name: Reconstruct a public real photograph
         run: |
-          sudo apt-get install -y python3-skimage python3-opencv
           python3 tools/segmentation/test_guided_grabcut.py | tee out/evidence/guided-segmentation-tests.log
           python3 tools/experiments/real_photo.py out/evidence/real-input
           out/linux-headless/DrawboradHeadless run --manifest "$PWD/out/evidence/real-input/manifest.json" --output out/evidence/real-painting --accept-all > out/evidence/real-photo-run.json
           python3 tests/headless/verify_artifacts.py out/evidence/real-painting > out/evidence/real-photo-ora.json
+      - name: Independent real-photo HTTP editing acceptance
+        run: out/api-venv/bin/python tests/cloud/http_native_acceptance.py out/linux-headless/DrawboradHeadless out/evidence/real-input out/evidence/editor
       - name: Upload build evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: linux-headless-p0-${{ github.sha }}
+          name: linux-headless-p0-${{ matrix.target }}-${{ github.sha }}
           path: out/evidence/
           if-no-files-found: error
           retention-days: 14
-      - name: Package native Ubuntu runtime
+      - name: Package distro-native runtime
         run: |
           mkdir -p out/runtime
+          python3 - <<'PYTHON'
+          import json, os
+          from pathlib import Path
+          target = {"os_id": os.environ["RUNTIME_OS_ID"], "version_id": os.environ["RUNTIME_VERSION_ID"],
+                    "arch": "x86_64", "git_sha": os.environ["GITHUB_SHA"]}
+          Path("out/runtime/runtime-target.json").write_text(json.dumps(target, indent=2) + "\n")
+          PYTHON
+          python3 tools/packaging/runtime_platform.py check-bundle "$PWD/out/runtime/runtime-target.json"
           cp out/linux-headless/DrawboradHeadless out/runtime/
-          cp tools/packaging/install-runtime-ubuntu.sh tools/packaging/README.md out/runtime/
-          cp tests/headless/verify_artifacts.py out/evidence/readiness.json out/runtime/
-          ldd out/runtime/DrawboradHeadless > out/runtime/build-linked-libraries.txt
-          (cd out/runtime && sha256sum DrawboradHeadless install-runtime-ubuntu.sh README.md verify_artifacts.py readiness.json build-linked-libraries.txt > SHA256SUMS)
-          tar -czf out/DrawboradHeadless-ubuntu24-x86_64.tar.gz -C out/runtime .
+          cp tools/packaging/install-runtime-linux.sh tools/packaging/install-runtime-ubuntu.sh tools/packaging/runtime_platform.py tools/packaging/README.md out/runtime/
+          cp tests/headless/verify_artifacts.py out/evidence/readiness.json out/evidence/build-linked-libraries.txt out/runtime/
+          (cd out/runtime && sha256sum DrawboradHeadless install-runtime-linux.sh install-runtime-ubuntu.sh runtime_platform.py runtime-target.json README.md verify_artifacts.py readiness.json build-linked-libraries.txt > SHA256SUMS)
+          tar -czf out/DrawboradHeadless-${{ matrix.target }}.tar.gz -C out/runtime .
+          (cd out && sha256sum DrawboradHeadless-${{ matrix.target }}.tar.gz > DrawboradHeadless-${{ matrix.target }}.tar.gz.sha256)
       - uses: actions/upload-artifact@v4
         with:
-          name: linux-headless-runtime-${{ github.sha }}
-          path: out/DrawboradHeadless-ubuntu24-x86_64.tar.gz
+          name: linux-headless-runtime-${{ matrix.target }}-${{ github.sha }}
+          path: out/DrawboradHeadless-${{ matrix.target }}.tar.gz*
           if-no-files-found: error
           retention-days: 14
+      - name: Package the authenticated editor for a persistent host
+        run: |
+          bundle="$PWD/out/editor-runtime"
+          mkdir -p "$bundle/cloud/static" "$bundle/tools/packaging" "$bundle/tools/segmentation" "$bundle/tools/models"
+          cp tools/packaging/native-editor/{Dockerfile,compose.yaml,README.md,start-cloud-session.sh,.dockerignore} "$bundle/"
+          # The bundle selects its own native base image, including when used with an owner env file.
+          sed -i 's/^ARG RUNTIME_IMAGE=.*/ARG RUNTIME_IMAGE=${{ matrix.image }}/' "$bundle/Dockerfile"
+          cp out/linux-headless/DrawboradHeadless out/runtime/runtime-target.json "$bundle/"
+          cp cloud/*.py cloud/requirements.txt "$bundle/cloud/"
+          cp cloud/static/index.html "$bundle/cloud/static/"
+          cp tools/segmentation/guided_grabcut.py "$bundle/tools/segmentation/"
+          cp tools/models/sam3_semantic.py "$bundle/tools/models/"
+          cp tools/packaging/{install-runtime-linux.sh,install-runtime-ubuntu.sh,runtime_platform.py} "$bundle/tools/packaging/"
+          (cd "$bundle" && find . -type f ! -name SHA256SUMS -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS)
+          tar -czf out/DrawboradNativeEditor-${{ matrix.target }}.tar.gz -C "$bundle" .
+          (cd out && sha256sum DrawboradNativeEditor-${{ matrix.target }}.tar.gz > DrawboradNativeEditor-${{ matrix.target }}.tar.gz.sha256)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-editor-host-${{ matrix.target }}-${{ github.sha }}
+          path: out/DrawboradNativeEditor-${{ matrix.target }}.tar.gz*
+          if-no-files-found: error
+          retention-days: 14
+
   runtime-install:
     needs: linux-headless
     runs-on: ubuntu-24.04
-    container: ubuntu:24.04
-    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: ubuntu24.04-x86_64
+            image: ubuntu:24.04
+            jpeg_soname: libjpeg.so.8
+          - target: debian13-x86_64
+            image: debian:13
+            jpeg_soname: libjpeg.so.62
+    # A fresh base image prevents build packages from hiding missing runtime dependencies.
+    container: ${{ matrix.image }}
+    timeout-minutes: 20
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: linux-headless-runtime-${{ github.sha }}
+          name: linux-headless-runtime-${{ matrix.target }}-${{ github.sha }}
           path: /tmp/download
       - name: Install and run extracted native package
-        shell: bash
         run: |
-          set -euo pipefail
           mkdir -p /tmp/runtime /tmp/runtime-evidence
-          tar -xzf /tmp/download/DrawboradHeadless-ubuntu24-x86_64.tar.gz -C /tmp/runtime
+          (cd /tmp/download && sha256sum -c DrawboradHeadless-${{ matrix.target }}.tar.gz.sha256)
+          tar -xzf /tmp/download/DrawboradHeadless-${{ matrix.target }}.tar.gz -C /tmp/runtime
           cd /tmp/runtime
           sha256sum -c SHA256SUMS | tee /tmp/runtime-evidence/checksums.log
-          bash install-runtime-ubuntu.sh 2>&1 | tee /tmp/runtime-evidence/install.log
+          apt-get update
+          apt-get install -y --no-install-recommends python3 ca-certificates
+          python3 runtime_platform.py check-bundle "$PWD/runtime-target.json"
+          bash install-runtime-linux.sh 2>&1 | tee /tmp/runtime-evidence/install.log
           ldd ./DrawboradHeadless | tee /tmp/runtime-evidence/linked-libraries.log
+          if grep -F 'not found' /tmp/runtime-evidence/linked-libraries.log; then echo 'Unresolved native library' >&2; exit 1; fi
+          grep -F '${{ matrix.jpeg_soname }}' /tmp/runtime-evidence/linked-libraries.log
           ./DrawboradHeadless --help | tee /tmp/runtime-evidence/help.log
           ./DrawboradHeadless smoke --output /tmp/runtime-evidence/painting | tee /tmp/runtime-evidence/run.log
           python3 verify_artifacts.py /tmp/runtime-evidence/painting | tee /tmp/runtime-evidence/ora-validation.json
           python3 -c 'import json,os; r=json.load(open("/tmp/runtime-evidence/painting/report.json")); assert r["gitSha"] == os.environ["GITHUB_SHA"]; assert r["replaySourceAssetReads"] == 0'
           cp /etc/os-release /tmp/runtime-evidence/os-release
+          cp runtime-target.json /tmp/runtime-evidence/
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: linux-headless-runtime-validation-${{ github.sha }}
+          name: linux-headless-runtime-validation-${{ matrix.target }}-${{ github.sha }}
           path: /tmp/runtime-evidence/
           if-no-files-found: error
+          retention-days: 14
+
+  native-editor-browser:
+    needs: linux-headless
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [ubuntu24.04-x86_64, debian13-x86_64]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-editor-host-${{ matrix.target }}-${{ github.sha }}
+          path: out/host
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-headless-p0-${{ matrix.target }}-${{ github.sha }}
+          path: out/native-evidence
+      - name: Verify the deployable bundle
+        working-directory: out/host
+        run: |
+          sha256sum -c DrawboradNativeEditor-${{ matrix.target }}.tar.gz.sha256
+          tar xzf DrawboradNativeEditor-${{ matrix.target }}.tar.gz
+          sha256sum -c SHA256SUMS
+          if env -u DRAWBORAD_CLOUD_TOKEN docker compose config --quiet; then
+            echo 'Empty owner credential unexpectedly accepted' >&2
+            exit 1
+          fi
+      - name: Install browser test dependencies
+        run: |
+          python3 -m venv out/browser-venv
+          out/browser-venv/bin/pip install 'playwright>=1.50,<2' pillow
+          out/browser-venv/bin/python -m playwright install --with-deps chromium
+      - name: Native layer selection UI regressions
+        run: |
+          node tests/cloud/native_layer_selection_unit.cjs
+          node tests/cloud/token_file_import_unit.cjs
+          node tests/cloud/token_file_reconnect_unit.cjs
+          out/browser-venv/bin/python tests/cloud/native_layer_selection_acceptance.py
+      - name: Exercise the delivered editor in Chromium
+        working-directory: out/host
+        env:
+          COMPOSE_PROJECT_NAME: drawborad-native-ci
+          DRAWBORAD_NATIVE_PORT: "18767"
+        run: |
+          export DRAWBORAD_CLOUD_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+          echo "::add-mask::$DRAWBORAD_CLOUD_TOKEN"
+          trap 'docker compose logs --no-color editor; docker compose down --volumes' EXIT
+          docker compose up -d --build --wait --wait-timeout 90
+          docker compose exec -T editor python -c 'import os; assert os.geteuid() != 0'
+          docker compose exec -T editor python /app/tools/packaging/runtime_platform.py check-bundle /app/runtime-target.json
+          ../browser-venv/bin/python ../../tests/cloud/browser_native_acceptance.py ../native-evidence/real-input ../browser-evidence
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-editor-browser-${{ matrix.target }}-${{ github.sha }}
+          path: out/browser-evidence/
+          if-no-files-found: warn
+          retention-days: 14
+
+  native-editor-cloud-session:
+    needs: linux-headless
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: ubuntu24.04-x86_64
+            image: ubuntu:24.04
+          - target: debian13-x86_64
+            image: debian:13
+    container: ${{ matrix.image }}
+    timeout-minutes: 30
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      PLAYWRIGHT_BROWSERS_PATH: /opt/playwright
+    steps:
+      - name: Bootstrap the clean distro for acceptance
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git python3
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-editor-host-${{ matrix.target }}-${{ github.sha }}
+          path: out/host
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-headless-p0-${{ matrix.target }}-${{ github.sha }}
+          path: out/native-evidence
+      - name: Prepare the delivered bundle and browser dependencies
+        working-directory: out/host
+        run: |
+          sha256sum -c DrawboradNativeEditor-${{ matrix.target }}.tar.gz.sha256
+          tar xzf DrawboradNativeEditor-${{ matrix.target }}.tar.gz
+          sha256sum -c SHA256SUMS
+          python3 tools/packaging/runtime_platform.py check-bundle "$PWD/runtime-target.json"
+          bash tools/packaging/install-runtime-linux.sh
+          python3 -m venv /opt/browser-venv
+          /opt/browser-venv/bin/pip install 'playwright>=1.50,<2' pillow
+          /opt/browser-venv/bin/python -m playwright install --with-deps chromium
+          useradd --create-home --user-group --uid 10001 studio
+          install -d -o studio -g studio "$GITHUB_WORKSPACE/out/cloud-session-evidence"
+          chmod -R a+rX /opt/playwright
+      - name: Exercise the foreground cloud-computer session as an unprivileged user
+        working-directory: out/host
+        run: |
+          # System dependencies are installed above. The session user has no sudo or elevated rights.
+          runuser -u studio -- env HOME=/home/studio \
+            /opt/browser-venv/bin/python "$GITHUB_WORKSPACE/tests/cloud/cloud_session_acceptance.py" \
+            "$GITHUB_WORKSPACE/out/native-evidence/real-input" "$GITHUB_WORKSPACE/out/cloud-session-evidence"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-editor-cloud-session-${{ matrix.target }}-${{ github.sha }}
+          path: out/cloud-session-evidence/
+          if-no-files-found: warn
           retention-days: 14
