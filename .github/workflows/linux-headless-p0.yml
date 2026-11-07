@@ -305,6 +305,8 @@ jobs:
       - name: Native layer selection UI regressions
         run: |
           node tests/cloud/native_layer_selection_unit.cjs
+          node tests/cloud/token_file_import_unit.cjs
+          node tests/cloud/token_file_reconnect_unit.cjs
           out/browser-venv/bin/python tests/cloud/native_layer_selection_acceptance.py
       - name: Exercise the delivered editor in Chromium
         working-directory: out/host

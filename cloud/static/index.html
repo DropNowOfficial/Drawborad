@@ -24,6 +24,15 @@ footer{color:#98a1ac;font-size:11px;margin-top:25px;line-height:1.7}.errors{colo
 <div class="panelbody" style="max-width:360px;padding-bottom:0">
 <label class="fieldlabel" for="token">Access token</label>
 <input id="token" class="field" type="password" placeholder="Required on protected hosts" autocomplete="off">
+<details id="tokenFilePanel" style="margin-top:12px"><summary>Use a local owner-token file</summary>
+<p id="tokenFileHelp" class="helper">Choose the plain owner-token file on the computer running this browser. Selection only reads it locally. Apply sends the token to this editor's same-origin server in the existing authorization header and enables later API requests. The app does not save the token in browser storage. The decoded token must be printable ASCII without spaces; a UTF-8 BOM is allowed. Do not select an environment file or share your token in chat.</p>
+<label class="fieldlabel" for="tokenFile">Local token file (maximum 4 KiB)</label>
+<input id="tokenFile" type="file" aria-describedby="tokenFileHelp">
+<label class="fieldlabel" for="tokenCandidate" style="margin-top:12px">Selected token (not applied)</label>
+<input id="tokenCandidate" class="field" type="password" readonly autocomplete="off" aria-describedby="tokenFileHelp">
+<div class="actions"><button id="tokenFileApply" type="button" class="secondary" disabled>Apply token to this server</button><button id="tokenFileClear" type="button" class="secondary">Clear selection</button></div>
+<p id="tokenFileStatus" class="helper" role="status" aria-live="polite">No file selected.</p>
+</details>
 </div>
 <div class="panelbody nativebar">
 <label class="fieldlabel" for="nativeFile">Open .draw <input id="nativeFile" type="file" accept=".draw"></label>
@@ -238,5 +247,47 @@ async function nativeReconnect(){const id=localStorage.getItem('drawborad.projec
 by('token').addEventListener('change',nativeReconnect);nativeReconnect();
 by('guidedRun').onclick=()=>nativeRun(async()=>{const photo=by('image').files[0],seeds=by('seedFile').files[0];if(!photo||!seeds)throw new Error('Select a photograph and a matching seed PNG.');const form=new FormData();form.append('image',photo);form.append('seeds',seeds);by('guidedRun').disabled=true;try{await show(await api('/guided',{method:'POST',body:form}))}finally{by('guidedRun').disabled=false}});
 by('nativeFromJob').onclick=()=>nativeRun(async()=>{if(!activeId)throw new Error('Review a completed segmentation first.');by('nativeFromJob').disabled=true;try{await nativeShow(await nativePost('/from-job/'+activeId,{accept_all:true}));by('nativeEditor').scrollIntoView({behavior:'smooth'})}finally{by('nativeFromJob').disabled=false}});
+
+
+// File selection is staged separately: existing requests cannot use it before Apply.
+let tokenFileReadVersion=0;
+function clearTokenFileSelection(message='No file selected.'){
+ ++tokenFileReadVersion;
+ by('tokenFile').value='';by('tokenCandidate').value='';
+ by('tokenFileApply').disabled=true;by('tokenFileStatus').textContent=message;
+}
+function parseOwnerTokenFile(text){
+ if(text.length>4096)throw new Error('Invalid token file');
+ // File.text() decodes UTF-8 and strips its BOM. Validate the decoded token.
+ // The launcher writes one raw token, optionally followed by one LF or CRLF.
+ const token=text.replace(/\r?\n$/,'');
+ if(!/^[\x21-\x7e]+$/.test(token))throw new Error('Invalid token file');
+ return token;
+}
+by('tokenFile').onchange=async()=>{
+ const file=by('tokenFile').files[0];
+ clearTokenFileSelection(file?'Reading selected file locally…':'No file selected.');
+ if(!file)return;
+ const version=tokenFileReadVersion;
+ try{
+  if(file.size<1||file.size>4096)throw new Error('Invalid token file');
+  const token=parseOwnerTokenFile(await file.text());
+  if(version!==tokenFileReadVersion)return;
+  by('tokenCandidate').value=token;by('tokenFileApply').disabled=false;
+  by('tokenFileStatus').textContent='Read locally. Click Apply to send this token to this server.';
+ }catch(e){
+  if(version===tokenFileReadVersion)clearTokenFileSelection('Cannot read this token file. Select a UTF-8 file of at most 4 KiB containing an ASCII token, with no spaces or extra lines (UTF-8 BOM allowed).');
+ }
+};
+by('tokenFileApply').onclick=()=>{
+ if(by('tokenFileApply').disabled||!by('tokenCandidate').value)return;
+ by('token').value=by('tokenCandidate').value;
+ clearTokenFileSelection('Applied to this page. Check the connection status above. Refreshing clears the token.');
+ by('token').dispatchEvent(new Event('change'));
+};
+by('tokenFileClear').onclick=()=>clearTokenFileSelection();
+by('tokenFile').addEventListener('cancel',()=>clearTokenFileSelection());
+by('tokenFilePanel').addEventListener('toggle',()=>{if(!by('tokenFilePanel').open)clearTokenFileSelection()});
+by('token').addEventListener('input',()=>clearTokenFileSelection());
 
 </script></body></html>
