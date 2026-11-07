@@ -134,7 +134,8 @@ int main(int argc,char** argv) {
         auto document=unwrap(Document::fromSnapshot(initial));Command command;
         for(const auto& event:events)command.operations.emplace_back(Paint{event,unwrap(strokeBounds(event))});
         unwrap(document.apply(command,initial.revision));auto snapshot=document.snapshot();
-        std::filesystem::create_directories(output);require(ProjectStore{}.save(output/"automatic.draw",snapshot));
+        if(!std::filesystem::create_directories(output))throw std::runtime_error("output exists; no clobber");
+        require(ProjectStore{}.save(output/"automatic.draw",snapshot));
         auto recovered=unwrap(ProjectStore{}.recover(output/"automatic.draw"));
         if(!recovered.snapshot.sameContent(snapshot))throw std::runtime_error("save/reopen mismatch");
         snapshot=recovered.snapshot;source.bytes.clear();

@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -135,6 +136,26 @@ class AutomaticStagesTests(unittest.TestCase):
             with (root/"source.rgba").open("ab") as f:f.write(b"unexpected trailing data")
             self.assertNotEqual(subprocess.run(args,capture_output=True).returncode,0)
             self.assertFalse((root/"invalid").exists())
+
+    def test_native_directory_created_during_planning_is_not_clobbered(self):
+        configured=os.environ.get("DRAWBORAD_NATIVE_PLAN")
+        runner=Path(configured) if configured is not None else ROOT/"local-build/staged/native-plan"
+        if configured is not None:
+            self.assertTrue(configured and runner.is_file(),"DRAWBORAD_NATIVE_PLAN must name a runner file")
+        elif not runner.is_file():self.skipTest("native prototype must be built first")
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);np.full((24,24,4),255,np.uint8).tofile(root/"source.rgba")
+            np.full((24,24),255,np.uint8).tofile(root/"mask.u8")
+            (root/"plan.txt").write_text("DBPAINT1 24 24 1 1\n0 0 1 .3 .5 .7 1 100000\n"+"8.5 8.5 1\n"*100000)
+            args=[str(runner),str(root/"plan.txt"),str(root/"source.rgba"),str(root/"native"),str(root/"mask.u8")]
+            process=subprocess.Popen(args,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+            time.sleep(.005)
+            (root/"native").mkdir()
+            sentinel=root/"native/final.rgba";sentinel.write_bytes(b"existing owner data")
+            stdout,stderr=process.communicate(timeout=30)
+            self.assertEqual(process.returncode,1,stdout+stderr)
+            self.assertEqual(sentinel.read_bytes(),b"existing owner data")
+            self.assertFalse((root/"native/automatic.draw").exists())
 
     def test_explicit_missing_native_runner_fails_instead_of_skipping(self):
         with tempfile.TemporaryDirectory() as directory:

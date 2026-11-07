@@ -109,6 +109,10 @@ jobs:
         run: |
           bash tools/experimental/automatic_stages/build_native.sh "$PWD/out/automatic-stages/native-plan"
           DRAWBORAD_NATIVE_PLAN="$PWD/out/automatic-stages/native-plan" python3 -m unittest discover -s tests/experimental -p 'test_automatic_stages.py' -v 2>&1 | tee out/evidence/automatic-stages-tests.log
+      - name: Verify isolated native-flow experiment
+        run: |
+          bash tools/experimental/flow_planner/build.sh
+          python3 -m unittest discover -s tools/experimental/flow_planner -p 'test_flow.py' -v 2>&1 | tee out/evidence/native-flow-tests.log
       - name: Native persistent editing contract
         run: python3 tests/headless/test_session.py out/linux-headless/DrawboradHeadless
       - name: Python project API and existing runtime tests
