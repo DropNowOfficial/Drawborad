@@ -280,3 +280,113 @@ TEST("E02 base stroke sampling adapts to the event sample budget") {
     CHECK(planned.value().events.size()>=5);
     assertNoLeak(planned.value(),c);
 }
+
+namespace {
+void enableNativeClipping(Context& c) {
+    auto resources=std::make_shared<ResourceMap>(*c.snapshot.resources);
+    Resource mask{sha256(c.mask),ResourceKind::Mask,std::make_shared<const Bytes>(c.mask),{}};
+    resources->emplace(mask.id,mask);c.snapshot.resources=resources;
+    auto nodes=std::make_shared<NodeMap>(*c.snapshot.nodes);
+    nodes->at(c.region.objectId).maskId=mask.id;c.snapshot.nodes=nodes;
+    c.region.snapshot=c.snapshot;c.region.reviewedMask=c.mask;c.region.clipToReviewedMask=true;
+}
+void flatSource(Context& c) {
+    for(std::size_t p=0;p<4096;++p) {
+        c.source.bytes[p*4]=40;c.source.bytes[p*4+1]=110;
+        c.source.bytes[p*4+2]=180;c.source.bytes[p*4+3]=255;
+    }
+}
+}
+TEST("E02 native pigment follows a hollow form with continuous bands instead of scanlines") {
+    Context c;flatSource(c);c.mask.assign(4096,0);
+    for(int y=8;y<56;++y)for(int x=8;x<56;++x)
+        if(x<20 || x>=44 || y<20 || y>=44)c.mask[y*64+x]=255;
+    enableNativeClipping(c);
+    const auto paint=planBasePigment(c.region,StyleSettings{"marker",2,1,1,.04,true});CHECK(paint);
+    std::cout<<"hollow-form pigment events="<<paint.value().events.size()<<'\n';
+    CHECK(paint.value().events.size()<=16);
+    for(const auto& event:paint.value().events) {
+        CHECK(event.geometry.size()>=4);
+        CHECK(event.geometry.front().x==event.geometry.back().x);
+        CHECK(event.geometry.front().y==event.geometry.back().y);
+    }
+    CHECK(paint.value().events==planBasePigment(c.region,StyleSettings{"marker",2,1,1,.04,true}).value().events);
+    const auto snapshot=fixture::withEvents(c.snapshot,paint.value().events);
+    ReferenceRenderer renderer;
+    const auto raw=renderer.renderRegion(snapshot,c.region.layerId,{0,0,64,64},{snapshot.revision});CHECK(raw);
+    const auto clipped=nativeMaskedTile(snapshot,c.region.layerId,raw.value(),0,0);CHECK(clipped);
+    for(std::size_t p=0;p<4096;++p) {
+        CHECK(clipped.value().bytes[p*4+3]==c.mask[p]);
+        if(c.mask[p])for(unsigned channel=0;channel<3;++channel)
+            CHECK(std::abs(int(clipped.value().bytes[p*4+channel])-int(c.source.bytes[p*4+channel]))<=1);
+    }
+    CHECK(renderer.statistics().sourceAssetReads==0);
+}
+TEST("E02 native pigment changes direction along a rounded silhouette") {
+    Context c;flatSource(c);c.mask.assign(4096,0);
+    for(int y=0;y<64;++y)for(int x=0;x<64;++x)
+        if((x-32)*(x-32)+(y-32)*(y-32)<=24*24)c.mask[y*64+x]=255;
+    enableNativeClipping(c);
+    const auto paint=planBasePigment(c.region,StyleSettings{"marker",2,1,1,.04,true});CHECK(paint);
+    std::size_t bent=0;
+    for(const auto& event:paint.value().events) {
+        const auto& start=event.geometry.front();
+        const bool changesX=std::any_of(event.geometry.begin(),event.geometry.end(),[&](const auto& p){return p.x!=start.x;});
+        const bool changesY=std::any_of(event.geometry.begin(),event.geometry.end(),[&](const auto& p){return p.y!=start.y;});
+        if(changesX && changesY)++bent;
+    }
+    CHECK(bent>=12);
+    CHECK(paint.value().events.size()<32);
+}
+TEST("E02 native contour bands split at pigment boundaries without averaging across them") {
+    Context c;flatSource(c);
+    for(int y=0;y<64;++y)for(int x=32;x<64;++x) {
+        c.source.bytes[(y*64+x)*4]=220;c.source.bytes[(y*64+x)*4+1]=20;
+    }
+    enableNativeClipping(c);
+    const auto paint=planBasePigment(c.region,StyleSettings{"marker",2,1,1,.04,true});CHECK(paint);
+    for(const auto& event:paint.value().events) {
+        const bool left=event.color.channels[0]<.5;
+        CHECK(std::abs(event.color.channels[0]-(left?40.0:220.0)/255)<.00001);
+        for(const auto& point:event.geometry)CHECK((point.x<32)==left);
+    }
+    c.region.maxEvents=1;
+    const auto limited=planBasePigment(c.region,StyleSettings{"marker",2,1,1,.04,true});
+    CHECK(!limited);CHECK(limited.error().code==ErrorCode::BudgetExceeded);
+    c.region.maxEvents=4096;c.region.maxSamples=2;
+    const auto samples=planBasePigment(c.region,StyleSettings{"marker",2,1,1,.04,true});
+    CHECK(!samples);CHECK(samples.error().code==ErrorCode::BudgetExceeded);
+}
+TEST("E02 native contour bands cover concave masks islands and narrow remnants at multiple nib sizes") {
+    for(const double width:{1.0,2.0,4.0,7.0})for(unsigned shape=0;shape<8;++shape) {
+        Context c;flatSource(c);c.mask.assign(4096,0);
+        std::uint32_t random=shape+917;
+        for(int y=4;y<60;++y)for(int x=4;x<60;++x) {
+            random=random*1664525u+1013904223u;
+            const bool cutout=x>17 && x<46 && y>17 && y<46;
+            if(!cutout && (random>>28)>2)c.mask[y*64+x]=255;
+        }
+        c.mask[0]=255;c.mask[63]=255;c.mask[4095]=255;
+        enableNativeClipping(c);
+        const auto paint=planBasePigment(c.region,StyleSettings{"marker",width,3,1,.04,true});CHECK(paint);
+        const auto snapshot=fixture::withEvents(c.snapshot,paint.value().events);ReferenceRenderer renderer;
+        const auto raw=renderer.renderRegion(snapshot,c.region.layerId,{0,0,64,64},{snapshot.revision});CHECK(raw);
+        const auto clipped=nativeMaskedTile(snapshot,c.region.layerId,raw.value(),0,0);CHECK(clipped);
+        for(std::size_t p=0;p<4096;++p)CHECK(clipped.value().bytes[p*4+3]==c.mask[p]);
+        for(const auto& event:paint.value().events)for(const auto& point:event.geometry)
+            CHECK(c.mask[std::size_t(point.y)*64+std::size_t(point.x)]==255);
+    }
+}
+TEST("E02 experimental contour flow requires a verified native mask and honors cancellation") {
+    Context c;flatSource(c);StyleSettings style{"marker",2,1,1,.04,true};
+    const auto noNativeMask=planBasePigment(c.region,style);
+    CHECK(!noNativeMask);CHECK(noNativeMask.error().code==ErrorCode::UnsupportedFeature);
+    enableNativeClipping(c);
+    auto nodes=std::make_shared<NodeMap>(*c.snapshot.nodes);nodes->at(c.region.layerId).locked=true;
+    c.region.snapshot.nodes=nodes;CHECK(!planBasePigment(c.region,style));
+    c.region.snapshot=c.snapshot;
+    std::stop_source stop;stop.request_stop();c.region.stop=stop.get_token();
+    const auto cancelled=planBasePigment(c.region,style);
+    CHECK(!cancelled);CHECK(cancelled.error().code==ErrorCode::Cancelled);
+}
+

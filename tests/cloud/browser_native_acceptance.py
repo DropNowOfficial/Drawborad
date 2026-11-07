@@ -60,6 +60,48 @@ def download(page, button, output, filename):
     return target
 
 
+def verify_layer_selection(page, state):
+    """Selection scopes native stroke IDs without changing visibility or revision."""
+    select = page.locator("#nativeStrokes")
+    before = preview(page)
+    expected_status = page.locator("#nativeStatus").inner_text()
+    layers = [n for n in state["nodes"] if n["kind"] == 3]
+    empty = 0
+    page.locator("#nativeShowSublayers").check()
+    for node in state["nodes"]:
+        if node["kind"] not in (1, 3):
+            continue
+        expected = [e["id"] for e in state["strokes"]
+                    if e["layer_id"] == node["id"] or e["object_id"] == node["id"]]
+        button = page.locator('[data-node-id="' + node["id"] + '"] .native-node-select')
+        button.click()
+        expect(button).to_have_attribute("aria-pressed", "true")
+        expect(page.locator("#nativeScope")).to_contain_text(node["name"])
+        assert select.locator("option").evaluate_all("options => options.map(o => o.value)") == expected
+        expect(page.locator("#nativeStatus")).to_have_text(expected_status)
+        if not expected:
+            empty += node["kind"] == 3
+            expect(select).to_be_disabled()
+            expect(page.locator("#nativeRecolor")).to_be_disabled()
+    expect(page.locator("#nativeLayerSummary")).to_contain_text(str(len(layers)) + " paint layers")
+    expect(page.locator("#nativeLayerSummary")).to_contain_text(str(empty) + " without strokes")
+    page.locator("#nativeShowSublayers").uncheck()
+    page.locator("#nativeAllStrokes").click()
+    assert select.locator("option").evaluate_all("options => options.map(o => o.value)") == [e["id"] for e in state["strokes"]]
+    assert preview(page) == before
+
+
+def verify_controls_during_preview(route):
+    """The response has rebuilt rows, but the native command is still busy."""
+    page = route.request.frame.page
+    controls = page.locator("#nativeNodes input, #nativeNodes button")
+    assert controls.count() > 0
+    assert controls.evaluate_all("controls => controls.every(c => c.disabled)")
+    expect(page.locator("#nativeAllStrokes")).to_be_disabled()
+    expect(page.locator("#nativeShowSublayers")).to_be_disabled()
+    route.continue_()
+
+
 def exercise(context, page, source, output, url, token, restart):
     authenticate(page, url, token)
     page.get_by_text("Photo segmentation & source-layer review", exact=True).click()
@@ -69,6 +111,7 @@ def exercise(context, page, source, output, url, token, restart):
     assert job["backend"] == "opencv-grabcut" and not job["ai_inference"]
     expect(page.locator("#layerList img").first).to_be_visible()
     state = click_post(page, page.locator("#nativeFromJob"), "/from-job/" + job["id"], 201)
+    verify_layer_selection(page, state)
     stroke = state["strokes"][-1]
     select = page.locator("#nativeStrokes")
     select.select_option(index=0)
@@ -78,6 +121,7 @@ def exercise(context, page, source, output, url, token, restart):
 
     peer = context.new_page()
     authenticate(peer, url, token, reconnect=True)
+    page.route("**/projects/*/preview.png", verify_controls_during_preview, times=1)
     changed = click_post(page, page.locator("#nativeRecolor"), "/commands")
     assert changed["dirty"] and changed["strokes"][-1]["color"] != stroke["color"]
     expect(page.locator("#nativeDownload")).to_be_disabled()
@@ -185,3 +229,4 @@ if __name__ == "__main__":
 
     verify_in_chromium(source, output, url, os.environ["DRAWBORAD_CLOUD_TOKEN"], recreate_container,
                        {"target": "packaged editor on CI loopback", "container_recovery": "saved revision"})
+

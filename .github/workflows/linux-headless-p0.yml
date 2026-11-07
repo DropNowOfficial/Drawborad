@@ -263,6 +263,10 @@ jobs:
           python3 -m venv out/browser-venv
           out/browser-venv/bin/pip install 'playwright>=1.50,<2' pillow
           out/browser-venv/bin/python -m playwright install --with-deps chromium
+      - name: Native layer selection UI regressions
+        run: |
+          node tests/cloud/native_layer_selection_unit.cjs
+          out/browser-venv/bin/python tests/cloud/native_layer_selection_acceptance.py
       - name: Exercise the delivered editor in Chromium
         working-directory: out/host
         env:
