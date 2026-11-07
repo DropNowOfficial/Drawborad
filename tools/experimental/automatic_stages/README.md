@@ -135,7 +135,7 @@ python tools/experimental/automatic_stages/run_evaluation.py \
   --output /tmp/eligible-runs
 ```
 
-The 14 regression/integration tests cover diagonal continuous ink, genuine dots,
+The 15 regression/integration tests cover diagonal continuous ink, genuine dots,
 low-contrast noise, local color support, scene-wide order, translation,
 determinism, mask/budget rejection, native roundtrip, oversized input, explicit
 opt-in, unsupported alpha, invalid manifests and explicitly missing runners.
