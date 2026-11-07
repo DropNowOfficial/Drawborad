@@ -4,23 +4,60 @@ set -euo pipefail
 set +x
 umask 077
 
-if (( $# > 1 )) || [[ $# == 1 && $1 != --install-deps ]]; then
-  echo 'Usage: bash start-cloud-session.sh [--install-deps]' >&2
+if (( $# > 1 )) || [[ $# == 1 && $1 != --install-deps && $1 != --check ]]; then
+  echo 'Usage: bash start-cloud-session.sh [--check | --install-deps]' >&2
   exit 2
 fi
 bundle="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 engine="$bundle/DrawboradHeadless"
 if [[ "$(uname -s)/$(uname -m)" != Linux/x86_64 || ! -x "$engine" ]]; then
-  echo 'Extract the native-editor-host archive on an x86-64 Linux computer first. The binary targets Ubuntu 24.04.' >&2
+  echo 'Extract the matching Ubuntu 24.04 or Debian 13 x86-64 native-editor-host archive first.' >&2
   exit 2
 fi
+if ! command -v python3 >/dev/null; then
+  echo 'Python 3 is required for runtime preflight.' >&2
+  exit 2
+fi
+# Reject a mismatched binary before executing it or modifying session state.
+python3 "$bundle/tools/packaging/runtime_platform.py" check-bundle "$bundle/runtime-target.json"
 port="${DRAWBORAD_CLOUD_PORT:-8767}"
 if ! [[ "$port" =~ ^[0-9]{1,5}$ ]] || (( 10#$port < 1 || 10#$port > 65535 )); then
   echo 'DRAWBORAD_CLOUD_PORT must be between 1 and 65535.' >&2
   exit 2
 fi
 
+if ! "$engine" --help >/dev/null 2>&1 || ! python3 -c 'import ensurepip, venv' >/dev/null 2>&1 || ! command -v flock >/dev/null; then
+  if [[ "${1:-}" != --install-deps ]]; then
+    echo 'Missing native libraries, Python venv, or flock. Use --install-deps only if system package installation is authorized.' >&2
+    "$engine" --help >/dev/null || true
+    exit 2
+  fi
+  elevate=()
+  if (( EUID != 0 )); then elevate=(sudo -n); fi
+  "${elevate[@]}" bash "$bundle/tools/packaging/install-runtime-linux.sh"
+fi
+"$engine" --help >/dev/null
+python3 -c 'import ensurepip, venv'
+command -v flock >/dev/null
+
 work="${DRAWBORAD_SESSION_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/drawborad-native-session}"
+# A read-only cloud filesystem is a deployment blocker, not an ABI problem.
+python3 - "$work" <<'CHECK_WRITABLE'
+import os
+from pathlib import Path
+import sys
+path = Path(sys.argv[1]).absolute()
+parent = path
+while not parent.exists() and parent != parent.parent:
+    parent = parent.parent
+if (not parent.is_dir() or not os.access(parent, os.W_OK | os.X_OK)
+        or os.statvfs(parent).f_flag & os.ST_RDONLY):
+    sys.exit(f'Session storage is not writable: {path}. Set DRAWBORAD_SESSION_HOME to authorized writable persistent storage.')
+CHECK_WRITABLE
+if [[ "${1:-}" == --check ]]; then
+  echo 'Preflight passed: matching native runtime, Python venv, flock and writable storage. No session, credential or Python environment was created.'
+  exit 0
+fi
 mkdir -p -- "$work"
 work="$(cd -- "$work" && pwd -P)"
 exec 9>>"$work/session.lock"
@@ -28,17 +65,6 @@ if ! flock -n 9; then
   echo "An editor session already owns $work. Reuse its browser or stop it before restarting." >&2
   exit 1
 fi
-if ! "$engine" --help >/dev/null 2>&1 || ! python3 -c 'import ensurepip, venv' >/dev/null 2>&1; then
-  if [[ "${1:-}" != --install-deps ]]; then
-    echo 'Missing native libraries or Python venv. On Ubuntu 24.04, rerun with --install-deps if system package installation is allowed.' >&2
-    exit 2
-  fi
-  elevate=()
-  if (( EUID != 0 )); then elevate=(sudo -n); fi
-  "${elevate[@]}" bash "$bundle/tools/packaging/install-runtime-ubuntu.sh"
-  "${elevate[@]}" apt-get install -y --no-install-recommends python3-venv ca-certificates
-fi
-"$engine" --help >/dev/null
 
 venv="$work/venv"
 if [[ ! -x "$venv/bin/pip" ]]; then python3 -m venv "$venv"; fi

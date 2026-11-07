@@ -1,14 +1,19 @@
-FROM ubuntu:24.04
+# Packaging replaces this default with the image matching runtime-target.json.
+ARG RUNTIME_IMAGE=ubuntu:24.04
+FROM ${RUNTIME_IMAGE}
 
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     DRAWBORAD_NATIVE_ENGINE=/app/DrawboradHeadless DRAWBORAD_CLOUD_DATA=/data \
     PATH="/opt/drawborad/bin:$PATH"
 
-COPY tools/packaging/install-runtime-ubuntu.sh /tmp/install-runtime.sh
+COPY runtime-target.json /app/runtime-target.json
+COPY tools/packaging/install-runtime-linux.sh tools/packaging/runtime_platform.py /app/tools/packaging/
 COPY cloud/requirements.txt /tmp/requirements.txt
-RUN bash /tmp/install-runtime.sh \
-    && apt-get install -y --no-install-recommends python3-venv ca-certificates \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 ca-certificates \
+    && python3 /app/tools/packaging/runtime_platform.py check-bundle /app/runtime-target.json \
+    && bash /app/tools/packaging/install-runtime-linux.sh \
     && rm -rf /var/lib/apt/lists/* \
     && python3 -m venv /opt/drawborad \
     && /opt/drawborad/bin/pip install --no-cache-dir --only-binary=:all: -r /tmp/requirements.txt opencv-python-headless \
