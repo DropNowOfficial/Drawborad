@@ -71,6 +71,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Align isolated checkout ownership
+        run: |
+          # The runner mounts its checkout into a root-owned job container.
+          # Match the throwaway checkout to this process instead of disabling Git's ownership guard.
+          test "$(pwd -P)" = "$(realpath "$GITHUB_WORKSPACE")"
+          chown -R -- "$(id -u):$(id -g)" "$GITHUB_WORKSPACE"
+          test "$(git rev-parse --show-toplevel)" = "$GITHUB_WORKSPACE"
       - name: Check Linux packaging contracts
         run: |
           python3 tests/packaging/test_linux_runtime.py
