@@ -44,7 +44,7 @@ Result<Bytes> maskFile(const QDir& directory,const QString& relative,
     return bytes;
 }
 }
-Result<SemanticManifestImport> loadSemanticMaskManifest(const QUrl& manifestUrl) {
+Result<SemanticManifestImport> loadSemanticMaskManifest(const QUrl& manifestUrl, bool allowFixture) {
     if(!manifestUrl.isLocalFile())return error(ErrorCode::InvalidInput,"semantic.local-only");
     const QFileInfo info(manifestUrl.toLocalFile());
     QFile manifest(info.absoluteFilePath());
@@ -55,7 +55,7 @@ Result<SemanticManifestImport> loadSemanticMaskManifest(const QUrl& manifestUrl)
     if(parseError.error!=QJsonParseError::NoError || !parsed.isObject())
         return error(ErrorCode::CorruptData,"semantic.manifest-json");
     const auto root=parsed.object();
-    if(root.value("schema").toInt(-1)!=1 || (root.value("backend").toString()!=QLatin1String("sam3-image") && root.value("backend").toString()!=QLatin1String("opencv-grabcut")) ||
+    if(root.value("schema").toInt(-1)!=1 || (root.value("backend").toString()!=QLatin1String("sam3-image") && root.value("backend").toString()!=QLatin1String("opencv-grabcut") && !(allowFixture && root.value("backend").toString()==QLatin1String("fixture-no-ai"))) ||
        root.value("promptOrder").toString()!=QLatin1String("back-to-front"))
         return error(ErrorCode::UnsupportedFeature,"semantic.manifest-schema");
     const auto w=root.value("width").toInteger(-1), h=root.value("height").toInteger(-1);

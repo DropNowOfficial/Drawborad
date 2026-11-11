@@ -8,6 +8,7 @@
 #include <QTemporaryDir>
 #include <QTextStream>
 #include <numeric>
+#include <limits>
 using namespace drawborad;
 namespace {
 // This command-owned fixture never goes through or weakens the SAM manifest loader.
@@ -35,27 +36,35 @@ int execute(const QStringList& args){
     if(args.size()==2 && (args[1]=="--help" || args[1]=="-h")){
         out<<"DrawboradHeadless\nUsage:\n"
               "  DrawboradHeadless run --manifest PATH --output DIR --accept-all\n"
+              "  DrawboradHeadless run --manifest PATH --output DIR --accept-index N [--accept-index N] [--fixture]\n"
               "  DrawboradHeadless smoke --output DIR\n"
               "Output must be a new directory. Smoke provenance: fixture-no-ai.\n";
         return 0;
     }
     const auto invalid=[&](){err<<"Invalid arguments. Run DrawboradHeadless --help.\n";return 2;};
     if(args.size()<2 || (args[1]!="run" && args[1]!="smoke"))return invalid();
-    QString manifest,output;bool accept=false;
+    QString manifest,output;bool accept=false, allowFixture=false;
+    std::vector<std::size_t> accepted;
     for(qsizetype i=2;i<args.size();++i){
         if(args[i]=="--accept-all" && args[1]=="run" && !accept){accept=true;continue;}
+        if(args[i]=="--fixture" && args[1]=="run" && !allowFixture){allowFixture=true;continue;}
         if(i+1>=args.size() || args[i+1].startsWith("--"))return invalid();
         if(args[i]=="--output" && output.isEmpty())output=args[++i];
         else if(args[i]=="--manifest" && args[1]=="run" && manifest.isEmpty())manifest=args[++i];
+        else if(args[i]=="--accept-index" && args[1]=="run"){
+            const auto value=args[++i];bool ok=false;const auto n=value.toULongLong(&ok);
+            if(!ok || QString::number(n)!=value || n>std::numeric_limits<std::size_t>::max())return invalid();
+            accepted.push_back(std::size_t(n));
+        }
         else return invalid();
     }
-    if(output.isEmpty() || (args[1]=="run" && (manifest.isEmpty() || !accept)))return invalid();
+    if(output.isEmpty() || (args[1]=="run" && (manifest.isEmpty() || (!accept && accepted.empty()) || (accept && !accepted.empty()))))return invalid();
     QTemporaryDir fixture;
     if(!fixture.isValid()){err<<"headless.temporary-directory\n";return 3;}
     auto input=args[1]=="smoke"?smokeFixture(fixture.filePath("source.png")):
-        loadSemanticMaskManifest(QUrl::fromLocalFile(manifest));
+        loadSemanticMaskManifest(QUrl::fromLocalFile(manifest),allowFixture);
     if(!input){err<<QString::fromStdString(input.error().messageKey)<<'\n';return 2;}
-    std::vector<std::size_t> accepted(input.value().names.size());std::iota(accepted.begin(),accepted.end(),0);
+    if(accept || args[1]=="smoke"){accepted.resize(input.value().names.size());std::iota(accepted.begin(),accepted.end(),0);}
     auto result=runHeadlessWorkflow({std::move(input.value()),std::move(accepted),std::filesystem::path(output.toUtf8().toStdString())});
     if(!result){err<<QString::fromStdString(result.error().messageKey)<<'\n';return result.error().code==ErrorCode::Cancelled?4:3;}
     out<<QJsonDocument(result.value().metadata).toJson(QJsonDocument::Compact)<<'\n';return 0;
