@@ -1,0 +1,9 @@
+FROM debian:13
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates cmake ninja-build g++ qt6-base-dev qt6-base-private-dev libpng-dev zlib1g-dev libjpeg-dev libtiff-dev libwebp-dev libheif-dev liblcms2-dev python3 python3-venv && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY . /app
+RUN cmake -S . -B out/batch -G Ninja -DCMAKE_BUILD_TYPE=Release -DDRAWBORAD_HEADLESS_WORKFLOW=ON -DDRAWBORAD_DESKTOP=OFF -DDRAWBORAD_QUALIFY=OFF && cmake --build out/batch --target DrawboradHeadless --parallel 2
+RUN python3 -m venv /opt/python && /opt/python/bin/pip install --no-cache-dir -r tools/serverless/requirements.txt && useradd -u 10001 -m worker
+ENV PATH=/opt/python/bin:$PATH DRAWBORAD_NATIVE_ENGINE=/app/out/batch/DrawboradHeadless PYTHONUNBUFFERED=1
+USER worker
+CMD ["python", "-m", "cloud.batch.worker"]

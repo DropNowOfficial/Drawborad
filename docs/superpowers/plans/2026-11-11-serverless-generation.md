@@ -14,3 +14,15 @@ Ruling: local persistent-directory backend proves restart contract only; S3/R2 a
 Pre-flight: GPU output uses existing complete disjoint manifest; review stores selected stable candidate IDs; CPU translates them to immutable manifest indices. Names include view identity; no cross-view merge.
 RED: native selective fixture test failed with Invalid arguments against baseline binary. Initial Ubuntu binary could not load libjpeg.so.8 on Debian; replaced with exact-baseline Debian CI artifact before measuring red.
 External status: plugin discovery found no RunPod/Cloudflare administration connection. No actual paid jobs submitted. SAM license/access and storage credentials not verified.
+
+Task 1 local: 11/11 batch tests pass using Debian native artifact from PR test merge dbc55eb (source 59755c3); selective fixture produces genuine events and source-free replay. Local fixtures use filesystem persistence, cloud adapter remains unqualified. Ubuntu CI failed before compilation because archive/security.ubuntu.com DNS failed; Debian compiled and passed native tests.
+Ruling: first paid trial uses a persistent single reservation; uncertain provider responses require reconciliation and never automatic resubmission. This sacrifices automatic retry to avoid duplicate paid jobs.
+
+## Continuation verification 2026-11-11
+- Current PR #7 head before this continuation: 59755c37168c43a2940ec2de32843b5974074f2d; base unchanged 8c30457.
+- Regression: 33 passed locally (cloud + batch), actual new native binary. Missing .devcontainer/script in local snapshot restored unchanged from baseline before rerun.
+- Three new failure tests observed RED then GREEN: invalid image/review payload, crashed-worker expiry on read, failed SAM attempt billing left unreconciled.
+- Independent HTTP on existing 192x128 Chelsea test input: fixture partition, explicit one-object acceptance, 2284 native strokes / 4 paint layers. Gateway stopped/restarted before review and again after generation; downloads survived. Native input removed before reopen; independent ORA composition passed. No resizing performed by this run.
+- Initial CI 43059646454: Debian build/test success; Ubuntu failed package-source DNS before compilation; dependent browser/runtime jobs skipped. New Chromium batch acceptance added to both native build matrix entries.
+- Ruling: keep production CPU dispatch disabled until a real finite CPU provider is connected; never silently charge GPU for reconstruction. Cost: production build is unavailable until configuration.
+- Actual GPU/S3/SAM3/ARES_207 and platform billing remain unrun; no paid resources created. Docker deployment recipes are unbuilt.

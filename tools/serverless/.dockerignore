@@ -1,0 +1,10 @@
+.git
+**/__pycache__
+**/.env*
+**/*.pt
+**/*.pth
+**/*.safetensors
+**/*.draw
+out
+.batch-data
+.cloud-data

@@ -1,0 +1,4 @@
+-r ../../cloud/requirements.txt
+httpx>=0.28,<1
+boto3>=1.40,<2
+runpod>=1.7,<2
