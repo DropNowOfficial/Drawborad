@@ -32,3 +32,8 @@ Ruling: first paid trial uses a persistent single reservation; uncertain provide
 - Important fixed: numeric/bool/null view IDs accepted before model calls; RED→GREEN validation rejects all before dispatch.
 - Minor deferred: changing prompt/view/backend without reselecting the image retains its idempotency key and returns a visible 409. Workaround: reselect image.
 - Review boundary ruling: actual provider semantics, model/image compatibility, S3 privacy/CAS, costs/accuracy/ARES_207 and CPU deployment stay explicitly unverified until credentialed execution; no success claim follows from code review. Cost if wrong: deployment remains unavailable until qualification.
+
+## CI evidence and environment repair
+- Head 0e38f814 / PR merge c1763268, run 43105053112: Ubuntu and Debian build/native tests/new batch HTTP + Chromium acceptance all passed. Browser upload→review→select→build→download→refresh→download equality verified, screenshots retained in linux-headless-p0 artifacts.
+- Existing cloud-session bootstrap failed before browser startup: Playwright 1.65 Node cannot load libatomic.so.1 in clean Ubuntu runtime container. Real CI RED is the regression evidence; add libatomic1 to bootstrap before invoking Playwright's installer. This is a test-environment dependency repair, not an engine change.
+- ARES_207 source located privately (1117×1536 JPEG); input discovery is resolved, actual model/ARES acceptance remains not run.

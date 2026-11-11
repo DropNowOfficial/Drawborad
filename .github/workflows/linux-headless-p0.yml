@@ -356,7 +356,7 @@ jobs:
       - name: Bootstrap the clean distro for acceptance
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends ca-certificates git python3
+          apt-get install -y --no-install-recommends ca-certificates git python3 libatomic1
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
