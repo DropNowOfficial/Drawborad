@@ -82,7 +82,7 @@ class Jobs:
         if not isinstance(views,list) or len(views)>8:raise ValueError('Invalid views')
         used=[];names=set()
         for v in views:
-            if not isinstance(v,dict) or v.get('confirmed') is not True or not re.fullmatch('[a-zA-Z0-9_-]{1,24}',str(v.get('id',''))) or v['id'] in names:raise ValueError('Views must have distinct confirmed IDs')
+            if not isinstance(v,dict) or v.get('confirmed') is not True or not isinstance(v.get('id'),str) or not re.fullmatch('[a-zA-Z0-9_-]{1,24}',v['id']) or v['id'] in names:raise ValueError('Views must have distinct confirmed IDs')
             box=v.get('box')
             if not isinstance(box,list) or len(box)!=4 or any(type(n)!=int for n in box):raise ValueError('Invalid view box')
             x,y,r,b=box
@@ -106,7 +106,11 @@ class Jobs:
             if phase=='segment' and j['backend']=='sam3-image':j['cost']['billing_status']='unreconciled'
         return self._change(jid,[phase+'_queued'],change)
     def cancel(self,jid):
+        j=self.get(jid)
+        if j['state']=='cancelled':return j
         return self._change(jid,['segment_queued','segment_running','awaiting_review','build_queued','build_running'],lambda j:j.update(state='cancelled',cancelled_at=time.time()))
+    def record_remote_cancel(self,jid,state):
+        return self._change(jid,['cancelled'],lambda j:j.update(remote_cancel=dict(state=state,at=time.time())))
     def expire(self,jid):
         def change(j):
             if time.time()<j['deadline']:raise Conflict('Task has not timed out')

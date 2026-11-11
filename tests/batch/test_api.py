@@ -33,3 +33,18 @@ def test_invalid_upload_and_review_payload_are_client_errors(tmp_path):
     assert r.status_code==422,r.text
     r=client.post('/api/v1/generation/jobs/'+'0'*32+'/accept',json=[])
     assert r.status_code==422,r.text
+
+def test_cancel_can_retry_provider_without_reopening_job(tmp_path):
+    jobs=Jobs(LocalStore(tmp_path));calls=[]
+    def remote(jid):
+        calls.append(jid)
+        if len(calls)==1:raise TimeoutError('provider timeout')
+    client=TestClient(create_app(jobs,'test',lambda *_:None,True,remote),raise_server_exceptions=False)
+    client.headers['Authorization']='Bearer test'
+    b=io.BytesIO();Image.new('RGB',(32,32),'blue').save(b,format='PNG')
+    j=jobs.create(b.getvalue(),'cancel-retry','fixture-no-ai');url='/api/v1/generation/jobs/'+j['id']+'/cancel'
+    r=client.post(url);assert r.status_code==202,r.text
+    assert r.json()['state']=='cancelled' and r.json()['remote_cancel']['state']=='pending'
+    r=client.post(url);assert r.status_code==200,r.text
+    assert r.json()['remote_cancel']['state']=='requested' and len(calls)==2
+    assert jobs.get(j['id'])['state']=='cancelled'

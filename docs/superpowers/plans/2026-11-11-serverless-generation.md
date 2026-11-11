@@ -26,3 +26,9 @@ Ruling: first paid trial uses a persistent single reservation; uncertain provide
 - Initial CI 43059646454: Debian build/test success; Ubuntu failed package-source DNS before compilation; dependent browser/runtime jobs skipped. New Chromium batch acceptance added to both native build matrix entries.
 - Ruling: keep production CPU dispatch disabled until a real finite CPU provider is connected; never silently charge GPU for reconstruction. Cost: production build is unavailable until configuration.
 - Actual GPU/S3/SAM3/ARES_207 and platform billing remain unrun; no paid resources created. Docker deployment recipes are unbuilt.
+
+## Final fresh-context review
+- Important fixed: provider cancellation timeout previously made retries impossible. RED→GREEN regression now retains terminal publication barrier and persists pending/requested cancellation; retry is allowed. A provider request acknowledgement does not prove billing stopped.
+- Important fixed: numeric/bool/null view IDs accepted before model calls; RED→GREEN validation rejects all before dispatch.
+- Minor deferred: changing prompt/view/backend without reselecting the image retains its idempotency key and returns a visible 409. Workaround: reselect image.
+- Review boundary ruling: actual provider semantics, model/image compatibility, S3 privacy/CAS, costs/accuracy/ARES_207 and CPU deployment stay explicitly unverified until credentialed execution; no success claim follows from code review. Cost if wrong: deployment remains unavailable until qualification.

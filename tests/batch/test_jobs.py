@@ -80,3 +80,8 @@ def test_failed_real_model_attempt_keeps_billing_unknown(tmp_path):
     with pytest.raises(RuntimeError):jobs.segment(j['id'],fails)
     cost=jobs.get(j['id'])['cost']
     assert cost['actual_usd'] is None and cost['billing_status']=='unreconciled'
+
+@pytest.mark.parametrize('bad_id',[7,True,None])
+def test_view_ids_must_be_strings_before_paid_work(tmp_path,bad_id):
+    jobs=Jobs(LocalStore(tmp_path))
+    with pytest.raises(ValueError):jobs.create(photo(),'view-type','sam3-image',['cat'],[{'id':bad_id,'box':[0,0,16,32],'confirmed':True}])

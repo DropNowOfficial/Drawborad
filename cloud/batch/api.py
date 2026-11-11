@@ -46,7 +46,12 @@ def create_app(jobs,token,dispatch,allow_fixture=False,cancel_remote=None):
     @app.post(prefix+'/jobs/{jid}/cancel',dependencies=[Depends(auth)])
     def cancel(jid:str):
         j=jobs.cancel(jid)
-        if cancel_remote:cancel_remote(jid)
+        if cancel_remote:
+            try:cancel_remote(jid)
+            except Exception:
+                j=jobs.record_remote_cancel(jid,'pending')
+                return JSONResponse(j,status_code=202)
+            return jobs.record_remote_cancel(jid,'requested')
         return j
     @app.get(prefix+'/jobs/{jid}/candidates/{cid}.png',dependencies=[Depends(auth)])
     def candidate(jid:str,cid:str):
