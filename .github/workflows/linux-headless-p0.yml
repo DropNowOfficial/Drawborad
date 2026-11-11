@@ -149,7 +149,7 @@ jobs:
           print(json.dumps({"modules": modules, "numeric_abi_smoke": "passed"}))
           PYTHON
           export PATH="$PWD/out/api-venv/bin:$PATH"
-          DRAWBORAD_TEST_ENGINE="$PWD/out/linux-headless/DrawboradHeadless" python -m pytest tests/cloud -q
+          DRAWBORAD_TEST_ENGINE="$PWD/out/linux-headless/DrawboradHeadless" python -m pytest tests/cloud tests/batch -q
       - name: Generate genuine C++ painting artifacts
         run: out/linux-headless/DrawboradHeadless smoke --output out/evidence/painting > out/evidence/smoke-stdout.json
       - name: Independently verify ORA and collect receipts
@@ -389,3 +389,4 @@ jobs:
           path: out/cloud-session-evidence/
           if-no-files-found: warn
           retention-days: 14
+
