@@ -7,6 +7,7 @@ import subprocess
 import sys
 from urllib.parse import urlsplit
 import zipfile
+import xml.etree.ElementTree as ET
 
 from PIL import Image
 from playwright.sync_api import expect, sync_playwright
@@ -102,6 +103,105 @@ def verify_controls_during_preview(route):
     route.continue_()
 
 
+def verify_bucket_artifacts(ora, png, expected_layers, expected_size):
+    """Check downloaded bytes, not screenshots or an export status response."""
+    with zipfile.ZipFile(ora) as archive, Image.open(png) as exported:
+        assert archive.read("mimetype") == b"image/openraster"
+        layers = ET.fromstring(archive.read("stack.xml")).findall(".//layer")
+        assert len(layers) == expected_layers
+        fill_layers = [layer for layer in layers if layer.get("name") == "Color fill"]
+        assert len(fill_layers) == 1
+        fill = fill_layers[0]
+        assert fill.get("visibility", "visible") == "visible"
+        assert float(fill.get("opacity", "1")) == 1
+        assert int(fill.get("x", "0")) == int(fill.get("y", "0")) == 0
+        pixels = Image.open(io.BytesIO(archive.read(fill.get("src")))).convert("RGBA")
+        merged = Image.open(io.BytesIO(archive.read("mergedimage.png"))).convert("RGBA")
+        exported = exported.convert("RGBA")
+        assert pixels.size == merged.size == exported.size == expected_size
+        assert merged.tobytes() == exported.tobytes()
+        assert pixels.tobytes() == exported.tobytes(), "Opaque top fill must equal the merged export"
+        extrema = pixels.getextrema()
+        assert all(low == high for low, high in extrema), "Tolerance 255 must fill the complete canvas"
+        assert extrema[3] == (255, 255)
+        return {"layers": len(layers), "fill_pixels": pixels.width * pixels.height,
+                "rgba": [low for low, high in extrema], "merged_png_equal": True}
+
+
+def exercise_bucket(page, initial, original_draw, original_ora, output, url, token):
+    """Real Chromium/engine checkpoint. Run only as part of the isolated CI host."""
+    output.mkdir(parents=True, exist_ok=True)
+    original_bytes = original_draw.read_bytes()
+    with zipfile.ZipFile(original_ora) as archive:
+        original_layers = len(ET.fromstring(archive.read("stack.xml")).findall(".//layer"))
+    before = preview(page, output / "before.png")
+    added = click_post(page, page.locator("#nativeAddFillLayer"), "/commands")
+    old_nodes = {node["id"] for node in initial["nodes"]}
+    new_layers = [node for node in added["nodes"] if node["kind"] == 3 and node["id"] not in old_nodes]
+    assert len(new_layers) == 1
+    layer = new_layers[0]
+    assert layer["name"] == "Color fill" and layer["visible"] and not layer["locked"]
+    expect(page.locator("#nativeShowSublayers")).to_be_checked()
+    expect(page.locator('[data-node-id="' + layer["id"] + '"] .native-node-select')).to_have_attribute("aria-pressed", "true")
+    assert preview(page) == before, "Adding an empty layer must not change artwork"
+    # Chromium's native OS color picker is outside this browser acceptance.
+    page.locator("#nativeColor").evaluate("""input => {
+        input.value = '#c020b0';
+        input.dispatchEvent(new Event('input', {bubbles:true}));
+        input.dispatchEvent(new Event('change', {bubbles:true}));
+    }""")
+    page.locator("#nativeTolerance").fill("255")
+    page.locator("#nativeBucket").check()
+    filled = click_post(page, page.locator("#nativePreview"), "/commands")
+    assert int(filled["stroke_count"]) == int(added["stroke_count"]) + 1
+    assert filled["strokes"][-1]["tool"] == "bucket"
+    assert filled["strokes"][-1]["layer_id"] == layer["id"]
+    after = preview(page, output / "filled.png")
+    assert after != before
+    click_post(page, page.locator("#nativeUndo"), "/undo")
+    assert preview(page) == before
+    redone = click_post(page, page.locator("#nativeRedo"), "/redo")
+    assert preview(page) == after
+    rejected = click_post(page, page.locator("#nativeSave"), "/save", 422)
+    assert rejected["detail"]["code"] == "unsupported"
+    assert rejected["detail"]["message"] == "save.format-copy-required"
+    expect(page.locator("#nativeDownload")).to_be_disabled()
+    assert preview(page) == after
+    copied = click_post(page, page.locator("#nativeSaveCopy"), "/save-copy", 201)
+    assert copied["id"] != initial["id"] and not copied["dirty"]
+    assert copied["revision"] == redone["revision"]
+    assert copied["strokes"] == redone["strokes"]
+    authenticate(page, url, token, reconnect=True)
+    expect(page.locator("#nativeStatus")).to_contain_text("Saved · revision " + copied["revision"])
+    assert preview(page) == after
+    page.screenshot(path=output / "saved-editor.png", mask=[page.locator("#token")])
+    draw = download(page, "Download saved .draw", output, "painting.draw")
+    png = download(page, "Export painting PNG", output, "painting.png")
+    ora = download(page, "Export painted layers ORA", output, "painting.ora")
+    evidence = verify_bucket_artifacts(ora, png, original_layers + 1,
+                                      (int(copied["width"]), int(copied["height"])))
+    # Independent authenticated disk-read check: save-copy must leave the old
+    # project's bytes intact. Restore the current server selection afterwards.
+    auth = {"Authorization": "Bearer " + token}
+    old = page.request.get(url.rstrip("/") + "/api/v1/projects/" + initial["id"] + "/download", headers=auth)
+    assert old.status == 200 and old.body() == original_bytes
+    restored = page.request.get(url.rstrip("/") + "/api/v1/projects/" + copied["id"], headers=auth)
+    assert restored.status == 200 and restored.json()["revision"] == copied["revision"]
+    click_post(page, page.locator("#nativeClose"), "/close")
+    page.locator("#nativeFile").set_input_files(draw)
+    reopened = click_post(page, page.locator("#nativeImport"), "/import", 201)
+    assert reopened["strokes"] == copied["strokes"]
+    assert preview(page) == after, "Downloaded .draw must reopen to the same visible fill"
+    receipt = {"browser_workflow": "passed", "project": copied["id"], "layer": layer["id"],
+               "color_input": "DOM value + input/change; native OS picker not tested",
+               "stroke_count": copied["stroke_count"], "saved_revision": copied["revision"],
+               "legacy_save_rejected": 422, "legacy_file_unchanged": True,
+               "undo_redo_pixels_equal": True, "download_reopen_pixels_equal": True,
+               "exports": [draw.name, png.name, ora.name], "artifact_evidence": evidence}
+    (output / "bucket-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    return receipt
+
+
 def exercise(context, page, source, output, url, token, restart):
     authenticate(page, url, token)
     page.get_by_text("Photo segmentation & source-layer review", exact=True).click()
@@ -191,10 +291,12 @@ def exercise(context, page, source, output, url, token, restart):
     imported = click_post(page, page.locator("#nativeImport"), "/import", 201)
     assert imported["id"] != saved["id"] and imported["strokes"] == saved["strokes"]
     assert preview(page) == after
+    bucket = exercise_bucket(page, imported, draw, ora, output / "bucket", url, token)
     changed_pixels = sum(before[i:i+3] != after[i:i+3] for i in range(0, len(after), 3))
     return {"project": saved["id"], "strokes": saved["stroke_count"], "stroke": stroke["id"],
             "changed_browser_pixels": changed_pixels, "saved_revision": saved["revision"],
-            "stale_status": 409, "locked_status": 423, "exports": [draw.name, png.name, ora.name]}
+            "stale_status": 409, "locked_status": 423, "exports": [draw.name, png.name, ora.name],
+            "bucket": bucket}
 
 
 def verify_in_chromium(source, output, url, token, restart, environment):
@@ -229,4 +331,3 @@ if __name__ == "__main__":
 
     verify_in_chromium(source, output, url, os.environ["DRAWBORAD_CLOUD_TOKEN"], recreate_container,
                        {"target": "packaged editor on CI loopback", "container_recovery": "saved revision"})
-

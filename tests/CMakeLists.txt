@@ -1,4 +1,3 @@
-include(${PROJECT_SOURCE_DIR}/cmake/TestTargets.cmake)
 add_executable(test_B08_fill brush/test_flood_fill.cpp)
 target_link_libraries(test_B08_fill PRIVATE drawborad_render)
 if(MSVC)
@@ -29,3 +28,6 @@ else()
   target_compile_options(test_B08_storage PRIVATE -UNDEBUG)
 endif()
 add_test(NAME B08.FillStorage COMMAND test_B08_storage)
+
+# Register B08 before TestTargets labels and snapshots the complete inventory.
+include(${PROJECT_SOURCE_DIR}/cmake/TestTargets.cmake)

@@ -73,12 +73,18 @@ Persisted checkpoints on PR #10:
 Verified locally: selector, real native event rendering/undo/redo, storage safety,
 14 original F04 recovery cases, six stubbed-transport API tests, JS click guards.
 Qt bridge and full suite are NOT locally verified. No current real GUI acceptance.
-GitHub native run 43180146828 and cloud run 43180146754 started for 88b3ddf2;
-results were pending when recorded. Never treat started as passed.
+Commit dd856042 adds the layer-budget preflight and expanded storage checks.
+GitHub run 43180485075 built Ubuntu and Debian native targets. Ubuntu executed
+51/51 CTests successfully, including B08.BucketSession (actual native fill, undo/redo,
+save-copy, reopen, PNG/ORA checks). Both jobs subsequently FAILED evidence inventory
+validation: B08 tests were registered after the inventory snapshot. This checkpoint
+moves the include after B08 registrations, retaining the strict evidence assertion.
+The real browser jobs were SKIPPED because the prerequisite jobs failed, not passed.
+Cloud runtime run 43180485104 passed. Native pipeline rerun remains required.
 
 Next work, in order:
 - [ ] Read CI for the exact latest code SHA and fix real build/regression failures.
-- [ ] Run the real BucketSession test and inspect actual saved/loaded pixels.
+- [x] Run the real BucketSession test and inspect actual saved/loaded pixels (Ubuntu CI).
 - [ ] Test actual browser fill, undo, redo, separate-copy save, reload and download.
 - [ ] Confirm file delivered and layers independently editable; document limits.
 - [ ] Revisit fine brush quality, semantic layers and original-art quality separately.
