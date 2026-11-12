@@ -8,6 +8,17 @@ is necessary but does not establish artistic quality. Preserve the chosen
 composition, natural figures, varied clean marks and independent editable layers;
 do not call low-resolution reconstruction newly recovered native detail.
 
+## Cropped integration CI correction
+
+`b680d6d` compiled on both Linux platforms.74/75 tests passed, including allfour
+new cropped storage/renderer/ORA/Qt Session tests. The sole failure was the old
+B08.MergedDocument memory-accounting contract: ROI cache overhead was mistakenly
+charged to every legacy node (384 instead of128bytes). The correction charges
+extra256bytes only to actual cropped-layer cache entries. The old test assertion
+is unchanged and passed when directly compiled/executed locally. Cloud CI passed;
+GUI jobs were skipped by the native failure, so they remain unverified pending
+this correction's run.
+
 ## Cropped-stroke integration: source ready, new CI pending
 
 Added a separate cropped MyPaint stage and DRAW-DELTA-13 floor. Old raster/native

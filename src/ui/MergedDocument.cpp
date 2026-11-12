@@ -90,7 +90,10 @@ Result<MergedPlan> plan(const DocumentSnapshot& s,MergedBudget budget){
  }
  out.estimatedBytes=out.mergedBytes;
  // Index map nodes/vectors, candidate copies, bounds and node traversal allowance.
- const auto indexBytes=out.indexEntries*256+s.eventIndex->size()*128+s.nodes->size()*384+65536;
+ const auto cropCount=std::count_if(s.nodes->begin(),s.nodes->end(),[](const auto& item){return item.second.stage==croppedRaster::Stage;});
+ // Only cropped layers allocate entries in PreparedViews; legacy nodes retain
+ // their original128-byte plan estimate. Do not charge every old layer for ROI.
+ const auto indexBytes=out.indexEntries*256+s.eventIndex->size()*128+s.nodes->size()*128+std::uint64_t(cropCount)*256+65536;
  if(!addWithin(out.estimatedBytes,out.tileScratchBytes,budget.maxBytes) || !addWithin(out.estimatedBytes,indexBytes,budget.maxBytes))return error(ErrorCode::BudgetExceeded,"merged.memory-limit");
  return out;
 }
