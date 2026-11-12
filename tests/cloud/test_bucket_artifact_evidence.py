@@ -7,7 +7,7 @@ import unittest
 import zipfile
 from PIL import Image
 
-spec=importlib.util.spec_from_file_location("browser_acceptance",Path(__file__).with_name("browser_native_acceptance.py"))
+spec=importlib.util.spec_from_file_location("bucket_artifact_evidence",Path(__file__).with_name("bucket_artifact_evidence.py"))
 acceptance=importlib.util.module_from_spec(spec);spec.loader.exec_module(acceptance)
 
 class Evidence(unittest.TestCase):
