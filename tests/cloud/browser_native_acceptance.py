@@ -388,13 +388,18 @@ def exercise_mypaint(page, output, width=512, height=512):
     for index,curve in enumerate([[(.20,.38),(.36,.31),(.57,.31),(.77,.39)],[(.20,.40),(.37,.51),(.58,.57),(.75,.57)]]):
         image=page.locator('#nativePreview');image.scroll_into_view_if_needed();box=image.bounding_box();assert box
         points=[]
+        scale=min(box['width']/width,box['height']/height)
+        origin_x=box['x']+(box['width']-width*scale)/2
+        origin_y=box['y']+(box['height']-height*scale)/2
         for i in range(31):
             t=i/30;u=1-t
             x=u**3*curve[0][0]+3*u*u*t*curve[1][0]+3*u*t*t*curve[2][0]+t**3*curve[3][0]
             y=u**3*curve[0][1]+3*u*u*t*curve[1][1]+3*u*t*t*curve[2][1]+t**3*curve[3][1]
             if width>512:
-                x=(450+x*512)/width;y=(450+y*512)/height
-            points.append((box['x']+x*box['width'],box['y']+y*box['height']))
+                x=450+x*512;y=450+y*512
+            else:
+                x=x*width;y=y*height
+            points.append((origin_x+x*scale,origin_y+y*scale))
         page.mouse.move(*points[0]);page.mouse.down()
         for point in points[1:]:page.mouse.move(*point)
         with page.expect_response(endpoint('POST','/commands')) as response:page.mouse.up()
