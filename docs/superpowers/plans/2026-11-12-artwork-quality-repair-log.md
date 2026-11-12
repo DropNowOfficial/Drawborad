@@ -101,3 +101,24 @@ The immediate use case includes a cover and six comic pages. Native high-resolut
 5. Produce a small representative native editable example, inspect it visually, then repeat at the required page size. Expand to six pages only after quality and resource gates pass.
 6. Repeat GUI select/hide/recolor/undo/export/reopen on nonempty, representative layers; verify saved native content and exported dimensions.
 7. Only then prepare reviewed implementation commits. Log publication is not code publication or artistic acceptance.
+
+## Follow-up: 2026-11-12 03:06 UTC
+
+### Verified since the initial snapshot
+
+- A complete rebuild and CTest rerun again produced **52 passes out of 54 targets** (15.98 seconds). This is not a fully passing suite.
+- `V01.PaintedPreview`: all six cases pass, including the all-hidden unsupported-tool regression and the strengthened 66-nonempty-layer fixture.
+- The stable repair patch still passes a clean applicability check against the recorded PR #7 baseline. Applicability is not production acceptance; the implementation remains unpublished.
+
+### Codec failure clarification
+
+- JPEG, TIFF, and WebP runtime support exists in the cloud environment; Pillow can handle all three formats.
+- The missing components are C++ development headers/build-discovery configuration. CMake reports the optional dependencies as NOTFOUND, so the tested native binary lacks those codecs and C03/C06 fail.
+- No dependencies were installed: the user's instruction to defer installation remains in effect.
+- This limitation does not block PNG, native `.draw`, or the tested PSD/ORA paths. It is **not the cause of the artwork's visual-quality failures**.
+
+### Still experimental / unverified
+
+- A new v4 candidate is being integrated in isolation; it has not been merged or published and is not yet a production-format solution.
+- No new accepted full-page artwork, six-page completion, semantic-mask acceptance, or professional-quality result is established by this update.
+- This follow-up uploads documentation only. No repair code, experiment assets, private working directories, credentials, or internal tool paths are included.
