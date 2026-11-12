@@ -122,3 +122,13 @@ The immediate use case includes a cover and six comic pages. Native high-resolut
 - A new v4 candidate is being integrated in isolation; it has not been merged or published and is not yet a production-format solution.
 - No new accepted full-page artwork, six-page completion, semantic-mask acceptance, or professional-quality result is established by this update.
 - This follow-up uploads documentation only. No repair code, experiment assets, private working directories, credentials, or internal tool paths are included.
+
+### Additional visual diagnosis and GUI evidence
+
+- Nine ROI comparisons isolated rasterization effects: pixel-center-sampled contours matched direct quantization with a maximum pixel difference of zero. Applying 4 × 4 area sampling to an already pixel-center-sampled source introduced additional softness.
+- Averaging coverage independently for cumulative tone layers and then alpha-compositing loses subpixel correlation. Increasing from 16 to 64 tones alone can worsen dark borders rather than improve fidelity.
+- An isolated alternative composites the tones at matching subpixel positions and averages once at the end. This reduced excess dark borders, but remained too soft: **artistic acceptance still failed**.
+- Face, hand, and photograph crops were compared at 16/32/64 tones, including vertex costs. No higher-tone setting was accepted merely because its numeric count was larger.
+- The page-six original-edge clipping/parity experiment used 730,161 original points and 90,735,409 work units and matched its original-edge oracle within budget. It is still not a production `.draw` artifact and remains visually unacceptable in the face, clothing, and photographs.
+- The strengthened 66-nonempty-layer fixture was imported and displayed on the actual cloud desktop. The UI reported zero layers without strokes. This validates fixture handling, not artwork quality.
+- Production-candidate v4 codec, mask, and regression work remains isolated and ongoing. No production-format acceptance or code publication is claimed.
