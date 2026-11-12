@@ -194,3 +194,69 @@ This section records later isolated-candidate evidence. It supersedes earlier "o
 - All six pages, final cover, print-ready acceptance, full standalone desktop acceptance, and an integrated all-green test run remain unestablished.
 - Source/reference quality, semantic-mask approval, performance, compatibility, and artistic quality still require separate gates.
 - Only this log is published by this update. No candidate implementation, artwork source, private path, or credentials are uploaded; no merge or release is performed.
+
+## Follow-up: 2026-11-12 05:43 UTC
+
+All implementation below remains isolated candidate work. This documentation update does not publish code or images, merge branches, or declare the requested artwork finished.
+
+### Native 2048 creation and genuinely layered export
+
+- Actual cloud GUI: created a 2048 × 2048 canvas, selected Paint, drew with the mouse, and obtained one native engine-v2 stroke with 369 samples. Undo/redo, save, PNG export, native-file download, close/reopen, and PNG re-export were exercised; reopened pixels matched exactly.
+- Native input checks covered width, undo/redo, persistence, 513-point rejection, and locked-layer rejection. These are mouse/software checks, **not physical pressure-tablet validation**.
+- Later actual GUI: created two layers and drew on each with engine-v6 clean ink; hid the second layer while the first remained; undid; saved revision 6; downloaded ORA, PNG, and native project.
+- Independent inspection found two nonempty 2048-pixel layers and two native fineliner strokes. ORA recomposition matched every RGBA pixel of the downloaded PNG. Removing a layer changed 17,261 pixels, demonstrating nonflattened content.
+- Closing and reopening the downloaded native project in the actual GUI retained revision 6 and both layers/strokes; a fresh PNG again matched every pixel.
+- Streaming two-layer 2048 ORA tests reported approximately 55 MiB peak memory, exact mask/opacity/visibility composition, independent layer edits, and preservation of the prior destination on cancellation/failure. The original memory cap was not increased.
+- These images are test strokes, not completed user artwork.
+
+### Low-pressure gaps, clean ink, compatibility, and input aids
+
+- A 74-stroke native 2048 diagnostic page exposed pressure-dependent gaps: at nominal width 24, sparse input left 530 of 780 columns blank at pressure 0.05 and 364 blank at 0.1; dense input had none. Nominal-radius spacing ignored pressure.
+- Explicit engine-v6 spacing reduced these diagnostic blank-column counts to zero. Clean-ink selection avoids the observed repeated 8 × 8 grain pattern; it is not a claim of artist-quality mark-making.
+- Work-budget validation now runs before commit in document/event-writer/render paths; malicious import/paint submissions were rejected without state mutation.
+- Independent checks on actual engine-v2/v3/v4/v5 files found pre-v6/current rendering and save/reopen RGBA pixels identical. Four v6 low-pressure lines had no blank columns; 592 pressure/one-pixel partition comparisons matched.
+- Selected native regression suite: **20 related CTest targets passed**, not the complete repository suite. Do not replace the earlier 52/54 whole-suite record with an all-green claim.
+- A client-local reference overlay labels its source dimensions and stays out of exports. Actual GUI drew a new 417-sample stroke on 2048 pixels while viewing a 512-pixel reference; PNGs with reference enabled versus cleared were identical (2,030 nontransparent pixels). The source was not baked in or upscaled into fake paint.
+- An optional lightweight stabilizer is explicit opt-in, off by default, and frozen at pointerdown. Latest reported frontend counts: 12 paint + 6 stabilizer + 4 reference cases = 22/22, with layer-selection regression passing separately. Actual GUI enabled it, drew 497 geometry samples, saved, and exported 2048 PNG; no physical stylus jitter study is claimed.
+- Three-state mask UI keeps unknown separate from background: the tested source had 6,118 person pixels, 256,026 unknown pixels, and zero confirmed background. A five-pixel background edit and undo worked; a 4× view did not alter the underlying source grid.
+
+### Artistic trials that were rejected
+
+- Two original native 2048 character studies rendered and saved/reopened: v1 had 54 events, five layers, and 8,791 points; v2 had 57 events, five layers, and 7,197 points. They did not use a source bitmap wrapper or a deep generation model.
+- Both implementation review and separate visual review rejected them. Fixing a contour passing through the face did not fix helmet-like hair, mismatched facial perspective, or mechanical hatching. The dominant failure was drawing planning, not pixel dimensions.
+- An eye/hair study with three objects, four layers, 32 events, and 11,007 points passed actual GUI hide/undo pixel comparisons, but was also rejected artistically.
+- Repetitive mechanical Bézier-art iterations were stopped. These failed studies are not uploaded as finished results.
+
+### Licensed human-authored vector demonstrations, not original delivery
+
+- A limited Open Peeps demonstration used Pablo Stanley's CC0 author paths, preserving eight paths as four native objects/eight layers. A 0.05-pixel approximation with 6,269 vertices passed bounded whole-image and 1:1 visual comparison. Real GUI eyepatch hiding changed 20,021 pixels; undo matched exactly.
+- This demonstrates handling of an authored vector cartoon. It is **not original artwork, not fine-manga style acceptance, and not proof of full arbitrary-SVG support**.
+- The more relevant Niabot “Figure in Manga style” source has an explicit 104-path lines layer. The extracted elements, attributes, and path data were checked for exact preservation. That layer uses solid black even-odd paths without transformations, clipping, gradients, filters, embedded images, or use references.
+- Its CC BY-SA 3.0 attribution, modification notice, and same-license requirements are tracked with the demonstration. This is not a faithful import of the full colored illustration and makes no claim about the artist's underlying reference process.
+- A counterexample exposed incorrect merging of same-endpoint move subpaths and lost implicit closure. Independent helper/native probes verified the subset-parser fix; this remains a restricted SVG subset.
+- Neither third-party source images nor demonstration artwork are included in this log-only upload.
+
+### Session recovery reliability
+
+- Actual Chromium testing exposed lost project IDs/live-dirty recovery trouble. The previous 32-event revision-20 project was safely saved before repair.
+- An authenticated, read-only active-project lookup avoids implicitly starting a session. Four actual HTTP checks plus engine regression passed; GUI reload recovered a dirty one-event project, with undo to zero and redo to one working.
+- Restart without a live project produces an explicit no-live-state message rather than inventing recovery. This does not imply durable recovery from every crash mode.
+
+### Current fine-line coverage and resource-accounting review
+
+- An area-coverage prototype improved previously missing fine tips, but the first approximately 22.67-million estimate counted geometry work without all path work.
+- Accounting was corrected: bounding-box charging is 28,930,998 work units; cumulative 16-pixel tile charging is 31,764,743.
+- Independent review and production engine-v7 integration are **not complete**. Improved prototype appearance and corrected accounting do not establish final fidelity, safety approval, or production acceptance.
+
+### Current bucket-fill candidate and compatibility limits
+
+- A selectively ported engine-v8 bucket core builds. `B08.Bucket` passed six internal cases in approximately 0.12 seconds; the new frontend helper passed seven mocked cases.
+- **Frontend integration and actual GUI bucket acceptance are not complete.** Mocked helper tests are not browser acceptance.
+- Old engine-v2 bucket events do not automatically become compatible with the new engine-v8 representation.
+- The proposed new bucket event uses scanline pairs with limits of 65,536 runs / 131,072 points, while retaining the document's one-million-point and 4,096-event limits.
+- Masked targets or ancestors are rejected; no silent bypass of mask semantics is claimed.
+- Actual Niabot coloring, save/reopen persistence, and rejection by an older reader are still being verified at this snapshot. They must not be described as passing yet.
+
+### Current completion boundary
+
+The software can now demonstrably create and round-trip native 2048 strokes and independent layers, but that does not complete high-quality layered character art. Fine-line fidelity, production v7/v8 safety and compatibility, actual bucket UI workflow, complete semantic editing, and artist-level artwork remain separate unfinished gates. No 512-to-2048 “detail restoration” or completed six-page delivery is claimed.
