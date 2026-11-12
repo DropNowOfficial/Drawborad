@@ -212,6 +212,8 @@ jobs:
           cp out/linux-headless/DrawboradHeadless out/runtime/runtime-target.json "$bundle/"
           cp cloud/*.py cloud/requirements.txt "$bundle/cloud/"
           cp cloud/static/index.html "$bundle/cloud/static/"
+          mkdir -p "$bundle/cloud/mypaint_data"
+          find cloud/mypaint_data -maxdepth 1 -type f -exec cp {} "$bundle/cloud/mypaint_data/" \;
           cp tools/segmentation/guided_grabcut.py "$bundle/tools/segmentation/"
           cp tools/models/sam3_semantic.py "$bundle/tools/models/"
           cp tools/packaging/{install-runtime-linux.sh,install-runtime-ubuntu.sh,runtime_platform.py} "$bundle/tools/packaging/"
@@ -311,6 +313,7 @@ jobs:
           out/browser-venv/bin/python -m playwright install --with-deps chromium
       - name: Native layer selection UI regressions
         run: |
+          node tests/cloud/test_mypaint_ui.cjs
           node tests/cloud/native_layer_selection_unit.cjs
           node tests/cloud/token_file_import_unit.cjs
           node tests/cloud/token_file_reconnect_unit.cjs
@@ -324,7 +327,29 @@ jobs:
           export DRAWBORAD_CLOUD_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
           echo "::add-mask::$DRAWBORAD_CLOUD_TOKEN"
           trap 'docker compose logs --no-color editor; docker compose down --volumes' EXIT
+          # Owner-approved optional runtime installation: only this temporary CI image.
+          mkdir -p tools/experimental/mypaint
+          cp ../../tools/experimental/mypaint/provision_ci_pins.py tools/experimental/mypaint/
+          printf '\n!tools/experimental/\n!tools/experimental/mypaint/\n!tools/experimental/mypaint/provision_ci_pins.py\n' >> .dockerignore
+          cat >> Dockerfile <<'DOCKER'
+          USER root
+          COPY tools/experimental/mypaint/provision_ci_pins.py /app/tools/experimental/mypaint/provision_ci_pins.py
+          RUN apt-get update \
+              && MYPAINT_CANDIDATE="$(apt-cache policy libmypaint-1.5-1 | awk '/Candidate:/ {print $2}')" \
+              && JSON_C_CANDIDATE="$(apt-cache policy libjson-c5 | awk '/Candidate:/ {print $2}')" \
+              && test -n "$MYPAINT_CANDIDATE" && test "$MYPAINT_CANDIDATE" != "(none)" \
+              && test -n "$JSON_C_CANDIDATE" && test "$JSON_C_CANDIDATE" != "(none)" \
+              && apt-get install -y --no-install-recommends "libmypaint-1.5-1=$MYPAINT_CANDIDATE" "libjson-c5=$JSON_C_CANDIDATE" \
+              && GITHUB_ACTIONS=true python /app/tools/experimental/mypaint/provision_ci_pins.py --allow-ci-provision --output /app/mypaint-ci-pins.json --receipt /app/mypaint-ci-receipt.json --expected-libmypaint-version "$MYPAINT_CANDIDATE" --expected-json-c-version "$JSON_C_CANDIDATE" \
+              && chown studio:studio /app/mypaint-ci-pins.json /app/mypaint-ci-receipt.json \
+              && rm -rf /var/lib/apt/lists/*
+          ENV DRAWBORAD_MYPAINT_PINS_FILE=/app/mypaint-ci-pins.json
+          USER studio
+          DOCKER
           docker compose up -d --build --wait --wait-timeout 90
+          mkdir -p ../browser-evidence
+          docker compose exec -T editor cat /app/mypaint-ci-receipt.json > ../browser-evidence/mypaint-runtime-provision.json
+          export DRAWBORAD_REQUIRE_MYPAINT=1
           docker compose exec -T editor python -c 'import os; assert os.geteuid() != 0'
           docker compose exec -T editor python /app/tools/packaging/runtime_platform.py check-bundle /app/runtime-target.json
           ../browser-venv/bin/python ../../tests/cloud/browser_native_acceptance.py ../native-evidence/real-input ../browser-evidence

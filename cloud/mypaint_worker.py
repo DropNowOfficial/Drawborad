@@ -15,11 +15,21 @@ def dimensions(width,height):
   if type(value)!=int or value<1:raise ValueError('Invalid native canvas dimensions')
   values.append(value)
  return tuple(values)
+def load_pins():
+ # Operator process configuration only; no request field supplies this path.
+ configured=os.environ.get('DRAWBORAD_MYPAINT_PINS_FILE')
+ path=Path(configured) if configured else DATA/'pins.json'
+ if configured and not path.is_absolute():raise ValueError('MyPaint operator pins path must be absolute')
+ if not path.is_file() or path.stat().st_size>16384:raise ValueError('Invalid MyPaint operator pins file')
+ pins=json.loads(path.read_text())
+ if not isinstance(pins,dict) or set(pins)!=set(PATHS) or any(not isinstance(v,str) or re.fullmatch(r'[0-9a-f]{64}',v) is None for v in pins.values()):raise ValueError('Invalid MyPaint pins schema')
+ return pins
+
 def available(width=None,height=None):
  if not sys.platform.startswith('linux') or resource is None:return False,'MyPaint experiment currently supports Linux workers only; existing brushes remain available.'
  try:
   if width is not None:width,height=dimensions(width,height)
-  pins=json.loads((DATA/'pins.json').read_text())
+  pins=load_pins()
   if any(sha(path)!=pins[key] for key,path in PATHS.items()):return False,'Pinned MyPaint runtime or preset differs; no automatic replacement.'
   import importlib.util
   if importlib.util.find_spec('PIL') is None:return False,'PNG encoder unavailable.'
@@ -48,7 +58,7 @@ def render(body,state,folder,cancel):
  if not ok:raise ValueError(reason)
  if cancel.is_set():raise RuntimeError('MyPaint cancelled; nothing added.')
  folder=Path(folder);request=folder/'request.json';png=folder/'stroke.png';manifest=folder/'manifest.json'
- record={'backend':'mypaint-pointy-ink-raster-v1','pins':json.loads((DATA/'pins.json').read_text()),'worker_sha256':sha(__file__),'canvas':[state['width'],state['height']],'color':'#000000','preset':'pointy_ink','width_policy':'original preset; pressure not equivalent to native width','encoding':'RGBA15 over opaque white -> RGBA8 nearest, no ICC transform','initial_zero_pressure_seconds':10,'points':points,'expected_revision':body['expected_revision'],'document_id':state.get('document_id')}
+ record={'backend':'mypaint-pointy-ink-raster-v1','pins':load_pins(),'worker_sha256':sha(__file__),'canvas':[state['width'],state['height']],'color':'#000000','preset':'pointy_ink','width_policy':'original preset; pressure not equivalent to native width','encoding':'RGBA15 over opaque white -> RGBA8 nearest, no ICC transform','initial_zero_pressure_seconds':10,'points':points,'expected_revision':body['expected_revision'],'document_id':state.get('document_id')}
  request.write_text(json.dumps(record,allow_nan=False));proc=None
  try:
   proc=subprocess.Popen([sys.executable,__file__,'worker',str(request),str(png),str(manifest)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=dict(os.environ,OMP_NUM_THREADS='1'))
@@ -68,7 +78,7 @@ def render(body,state,folder,cancel):
 
 def worker(request,png,manifest):
  m=json.loads(Path(request).read_text());w,h=m['canvas'];ok,reason=available(w,h)
- if not ok or m['pins']!=json.loads((DATA/'pins.json').read_text()) or m['worker_sha256']!=sha(__file__):raise ValueError(reason or 'Worker pins mismatch')
+ if not ok or m['pins']!=load_pins() or m['worker_sha256']!=sha(__file__):raise ValueError(reason or 'Worker pins mismatch')
  validate_request({'type':'draw_stroke','brush':'mypaint_ink','expected_revision':m['expected_revision'],'points':m['points']},{'width':w,'height':h,'revision':m['expected_revision']})
  import importlib.util
  spec=importlib.util.spec_from_file_location('mypaint_pinned_abi',DATA/'abi15.py');a=importlib.util.module_from_spec(spec);spec.loader.exec_module(a)
@@ -105,6 +115,9 @@ def worker(request,png,manifest):
  m['actual_input_policy']='fresh brush; dt=max(.001, delta_ms/1000); zero-pressure lift .02s'
  # No-clobber even inside the private temporary directory.
  fd,tmp=tempfile.mkstemp(suffix='.png',dir=Path(png).parent);os.close(fd)
+ # Revision authorizes the append but is not a rendering input. Exclude it
+ # from persistent identity so identical strokes at later revisions can reuse it.
+ m.pop('expected_revision',None)
  manifest_bytes=json.dumps(m,sort_keys=True,separators=(',',':'),allow_nan=False).encode();manifest_hash=hashlib.sha256(manifest_bytes).hexdigest()
  info=PngImagePlugin.PngInfo();info.add_text('DrawboradReplaySHA256',manifest_hash)
  try:

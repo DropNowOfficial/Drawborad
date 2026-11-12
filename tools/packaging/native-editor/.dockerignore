@@ -15,3 +15,6 @@
 !tools/models/sam3_semantic.py
 !tools/segmentation/
 !tools/segmentation/guided_grabcut.py
+
+!cloud/mypaint_data/
+!cloud/mypaint_data/*

@@ -372,6 +372,51 @@ def exercise_lineart(page, output, url, token):
     return receipt
 
 
+def exercise_mypaint(page, output):
+    """Actual optional-library UI strokes, not a finished-art acceptance."""
+    output.mkdir(parents=True,exist_ok=True)
+    click_post(page,page.locator('#nativeClose'),'/close')
+    page.locator('#nativeWidth').fill('512');page.locator('#nativeHeight').fill('512')
+    initial=click_post(page,page.locator('#nativeNew'),'/projects',201)
+    assert 'mypaint_ink' in initial['capabilities'],initial.get('mypaint_status')
+    page.locator('#nativeBrush').select_option('mypaint_ink')
+    page.locator('#nativePen').check()
+    expect(page.locator('#nativePenWidth')).to_be_disabled()
+    expect(page.locator('#nativeColor')).to_be_disabled()
+    before=preview(page,output/'before.png');state=initial
+    for index,curve in enumerate([[(.20,.38),(.36,.31),(.57,.31),(.77,.39)],[(.20,.40),(.37,.51),(.58,.57),(.75,.57)]]):
+        image=page.locator('#nativePreview');image.scroll_into_view_if_needed();box=image.bounding_box();assert box
+        points=[]
+        for i in range(31):
+            t=i/30;u=1-t
+            x=u**3*curve[0][0]+3*u*u*t*curve[1][0]+3*u*t*t*curve[2][0]+t**3*curve[3][0]
+            y=u**3*curve[0][1]+3*u*u*t*curve[1][1]+3*u*t*t*curve[2][1]+t**3*curve[3][1]
+            points.append((box['x']+x*box['width'],box['y']+y*box['height']))
+        page.mouse.move(*points[0]);page.mouse.down()
+        for point in points[1:]:page.mouse.move(*point)
+        with page.expect_response(endpoint('POST','/commands')) as response:page.mouse.up()
+        assert response.value.status==200,response.value.text();state=response.value.json()
+        expect(page.locator('#nativeNew')).to_be_enabled(timeout=90000)
+        assert len(state['nodes'])==len(initial['nodes'])+index+1
+        assert state['strokes']==initial['strokes'],'raster strokes must not impersonate native events'
+    after=preview(page,output/'after.png');assert after!=before
+    click_post(page,page.locator('#nativeUndo'),'/undo');undone=preview(page,output/'undo.png');assert undone!=after
+    click_post(page,page.locator('#nativeRedo'),'/redo');assert preview(page)==after
+    saved=click_post(page,page.locator('#nativeSaveCopy'),'/save-copy',201)
+    page.locator('#nativeEditor').screenshot(path=output/'actual-editor.png',mask=[page.locator('#token')])
+    draw=download(page,'Download saved .draw',output,'painting.draw')
+    png=download(page,'Export painting PNG',output,'painting.png')
+    ora=download(page,'Export painted layers ORA',output,'painting.ora')
+    assert b'mypaint-pointy-ink-raster-v1' in draw.read_bytes()
+    click_post(page,page.locator('#nativeClose'),'/close');page.locator('#nativeFile').set_input_files(draw)
+    reopened=click_post(page,page.locator('#nativeImport'),'/import',201)
+    assert preview(page,output/'reopened.png')==after
+    added=[n for n in reopened['nodes'] if n['name']=='MyPaint ink (experimental raster)']
+    assert len(added)==2 and all(n['locked'] and n['blend']==1 for n in added)
+    receipt={'actual_chromium_mouse':True,'real_mypaint_worker':True,'independent_locked_layers':2,'undo_redo':True,'download_reopen_pixel_equal':True,'manifest_in_draw':True,'canvas':[512,512],'scope':'technical eyelid curves, not finished artwork or poster-size acceptance'}
+    (output/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n');return receipt
+
+
 def exercise(context, page, source, output, url, token, restart):
     authenticate(page, url, token)
     page.get_by_text("Photo segmentation & source-layer review", exact=True).click()
@@ -462,11 +507,12 @@ def exercise(context, page, source, output, url, token, restart):
     assert imported["id"] != saved["id"] and imported["strokes"] == saved["strokes"]
     assert preview(page) == after
     lineart = exercise_lineart(page, output / "lineart", url, token)
+    mypaint = exercise_mypaint(page, output / "mypaint") if os.environ.get("DRAWBORAD_REQUIRE_MYPAINT")=="1" else {"requested":False}
     changed_pixels = sum(before[i:i+3] != after[i:i+3] for i in range(0, len(after), 3))
     return {"project": saved["id"], "strokes": saved["stroke_count"], "stroke": stroke["id"],
             "changed_browser_pixels": changed_pixels, "saved_revision": saved["revision"],
             "stale_status": 409, "locked_status": 423, "exports": [draw.name, png.name, ora.name],
-            "lineart": lineart}
+            "lineart": lineart, "mypaint": mypaint}
 
 
 def verify_in_chromium(source, output, url, token, restart, environment):

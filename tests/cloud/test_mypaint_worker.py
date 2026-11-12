@@ -24,7 +24,9 @@ class WorkerTest(unittest.TestCase):
   with tempfile.TemporaryDirectory() as root:
    paths=[]
    for index in range(2):
-    folder=Path(root)/str(index);folder.mkdir();paths.append(m.render(self.body,self.state,folder,threading.Event()))
+    folder=Path(root)/str(index);folder.mkdir()
+    revision=str(4+index)
+    paths.append(m.render(dict(self.body,expected_revision=revision),dict(self.state,revision=revision),folder,threading.Event()))
    png,manifest=paths[0];doc=json.loads(manifest.read_text());im=Image.open(png).convert('RGBA')
    self.assertEqual(im.size,(513,257));self.assertEqual(im.getpixel((0,0)),(0,0,0,0));self.assertEqual(im.getpixel((512,256)),(0,0,0,0))
    self.assertTrue(any(p[3]>0 for p in im.getdata()))
@@ -34,6 +36,8 @@ class WorkerTest(unittest.TestCase):
    with Image.open(png) as tagged:self.assertEqual(tagged.info['DrawboradReplaySHA256'],m.sha(manifest))
    self.assertEqual(im.tobytes(),Image.open(paths[1][0]).convert('RGBA').tobytes())
    self.assertEqual(png.read_bytes(),paths[1][0].read_bytes())
+   self.assertNotIn('expected_revision',doc)
+   self.assertEqual(manifest.read_bytes(),paths[1][1].read_bytes(),'same render inputs at different revisions share persistent identity')
    flag=threading.Event();flag.set()
    with self.assertRaises(RuntimeError):m.render(self.body,self.state,Path(root),flag)
    cancel=threading.Event();timer=threading.Timer(.05,cancel.set);timer.start();folder=Path(root)/'cancel';folder.mkdir()

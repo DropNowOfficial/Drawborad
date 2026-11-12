@@ -71,6 +71,29 @@ broad/thin hierarchy but has quantized/grainy shadows and red; semantic boundari
 are approximate and title lettering remains knockout pixels, not editable text.
 It is rejected as a finished high-quality/print-ready work.
 
+## Optional MyPaint integration checkpoint
+
+`eafc3568e4b0f9071750dc7970d752d525d82126` adds the actual optional UI, pinned
+worker and native append-layer RPC. A downloaded verified Debian native binary
+was exercised locally through real HTTP handlers, actual MyPaint library and
+native session: four independent transparent layers, undo/redo, save-copy/close/
+reopen equal pixels, preserved replay manifests, and ORA. This was not a stub or
+GUI screenshot. Actual scene was technical eyelid paths, not completed artwork.
+
+The next small follow-up removes non-rendering revision from persistent manifests
+so identical inputs at later revisions reuse resources. Different inputs producing
+the same RGBA can still be safely rejected by existing resource identity checks;
+a dedicated future raster stage/version is needed to solve that completely.
+
+The user explicitly authorized distro-official MyPaint runtime installation only
+inside temporary GitHub CI. Browser jobs provision a new local pins file after
+installing explicit apt candidate versions and verifying dpkg ownership/version;
+package receipt and hashes are retained. Repository default pins are unchanged;
+HTTP cannot specify pins. Existing saved manifests are never silently migrated.
+This enables real Chromium testing of the optional brush without installing on
+the user's computer. First-tool limits remain black ink, locked raster layers,
+1,048,576pixels/2048axis; poster-size MyPaint is NOT supported yet.
+
 ## Current persisted checkpoint and next opt-in integration
 
 `00c203f07dd0740a34370aabccbd9851f9b8e304` persisted the experimental dry-ink
