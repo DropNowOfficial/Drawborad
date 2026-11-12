@@ -49,6 +49,9 @@ class BundleAssemblyTests(unittest.TestCase):
             shutil.copytree(ROOT / 'tools/packaging', fixture / 'tools/packaging',
                             ignore=shutil.ignore_patterns('__pycache__'))
             for name in ['cloud/__init__.py', 'cloud/requirements.txt', 'cloud/static/index.html',
+                         'cloud/mypaint_worker.py', 'cloud/mypaint_data/abi15.py',
+                         'cloud/mypaint_data/pins.json', 'cloud/mypaint_data/pointy_ink.myb',
+                         'cloud/mypaint_data/libmypaint-COPYING', 'cloud/mypaint_data/brushes-COPYING',
                          'tools/segmentation/guided_grabcut.py', 'tools/models/sam3_semantic.py',
                          'tests/headless/verify_artifacts.py', 'tools/packaging/README.md',
                          'out/evidence/readiness.json', 'out/evidence/build-linked-libraries.txt',
@@ -86,12 +89,16 @@ class BundleAssemblyTests(unittest.TestCase):
                         self.assertEqual((packaging / name).read_bytes(),
                                          (ROOT / 'tools/packaging' / name).read_bytes())
                     if native_editor:
+                        for name in ['mypaint_worker.py', 'mypaint_data/abi15.py', 'mypaint_data/pins.json',
+                                     'mypaint_data/pointy_ink.myb', 'mypaint_data/libmypaint-COPYING',
+                                     'mypaint_data/brushes-COPYING']:
+                            self.assertTrue((extracted / 'cloud' / name).is_file(), 'Missing optional brush payload: '+name)
                         self.assertEqual((extracted / 'start-cloud-session.sh').read_bytes(),
                                          (ROOT / 'tools/packaging/native-editor/start-cloud-session.sh').read_bytes())
                         self.assertIn('ARG RUNTIME_IMAGE=' + image + '\n', (extracted / 'Dockerfile').read_text())
                         dockerignore = (extracted / '.dockerignore').read_text().splitlines()
                         for name in ['runtime-target.json', 'tools/packaging/install-runtime-linux.sh',
-                                     'tools/packaging/runtime_platform.py']:
+                                     'tools/packaging/runtime_platform.py', 'cloud/mypaint_data/', 'cloud/mypaint_data/*']:
                             self.assertIn('!' + name, dockerignore)
                     (extracted / 'runtime-target.json').write_text('{}\n')
                     tampered = subprocess.run(['sha256sum', '-c', 'SHA256SUMS'], cwd=extracted,
