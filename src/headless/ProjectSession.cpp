@@ -8,6 +8,7 @@
 #include "color/ColorService.h"
 #include "brush/BucketFill.h"
 #include "brush/FreehandStroke.h"
+#include "brush/DryInkStroke.h"
 #include "core/LineartRaster.h"
 #include "codecs/ImageReader.h"
 #include <cmath>
@@ -128,7 +129,7 @@ public:
                 {"start_us",number(e.startUs)},{"end_us",number(e.endUs)},
                 {"geometry_count",number(e.geometry.size())}});
         }
-        QJsonArray capabilities{"recolor_stroke","set_properties","bucket_fill","add_fill_layer","draw_stroke","undo","redo","save","save_copy","replay","png"};
+        QJsonArray capabilities{"recolor_stroke","set_properties","bucket_fill","add_fill_layer","draw_stroke","update_layer","undo","redo","save","save_copy","replay","png"};
         capabilities.append("ora");
         return {{"document_id",idText(s.documentId)},{"revision",number(s.revision)},
             {"saved_revision",saved?QJsonValue(number(*saved)):QJsonValue(QJsonValue::Null)},
@@ -142,7 +143,7 @@ public:
             canReplace(p);
             const auto source=pathValue(p.value("path"));
             ResourceBudget budget;budget.scratchBytes=128*1024*1024;budget.ramReclaimBytes=128*1024*1024;
-            const auto info=checked(preflightInput(source,budget));
+            const auto info=checked(preflightInput(source,budget,128*1024*1024));
             need(info.format==ImageFormat::Png,"lineart.png-required");
             DecodeOptions options;options.limits.encodedBytes=128*1024*1024;options.limits.decodedBytes=128*1024*1024;
             auto imported=checked(decodeImage(source,options));
@@ -231,8 +232,29 @@ public:
                     }
                     sample.timestampUs=samples.size();samples.push_back(sample);
                 }
-                command=checked(freehandStrokeCommand(s,parseId(p.value("layer_id")),newEventId(),
-                    samples,width.toDouble(),browserColor(s,p.value("color"))));
+                const auto brush=p.value("brush").toString("fine");
+                need(!p.contains("brush") || p.value("brush").isString(),"session.brush");
+                need(brush=="fine" || brush=="dry_ink","session.brush");
+                const auto layer=parseId(p.value("layer_id"));const auto event=newEventId();
+                const auto color=browserColor(s,p.value("color"));
+                command=checked(brush=="dry_ink" ? dryInkStrokeCommand(s,layer,event,samples,width.toDouble(),color)
+                    : freehandStrokeCommand(s,layer,event,samples,width.toDouble(),color));
+            } else if(type=="update_layer") {
+                const auto id=parseId(p.value("node_id"));bool any=false;
+                need(id!=Document::rootId(),"session.root-layer");
+                if(p.contains("name")) {
+                    need(p.value("name").isString(),"session.layer-name");
+                    const auto name=p.value("name").toString().trimmed().toUtf8();
+                    need(!name.isEmpty() && name.size()<=256 && !name.contains(char(0)),"session.layer-name");
+                    command.operations.emplace_back(RenameNode{id,name.toStdString()});any=true;
+                }
+                if(p.contains("opacity")) {
+                    const auto value=p.value("opacity");
+                    need(value.isDouble() && std::isfinite(value.toDouble()) && value.toDouble()>=0 && value.toDouble()<=1,"session.layer-opacity");
+                    SetProperties properties;properties.id=id;properties.opacity=value.toDouble();
+                    command.operations.emplace_back(properties);any=true;
+                }
+                need(any,"session.empty-properties");
             } else if(type=="set_properties") {
                 SetProperties properties;properties.id=parseId(p.value("node_id"));bool any=false;
                 for(const auto& key:{"visible","locked"}) if(p.contains(key)) {

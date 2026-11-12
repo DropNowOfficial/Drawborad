@@ -191,6 +191,40 @@ int main(int argc,char** argv){
     assert(store.save(dir/"aa.draw",nextAA));assert(store.recover(dir/"aa.draw"));
     auto wrongEngine=freehandSample();auto wrongEvents=std::make_shared<EventList>(*wrongEngine.eventIndex);wrongEvents->front().engineVersion=2;wrongEngine.eventIndex=wrongEvents;
     assert(!encodeDelta({},wrongEngine));
+    auto dry=freehandSample();auto dryEvents=std::make_shared<EventList>(*dry.eventIndex);
+    dryEvents->front().engineVersion=12;dryEvents->front().toolId="dry-ink";dryEvents->front().style.width=128;
+    dryEvents->front().seed=123456;dry.eventIndex=dryEvents;
+    for(bool large:{false,true}){
+        auto mixed=dry;
+        if(large){auto bytes=std::make_shared<Bytes>(LegacyMaxResourceBytes+1,7);Resource r;r.kind=ResourceKind::Tile;r.bytes=bytes;r.id=sha256(*bytes);
+            auto rs=std::make_shared<ResourceMap>(*mixed.resources);(*rs)[r.id]=r;mixed.resources=rs;}
+        auto encoded=encodeDelta({},mixed);assert(encoded);binary::Reader r{encoded.value()};assert(r.text(32)=="DRAW-DELTA-12");
+        auto restored=decodeDelta(encoded.value(),{});assert(restored && restored.value().sameContent(mixed));
+        if(large){auto v11=mixed;v11.eventIndex=sample().eventIndex;
+            auto path=dir/"large11.draw";assert(store.save(path,v11));const auto hash=sha256(read(path));
+            assert(!store.save(path,mixed));assert(sha256(read(path))==hash);fs::remove(path);}
+        for(const auto& header:{"DRAW-DELTA-1","DRAW-DELTA-8","DRAW-DELTA-9","DRAW-DELTA-10","DRAW-DELTA-11","DRAW-DELTA-13"}){
+            auto bad=decodeDelta(formatHeader(encoded.value(),header),{});assert(!bad && bad.error().code==ErrorCode::UnsupportedFeature);
+        }
+    }
+    assert(store.save(dir/"dry.draw",dry));const auto dryBytes=read(dir/"dry.draw");
+    for(auto old:{sample(),bucketSample(),lineartSample(),freehandSample()}){
+        assert(!store.save(dir/"dry.draw",old));assert(read(dir/"dry.draw")==dryBytes);
+        auto path=dir/"dry-old.draw";assert(store.save(path,old));auto oldBytes=read(path);
+        assert(!store.save(path,dry));assert(read(path)==oldBytes);
+        auto newerDry=dry;newerDry.revision=old.revision+1;assert(!store.appendJournal(path,old,newerDry));
+        write(dir/"dry.draw.bak",oldBytes);assert(!store.recover(dir/"dry.draw"));fs::remove(dir/"dry.draw.bak");
+        write(dir/"dry.draw.journal",oldBytes);assert(!store.recover(dir/"dry.draw"));fs::remove(dir/"dry.draw.journal");
+        write(path.string()+".bak",dryBytes);assert(!store.recover(path));fs::remove(path.string()+".bak");
+        write(path.string()+".journal",dryBytes);assert(!store.recover(path));fs::remove(path.string()+".journal");fs::remove(path);
+    }
+    auto futureDry=frameRecord(formatHeader(encodeDelta({},dry).value(),"DRAW-DELTA-13")).value();
+    write(dir/"future-dry.draw",futureDry);write(dir/"future-dry.draw.bak",aaBytes);
+    auto noFallback=store.recover(dir/"future-dry.draw");assert(!noFallback && noFallback.error().code==ErrorCode::UnsupportedFeature);
+    assert(read(dir/"future-dry.draw")==futureDry);
+    auto nextDry=dry;nextDry.revision=1;assert(store.appendJournal(dir/"dry.draw",dry,nextDry));assert(store.recover(dir/"dry.draw"));
+    assert(store.save(dir/"dry.draw",nextDry));assert(store.recover(dir/"dry.draw"));
+    for(auto version:{2u,10u,13u}){auto wrong=dry;auto events=std::make_shared<EventList>(*dry.eventIndex);events->front().engineVersion=version;wrong.eventIndex=events;assert(!encodeDelta({},wrong));}
     if(argc==2){
         const auto primary=fs::path(argv[1]);
         const auto bytes=frameRecord(bucketDelta.value()).value();

@@ -96,6 +96,8 @@ if(PNG_FOUND)
   set_tests_properties(B10.OraIndependent PROPERTIES FIXTURES_REQUIRED StreamOra TIMEOUT 120)
 endif()
 
+lineart_repair_test(B13.DryInk test_dry_ink.cpp)
+lineart_repair_test(B13.DryInkStroke test_dry_ink_stroke.cpp)
 lineart_repair_test(B11.FineLine test_fine_line.cpp)
 lineart_repair_test(B11.FreehandStroke test_freehand_stroke.cpp)
 

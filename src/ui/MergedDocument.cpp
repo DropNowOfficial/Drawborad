@@ -1,4 +1,5 @@
 #include "MergedDocument.h"
+#include "render/DryInkCoverage.h"
 #include "view/LayerTree.h"
 #include <algorithm>
 #include <cmath>
@@ -48,7 +49,8 @@ Result<MergedPlan> plan(const DocumentSnapshot& s,MergedBudget budget){
  MergedPlan out;out.mergedBytes=bytes.value();
  // One RGBA tile + uint16 coverage; two extra RGBA tiles of conservative slack.
  const auto tilePixels=std::min<std::uint64_t>(TileSide,size.width)*std::min<std::uint64_t>(TileSide,size.height);
- out.tileScratchBytes=tilePixels*14;
+ const bool hasDryInk=std::any_of(s.eventIndex->begin(),s.eventIndex->end(),[](const auto& e){return e.engineVersion==12;});
+ out.tileScratchBytes=tilePixels*(14+(hasDryInk?DryInkNearestBytesPerPixel:0));
  for(const auto& [id,node]:*s.nodes)if(node.kind==NodeKind::Layer && layerVisible(s,id))
   if(!addWithin(work,pixels.value(),budget.maxRasterWork))return error(ErrorCode::BudgetExceeded,"merged.composite-work-limit");
  for(const auto& e:*s.eventIndex){
@@ -74,6 +76,7 @@ Result<MergedPlan> plan(const DocumentSnapshot& s,MergedBudget budget){
    if(estimate>budget.maxRasterWork)return error(ErrorCode::BudgetExceeded,"merged.raster-work-limit");
    eventWork=std::uint64_t(estimate);
   }else if(!addWithin(eventWork,tilePixels,budget.maxRasterWork))return error(ErrorCode::BudgetExceeded,"merged.raster-work-limit");
+  if(e.engineVersion==12 && !addWithin(eventWork,tilePixels*5,budget.maxRasterWork))return error(ErrorCode::BudgetExceeded,"merged.raster-work-limit");
   auto total=checkedMultiply(eventWork,count.value());if(!total || !addWithin(work,total.value(),budget.maxRasterWork))return error(ErrorCode::BudgetExceeded,"merged.raster-work-limit");
  }
  out.estimatedBytes=out.mergedBytes;

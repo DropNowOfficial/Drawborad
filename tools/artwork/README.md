@@ -37,7 +37,7 @@ g++ -std=c++20 -O0 -Wall -Wextra -Wpedantic -Werror \
   tools/artwork/BuildCoverRegions.cpp \
   src/ui/{LayerStream,MergedDocument}.cpp \
   src/core/{LineartRaster,Document,DocumentSpec,CommandBus,Digest}.cpp \
-  src/render/{ReferenceRenderer,CoverageRasterizer,FineLineCoverage,PixelBlend}.cpp \
+  src/render/{ReferenceRenderer,CoverageRasterizer,FineLineCoverage,DryInkCoverage,PixelBlend}.cpp \
   src/storage/{ProjectStore,ProjectCodec,FileIO,Journal}.cpp \
   src/codecs/{OraStream,ZipStream,RasterWriters,AtomicExport}.cpp \
   /usr/lib/x86_64-linux-gnu/libpng16.so.16 -o /tmp/build_cover_regions
@@ -109,3 +109,119 @@ The native tool also checked save/reopen pixel equality. PNG SHA256: `48afa24860
 Repository source is the reproduction recipe, not a distribution of the private
 reference. The rerun used the already-built native tool; no GUI acceptance is
 implied.
+
+## Separate manually authored eye study (not v3 region tracing)
+
+`eye_study_plan.py` reads no image pixels. It explicitly authors short native curves
+from visual observation of the black cover's upper eye, brow, hairline and nearby
+ear/tension marks. Design coordinates become sampled geometry on an actual
+1600 x 1000 canvas, not enlarged pixels. `BuildFaceStudy.cpp` uses engine10 AA for
+widths <=8 px and unchanged engine2 marker for broader strokes. Four independent
+native event layers plus Paper, editable geometry; not a pasted reference.
+
+```sh
+python3 tools/artwork/eye_study_plan.py /tmp/eye-study-new
+# Use the exact compiler/source list above, replacing:
+# tools/artwork/BuildCoverRegions.cpp -> tools/artwork/BuildFaceStudy.cpp
+# -o /tmp/build_cover_regions -> -o /tmp/build_face_study
+/tmp/build_face_study /tmp/eye-study-new
+```
+
+Produces `eye_study.draw`, `eye_study.png`, `eye_study.ora`, and native receipt.
+The source crop used only for visual assessment is (35,40,660,330) in the private
+1024 x 1536 cover. This small study is not final artwork or a faithful recreation
+of the original artist's hand. Wider marker marks retain existing renderer
+behavior; broad curves can be too smooth, with insufficient broken dry-brush
+texture. Pupil/eyelid proportions and hair masses require visual assessment,
+not a test-count-based quality claim. No external-editor validation is claimed.
+
+Eye-study v2 review: 55 events / 10808 geometry points, actual native1600x1000.
+Saved/reopened pixels equal. Manual drawing remains rejected: hair is smooth
+ribbon shapes rather than connected dry-brush masses; pupil is crescent-like
+instead of the reference tilted oval; eyelids too regular; sparse composition
+and uniform long taper lose the fearful expression. Denser curve sampling
+improves old-marker tip dotting but some stamp artifacts remain. This is not
+ready to extend across the full artwork. `eye_study_plan_v1.py` preserves the
+earlier 45-curve experiment; current script generates the reviewed v2.
+
+
+### Eye-study v3 (strictly local correction)
+
+Current `eye_study_plan.py` generates v3; `eye_study_plan_v2.py` preserves v2.
+V3 replaces the shifted-crescent pupil with short chords of an actual tilted
+ellipse (radii10.5/20 in design coordinates, angle-24deg) and two highlights.
+It changes upper/lower lids and the right eye corner, and authors a connected
+upper-left polygonal hair mass with three intentional paper cuts. The hair
+polygon is manually specified, not derived by thresholding source pixels.
+It is sampled into overlapping horizontal native short curves, not embedded
+bitmap data. No random noise or paper texture was added as fake dry-brush.
+The study-only native tool accepts up to511 events; core budgets are unchanged.
+This is still a geometry study, not a claim of finished artistic rendering.
+
+## Dry-ink renderer comparison (separate from eye redraw)
+
+`BuildDryInkStudy.cpp` calls the real coverage renderer for identical curves,
+pressure and widths48/18/5px: legacy marker left, opt-in engine12 dry-ink right.
+It writes a lossless1024x512 PPM; converting that PPM to PNG is encoding only.
+This comparison is renderer output, not a GUI screenshot or final artwork.
+
+```sh
+g++ -std=c++20 -O0 -Wall -Wextra -Wpedantic -Werror -Isrc \
+ tools/artwork/BuildDryInkStudy.cpp \
+ src/render/{CoverageRasterizer,FineLineCoverage,DryInkCoverage,PixelBlend}.cpp \
+ src/core/{Document,DocumentSpec,CommandBus,Digest}.cpp -o /tmp/build_dry_ink_study
+/tmp/build_dry_ink_study /tmp/normal-vs-dry.ppm
+```
+
+Fixed engine12 recipe: pressure controls width and ink deposit, 2.3px directional
+fiber pitch, small slow along-path waviness and ink starvation; persisted seed
+controls phase, not canvas random dots. Opacity still applies at normal blending.
+32Mi pixel-visits/tile, max512px tile, max4096 samples, width.25..128px.
+Straight-path insertion and tile partition equality are tested. Curved paths use
+local segment tangents; their join/texture quality remains a visual limitation.
+Regular mathematical fibers are not yet proof of convincing natural dry brush.
+For current native tooling, add `src/render/DryInkCoverage.cpp` to the earlier
+full build command as CoverageRasterizer now dispatches to its opt-in function.
+
+### Dry-ink nearest-frame revision
+
+Current renderer selects one closest centerline record per pixel, then evaluates
+texture exactly once. It no longer takes a maximum of multiple segment texture
+frames. A record contains four doubles (distance, pressure, signed normal,
+arc-position), statically asserted32bytes/pixel. Dry-ink projects therefore
+reserve46bytes/pixel tile scratch in MergedDocument instead of14; non-dry remains
+14. The global128MiB memory and512Mi work limits are unchanged. Neighbor tangents
+are interpolated for the normal sign; the normal magnitude is nearest distance.
+Curved and straight tile-partition equality, straight split invariance, pressure,
+seed repeatability, replay, cancellation, and memory-limit rejection were tested.
+
+`normal-vs-dry-v1.png` and `DryInkCoverage-v1.cpp` in the local proof directory
+preserve the earlier max-combined experiment. The current observed comparison
+is `normal-vs-dry-v3.png`. **Still visually rejected:** mathematical fibers remain
+comb/grid-like around curved sections. Removing multi-frame maximum alone did
+not achieve natural dry brush; regular narrow fiber spacing and sampling remain
+limitations. Do not use the technical test pass as artistic acceptance.
+
+### Final limited dry-ink experiment (v4)
+
+The current engine12 recipe replaces the earlier periodic cosine field entirely.
+Bristles have seed-persistent nonuniform offsets and widths in normal coordinates.
+Each bristle's ink supply is smoothstep interpolation of hashed48px arc-length
+nodes, not random per-pixel particles. Five neighboring bristle intervals are
+integrated against a1px normal-space box filter. Higher pressure increases width,
+contact and deposited ink. Extra five candidate visits per resolved pixel are
+included in both local32Mi work checks and MergedDocument's preflight work.
+Nearest-frame32bytes/pixel memory remains accounted for; no global cap increased.
+
+Old v3 source was preserved locally as `DryInkCoverage-v3.cpp`, alongside v3 PNG.
+Final same-path comparison is `normal-vs-dry-v4.png`. This is the last scoped
+recipe revision, not an open-ended promise of matching a human artist. Acceptance
+must be based on this actual image, not merely the deterministic rendering tests.
+
+Final visual review: v4 removes the conspicuous mesh/Moire pattern seen in v3
+and produces continuous, irregular directional bristles with tapered pressure.
+It remains an **experimental brush**, not artist-quality acceptance: medium/thin
+strokes can resemble parallel wires and lack convincing bristle clumping and
+broken ink edges. No full-cover redraw or natural-brush claim follows from this.
+Strict dry-ink regression tests and MergedDocument budget tests passed after the
+final recipe change. This scoped visual iteration is complete.

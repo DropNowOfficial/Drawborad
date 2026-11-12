@@ -54,11 +54,14 @@ footer{color:#98a1ac;font-size:11px;margin-top:25px;line-height:1.7}.errors{colo
 <p id="nativeStatus" role="status" aria-live="polite">No painting open</p>
 <p id="nativeDimensions" class="helper">Choose the required pixel dimensions before creating a canvas. New canvases use 300 DPI; importing lineart preserves its pixels.</p>
 <p id="nativeError" role="alert" class="errors"></p>
-<div class="native-layers-header"><div class="sectionlabel">Objects &amp; painting layers</div><button id="nativeAllStrokes" class="secondary native-all" type="button" aria-pressed="true" disabled>All strokes</button></div>
+<div class="native-layers-header"><div class="sectionlabel">Objects &amp; painting layers · top first</div><button id="nativeAllStrokes" class="secondary native-all" type="button" aria-pressed="true" disabled>All strokes</button></div>
 <p id="nativeLayerSummary" class="helper"></p>
 <label class="helper"><input id="nativeShowSublayers" type="checkbox" disabled> Show painting sublayers</label>
 <div id="nativeNodes" class="native-nodes" role="group" aria-label="Select an object or painting layer"></div>
 <p id="nativeScope" class="native-scope" role="status" aria-live="polite">No layer selected</p>
+<label class="fieldlabel" for="nativeLayerName">Selected layer name</label><input id="nativeLayerName" class="field" type="text" maxlength="256" disabled>
+<label class="fieldlabel" for="nativeLayerOpacity">Layer opacity · percent</label><input id="nativeLayerOpacity" class="field" type="number" min="0" max="100" step="1" disabled>
+<button id="nativeUpdateLayer" class="secondary" type="button" disabled>Apply layer properties</button>
 <p class="fine">Select a name to filter strokes. Show and Lock apply to that node. The preview and replay show the whole painting.</p>
 <label class="fieldlabel" for="nativeStrokes">Select an existing stroke</label><select id="nativeStrokes" class="field" disabled></select>
 <p id="nativeStrokeInfo" class="helper">Every entry refers to a stable native stroke ID.</p>
@@ -70,10 +73,11 @@ footer{color:#98a1ac;font-size:11px;margin-top:25px;line-height:1.7}.errors{colo
 <label class="fieldlabel" for="nativeTolerance">Tolerance (0–255)</label>
 <input id="nativeTolerance" class="field" type="number" min="0" max="255" step="1" value="0" disabled>
 <p id="nativeBucketHint" class="helper">Create a new color layer, or show painting sublayers and select an unlocked visible layer. Fill samples the visible full painting. New-format edits may require Save separate copy.</p>
-<label class="fieldlabel"><input id="nativePen" type="checkbox" disabled> Fine pen on selected layer</label>
-<label class="fieldlabel" for="nativePenWidth">Pen width · document pixels (0.05–8)</label>
+<label class="fieldlabel"><input id="nativePen" type="checkbox" disabled> Draw on selected layer</label>
+<label class="fieldlabel" for="nativeBrush">Brush</label><select id="nativeBrush" class="field" disabled><option value="fine">Fine pen · 0.05–8 px</option><option value="dry_ink">Dry ink experiment · 0.25–128 px</option></select>
+<label class="fieldlabel" for="nativePenWidth">Brush width · document pixels</label>
 <input id="nativePenWidth" class="field" type="number" min="0.05" max="8" step="0.05" value="0.5" disabled>
-<p class="helper">Draw with a mouse or pressure-sensitive pen. Release to commit one undoable stroke. The temporary blue guide is not the final ink. New fine-pen projects require a separate version-10 copy.</p>
+<p class="helper">Draw with a mouse or pressure-sensitive pen. Release to commit one undoable stroke. The temporary blue guide is not the final ink. New brush edits may require Save separate copy.</p>
 <div class="divider"></div><div class="export">
 <button id="nativeDownload" class="secondary" type="button" disabled>Download saved .draw</button>
 <button id="nativePng" class="secondary" type="button" disabled>Export painting PNG</button>
@@ -192,6 +196,8 @@ function nativeControls(){
  by('nativeWidth').disabled=nativeBusy;by('nativeHeight').disabled=nativeBusy;
  by('nativeOra').disabled=nativeBusy||!nativeState||(nativeState.capabilities&&!nativeState.capabilities.includes('ora'));
  const hasSelection=nativeScopedStrokes().length>0;
+ const editableLayer=nativeState?.nodes?.find(n=>n.id===nativeSelectedNodeId&&n.kind!==0&&!n.locked);
+ for(const id of ['nativeLayerName','nativeLayerOpacity','nativeUpdateLayer'])by(id).disabled=nativeBusy||!editableLayer||!nativeState?.capabilities?.includes('update_layer');
  by('nativeRecolor').disabled=nativeBusy||!hasSelection;
  by('nativeDownload').disabled=nativeBusy||!nativeState||nativeState.dirty;
  by('nativeStrokes').disabled=nativeBusy||!hasSelection;
@@ -202,7 +208,7 @@ function nativeControls(){
  by('nativeBucket').disabled=!fillReady;
  by('nativeTolerance').disabled=!fillReady;
  const penReady=!!nativePenReady();
- by('nativePen').disabled=!penReady;by('nativePenWidth').disabled=!penReady;
+ by('nativePen').disabled=!penReady;by('nativePenWidth').disabled=!penReady;by('nativeBrush').disabled=!penReady;
  if(!nativeBusy&&!penReady)by('nativePen').checked=false;
  by('nativePreview').style.touchAction=by('nativePen').checked?'none':'auto';
  if(!nativeBusy&&!fillReady)by('nativeBucket').checked=false;
@@ -245,6 +251,8 @@ function nativeRenderSelection(selected=by('nativeStrokes').value){
   line.querySelectorAll('button').forEach(button=>button.setAttribute('aria-pressed',String(selected)));
  }
  by('nativeScope').textContent=nativeState?(nativeSelectedNodeId===null?'All strokes':names.get(nativeSelectedNodeId))+' · '+strokes.length+' of '+nativeState.strokes.length+' strokes':'No layer selected';
+ const active=nativeState?.nodes?.find(n=>n.id===nativeSelectedNodeId);
+ by('nativeLayerName').value=active?.name||'';by('nativeLayerOpacity').value=active?Math.round(active.opacity*100):'';
  nativeSelection();nativeControls();
 }
 function nativeSelectNode(id){
@@ -286,7 +294,8 @@ async function nativeShow(value){
    line.append(controls);by('nativeNodes').append(line);
   }
   const children=node.children||value.nodes.filter(n=>n.parent_id===node.id).map(n=>n.id);
-  for(const id of children){const child=nodes.get(id);if(child)row(child,depth+(node.kind===0?0:1))}
+  // Native children are stored back-to-front; list the visually upper layer first.
+  for(const id of [...children].reverse()){const child=nodes.get(id);if(child)row(child,depth+(node.kind===0?0:1))}
  }
  for(const root of value.nodes.filter(n=>n.kind===0))row(root,0);
  nativeRenderSelection(selected);await nativePreview();nativeControls();
@@ -313,6 +322,11 @@ by('nativeShowSublayers').onchange=()=>{
  }
  nativeRenderSelection();
 };
+by('nativeUpdateLayer').onclick=()=>nativeRun(async()=>{
+ const name=by('nativeLayerName').value.trim(),opacity=Number(by('nativeLayerOpacity').value);
+ if(!name||!Number.isFinite(opacity)||opacity<0||opacity>100)throw new Error('Enter a layer name and opacity from 0 to 100 percent.');
+ await nativeShow(await nativePost('/'+nativeState.id+'/commands',{expected_revision:nativeState.revision,type:'update_layer',node_id:nativeSelectedNodeId,name,opacity:opacity/100}));
+});
 by('nativeRecolor').onclick=()=>nativeRun(async()=>nativeShow(await nativePost('/'+nativeState.id+'/commands',{expected_revision:nativeState.revision,type:'recolor_stroke',stroke_id:by('nativeStrokes').value,color:by('nativeColor').value})));
 for(const action of ['Undo','Redo','Save'])by('native'+action).onclick=()=>nativeRun(async()=>nativeShow(await nativePost('/'+nativeState.id+'/'+action.toLowerCase(),{expected_revision:nativeState.revision})));
 by('nativeSaveCopy').onclick=()=>nativeRun(async()=>nativeShow(await nativePost('/'+nativeState.id+'/save-copy',{expected_revision:nativeState.revision})));
@@ -330,6 +344,7 @@ async function nativeAddFillLayer(){
 by('nativeAddFillLayer').onclick=()=>nativeRun(nativeAddFillLayer);
 by('nativeBucket').onchange=()=>{if(by('nativeBucket').checked)by('nativePen').checked=false;nativeControls()};
 by('nativePen').onchange=()=>{if(by('nativePen').checked)by('nativeBucket').checked=false;nativeControls()};
+by('nativeBrush').onchange=()=>{const dry=by('nativeBrush').value==='dry_ink';by('nativePenWidth').min=dry?'0.25':'0.05';by('nativePenWidth').max=dry?'128':'8';by('nativePenWidth').value=String(Math.max(dry?.25:.05,Math.min(dry?128:8,Number(by('nativePenWidth').value))));};
 by('nativePreview').onclick=event=>{
  if(!by('nativeBucket').checked||!nativeFillReady())return;
  const point=nativeFillPoint(by('nativePreview').getBoundingClientRect(),Number(nativeState.width),Number(nativeState.height),event.clientX,event.clientY);
@@ -364,12 +379,12 @@ function nativePenSample(event){
 }
 by('nativePreview').onpointerdown=event=>{
  if(!by('nativePen').checked||!nativePenReady()||event.button!==0)return;
- const width=Number(by('nativePenWidth').value);
- if(!Number.isFinite(width)||width<0.05||width>8){nativeError('Pen width must be 0.05 to 8 document pixels.');return;}
+ const brush=by('nativeBrush').value||'fine',dry=brush==='dry_ink',width=Number(by('nativePenWidth').value);
+ if(!['fine','dry_ink'].includes(brush)||!Number.isFinite(width)||width<(dry?.25:.05)||width>(dry?128:8)){nativeError('Choose a valid brush width: fine pen 0.05–8 px, dry ink 0.25–128 px.');return;}
  event.preventDefault();nativeError('');
  const host=by('nativeCanvasHost').getBoundingClientRect(),draft=by('nativeStrokeDraft');
  draft.width=Math.ceil(host.width);draft.height=Math.ceil(host.height);draft.hidden=false;
- nativePenDrag={pointerId:event.pointerId,points:[],body:{expected_revision:nativeState.revision,type:'draw_stroke',layer_id:nativeSelectedNodeId,width,color:by('nativeColor').value}};
+ nativePenDrag={pointerId:event.pointerId,points:[],body:{expected_revision:nativeState.revision,type:'draw_stroke',layer_id:nativeSelectedNodeId,brush,width,color:by('nativeColor').value}};
  nativeBusy=true;nativeControls();by('nativePreview').setPointerCapture(event.pointerId);nativePenSample(event);
 };
 by('nativePreview').onpointermove=event=>{

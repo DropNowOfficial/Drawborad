@@ -57,7 +57,12 @@ native access rather than this browser import.
 
 Pen pointer events now retain device pressure (mouse remains constant pressure),
 and an empty coalesced-events array no longer drops ordinary movement samples.
-These Session/UI changes and poster integration require the next CI.
+At commit35cf74c19f542e9799cf9f17092f6bab917d2346, run43197707147 completed
+all eight native/browser/cloud-session/install jobs successfully; cloud runtime
+43197707069 also passed. Native67/67 includes B12.PosterNative, independent
+ORA checks and PosterSession at3300x5100. Browser scenarios remain512x512
+technical lineart/fine-pen tests, not every poster-size GUI operation. Artistic
+quality is unproven.
 
 Reference-driven cover experiment: complete original-size 1024x1536 region trace,
 no embedded bitmap resources, separate semantic zones. It is not an original
@@ -65,6 +70,32 @@ redrawing or recovered high-resolution detail. v3 retains facial expression and
 broad/thin hierarchy but has quantized/grainy shadows and red; semantic boundaries
 are approximate and title lettering remains knockout pixels, not editable text.
 It is rejected as a finished high-quality/print-ready work.
+
+## Experimental dry ink and retained visual failures
+
+The next opt-in engine12 brush keeps editable stroke geometry, persistent seed,
+pressure-controlled width/ink, nonuniform bristle intervals and continuous ink
+supply along the path. A single closest-centerline frame avoids max-combining
+incompatible segment textures. Additional32bytes/pixel nearest records and five
+bristle visits/pixel are included in existing memory/work budgets. Mixed old/new
+file protection uses floor12. Older brush engines retain their previous pixels.
+
+The v4 same-path rendering removed the preceding conspicuous grid/moiré, but is
+still an experiment: fine/medium marks resemble parallel wires and lack natural
+bristle clustering and broken ink edges. The UI labels it an experiment. No
+artist-level/full-cover acceptance is claimed. Native test, builder and storage
+checks passed locally; full current bridge/browser CI is still required.
+
+Manually authored eye studies are retained in tools/artwork. Independent visual
+review rejected v2 and v3: the pupil improved, but hair shapes were blocky/ribbon-
+like, proportions differed and stroke quality remained mechanical. Do not expand
+those studies across the whole artwork. Their reproducible source is a failure
+record, not approved art. The private reference image is not uploaded to GitHub.
+
+Selected-layer naming/opacity now use native undoable commands, and the browser
+layer list displays frontmost first instead of reversing the perceived ink/color
+stack. A caller-specific encoded PNG preflight cap matches the128MiB upload cap;
+other import callers retain the existing64MiB default.
 
 ## Next steps and remaining gaps
 

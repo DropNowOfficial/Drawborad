@@ -1,6 +1,7 @@
 #include "Commands.h"
 #include "BucketEvent.h"
 #include "FreehandEvent.h"
+#include "DryInkEvent.h"
 #include <algorithm>
 #include <cmath>
 #include <set>
@@ -119,9 +120,11 @@ Result<void> validateSnapshot(const DocumentSnapshot& s) {
     }
     std::set<Id> events;
     for (auto& e : *s.eventIndex) {
+        if(e.toolId=="dry-ink" && e.engineVersion!=12)return error(ErrorCode::UnsupportedFeature,"dry-ink.engine-tool");
         if(e.toolId=="fineliner-aa" && e.engineVersion!=10)return error(ErrorCode::UnsupportedFeature,"freehand.engine-tool");
-        if (e.engineVersion!=1 && e.engineVersion!=2 && e.engineVersion!=8 && e.engineVersion!=10)
+        if (e.engineVersion!=1 && e.engineVersion!=2 && e.engineVersion!=8 && e.engineVersion!=10 && e.engineVersion!=12)
             return error(ErrorCode::UnsupportedFeature,"event.engine-version");
+        if (e.engineVersion==12) {auto valid=validateDryInkEvent(e);if(!valid)return valid.error();}
         if (e.engineVersion==10) {auto valid=validateFreehandEvent(e);if(!valid)return valid.error();}
         if (e.engineVersion==8) {
             auto valid=validateBucketEvent(e); if (!valid) return valid.error();

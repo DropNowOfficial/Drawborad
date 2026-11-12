@@ -1,5 +1,7 @@
 #include "CoverageRasterizer.h"
 #include "FineLineCoverage.h"
+#include "DryInkCoverage.h"
+#include "core/DryInkEvent.h"
 #include "core/BucketEvent.h"
 #include "core/FreehandEvent.h"
 #include <algorithm>
@@ -25,6 +27,7 @@ constexpr std::array<std::array<std::int64_t, 2>, 8> Dir{{
 }
 Result<void> validateRasterEvent(const StrokeEvent& e) {
     if (e.engineVersion==8) return validateBucketEvent(e);
+    if (e.engineVersion==12) return validateDryInkEvent(e);
     if (e.engineVersion != 1 && e.engineVersion != 2 && e.engineVersion != 10)
         return error(ErrorCode::UnsupportedFeature, "render.engine-version");
     if(e.engineVersion==10){
@@ -64,6 +67,7 @@ Result<std::vector<std::uint16_t>> strokeCoverage(const StrokeEvent& e, Rect rec
     auto pixels=checkedMultiply(rect.width,rect.height); if(!pixels) return pixels.error();
     if (stop.stop_requested()) return error(ErrorCode::Cancelled,"render.cancelled");
     if(e.engineVersion==10)return fineLineCoverage(e,rect,time,stop);
+    if(e.engineVersion==12)return dryInkCoverage(e,rect,time,stop);
     std::vector<std::uint16_t> cov(std::size_t(pixels.value()),0);
     if (time < e.startUs) return cov;
     if (e.engineVersion==8) {

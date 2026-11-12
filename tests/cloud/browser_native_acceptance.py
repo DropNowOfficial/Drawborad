@@ -346,6 +346,29 @@ def exercise_lineart(page, output, url, token):
     assert exported("fine-pen-reopened").tobytes()==pen_pixels
     panel("fine-pen-reopened")
     (output/"fine-pen-receipt.json").write_text(json.dumps({"workflow":"passed","width":.25,"tool":"fineliner-aa","pointer_input":"real Chromium mouse","undo_redo_reopen_equal":True,"project":pen_saved["id"]},indent=2))
+    page.locator("#nativeShowSublayers").check()
+    page.locator('[data-node-id="' + color["id"] + '"] .native-node-select').click()
+    page.locator("#nativeBrush").select_option("dry_ink")
+    page.locator("#nativePenWidth").fill("12")
+    page.locator("#nativePen").check()
+    image.scroll_into_view_if_needed();bounds=image.bounding_box()
+    scale=min(bounds["width"]/512,bounds["height"]/512);ox=bounds["x"]+(bounds["width"]-512*scale)/2;oy=bounds["y"]+(bounds["height"]-512*scale)/2
+    with page.expect_response(endpoint("POST", "/commands")) as dry_response:
+        page.mouse.move(ox+20*scale,oy+480*scale);page.mouse.down()
+        page.mouse.move(ox+200*scale,oy+480*scale,steps=16);page.mouse.up()
+    assert dry_response.value.status==200,dry_response.value.text()
+    expect(page.locator("#nativeNew")).to_be_enabled(timeout=90000)
+    assert dry_response.value.json()["strokes"][-1]["tool"]=="dry-ink"
+    dry_pixels=exported("dry-ink").tobytes();assert dry_pixels!=pen_pixels
+    panel("dry-ink")
+    click_post(page,page.locator("#nativeUndo"),"/undo");assert exported("dry-ink-undo").tobytes()==pen_pixels
+    click_post(page,page.locator("#nativeRedo"),"/redo");assert exported("dry-ink-redo").tobytes()==dry_pixels
+    click_post(page,page.locator("#nativeSaveCopy"),"/save-copy",201)
+    dry_dir=output/"dry-ink-download";dry_dir.mkdir(exist_ok=True)
+    dry_draw=download(page,"Download saved .draw",dry_dir,"painting.draw")
+    click_post(page,page.locator("#nativeClose"),"/close");page.locator("#nativeFile").set_input_files(dry_draw)
+    click_post(page,page.locator("#nativeImport"),"/import",201);assert exported("dry-ink-reopened").tobytes()==dry_pixels
+    (output/"dry-ink-receipt.json").write_text(json.dumps({"workflow":"passed","tool":"dry-ink","pointer_input":"real Chromium mouse","undo_redo_reopen_equal":True,"artistic_quality":"not assessed by this functional check"},indent=2))
     return receipt
 
 

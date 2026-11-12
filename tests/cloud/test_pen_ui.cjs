@@ -15,10 +15,14 @@ get('nativePreview').onpointerdown(event(110,120));get('nativePreview').onpointe
 get('nativePreview').onpointerdown(event(110,120));get('nativePreview').onpointermove(event(300,120));get('nativePreview').onpointerup(event(120,120));assert.equal(calls.length,1,'leave-canvas does not save partial stroke');
 get('nativePreview').onpointerdown(event(110,120));vm.runInContext('nativePenDrag.points=Array.from({length:1024},()=>({x:0,y:0}))',c);get('nativePreview').onpointermove(event(120,120));assert.equal(calls.length,1,'overflow cancels instead of splitting undo');
 get('nativePreview').onpointerdown(event(110,120,{pointerType:'pen',pressure:.35}));get('nativePreview').onpointerup(event(120,120,{pointerType:'pen',pressure:0}));assert.equal(calls.at(-1).points[0].pressure,.35);assert.equal(calls.at(-1).points.at(-1).pressure,0);calls.pop();
+get('nativeBrush').value='dry_ink';get('nativePenWidth').value='24';get('nativePreview').onpointerdown(event(110,120));get('nativePreview').onpointerup(event(120,120));assert.equal(calls.at(-1).brush,'dry_ink');assert.equal(calls.at(-1).width,24);calls.pop();get('nativeBrush').value='fine';
 get('nativePenWidth').value='0';get('nativePreview').onpointerdown(event(110,120));assert.equal(calls.length,1);assert.ok(errors.some(x=>x.includes('width')));
 console.log('fine-pen pointer sampling, fractional coordinates, one-command release and cancellation guards passed');
 // Dimensions are sent as native pixel counts rather than CSS upscaling.
 const create=html.match(/by\('nativeNew'\)\.onclick=\(\)=>nativeRun\(async\(\)=>\{[\s\S]*?\n\}\);/);
 assert.ok(create);vm.runInContext(create[0],c);
 get('nativeWidth').value='1725';get('nativeHeight').value='2625';
-(async()=>{await get('nativeNew').onclick();assert.equal(calls.at(-1).width,'1725');assert.equal(calls.at(-1).height,'2625');get('nativeWidth').value='8193';await assert.rejects(()=>get('nativeNew').onclick(),/integer dimensions/);console.log('native document size controls passed');})();
+(async()=>{await get('nativeNew').onclick();assert.equal(calls.find(b=>b.width==='1725').height,'2625');get('nativeWidth').value='8193';await assert.rejects(()=>get('nativeNew').onclick(),/integer dimensions/);console.log('native document size controls passed');})();
+
+const properties=html.match(/by\('nativeUpdateLayer'\)\.onclick=\(\)=>nativeRun\(async\(\)=>\{[\s\S]*?\n\}\);/);assert.ok(properties);vm.runInContext(properties[0],c);get('nativeLayerName').value='Ink details';get('nativeLayerOpacity').value='50';
+(async()=>{await get('nativeUpdateLayer').onclick();assert.equal(calls.at(-1).type,'update_layer');assert.equal(calls.at(-1).opacity,.5);console.log('layer property input passed');})();

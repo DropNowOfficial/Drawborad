@@ -75,12 +75,13 @@ void put(Writer& w,const StrokeEvent& e){
 StrokeEvent event(Reader& r){
  StrokeEvent e;e.id=r.id();e.objectId=r.id();e.layerId=r.id();e.startUs=r.u64();e.endUs=r.u64();e.toolId=r.text(256);e.color=color(r);auto n=r.count();e.geometry.reserve(n);
  while(n--){InputSample p;p.x=r.real();p.y=r.real();p.pressure=r.real();if(r.boolean())p.tiltX=r.real();if(r.boolean())p.tiltY=r.real();p.timestampUs=r.u64();auto d=r.u64(),c=r.u64();if(d>UINT32_MAX||c>UINT32_MAX)throw binary::Invalid{};p.deviceKind=std::uint32_t(d);p.capabilities=std::uint32_t(c);e.geometry.push_back(p);}
- e.seed=r.u64();e.parentRevision=r.u64();auto v=r.u64();if(v!=1&&v!=2&&v!=8&&v!=10)throw UnsupportedEngine{};e.engineVersion=std::uint32_t(v);
+ e.seed=r.u64();e.parentRevision=r.u64();auto v=r.u64();if(v!=1&&v!=2&&v!=8&&v!=10&&v!=12)throw UnsupportedEngine{};e.engineVersion=std::uint32_t(v);
  if(v>=2){e.style.width=r.real();e.style.opacity=r.real();e.style.hardness=r.real();auto shape=r.u64(),angle=r.u64();if(shape>1||angle>7)throw binary::Invalid{};e.style.shape=NibShape(shape);e.style.angle=std::uint8_t(angle);e.style.grain=r.blob(64);}return e;
 }
 }
 namespace {
 const char* requiredFormatHeader(const DocumentSnapshot& s){
+ if(std::any_of(s.eventIndex->begin(),s.eventIndex->end(),[](const auto& e){return e.engineVersion==12;}))return "DRAW-DELTA-12";
  if(std::any_of(s.resources->begin(),s.resources->end(),[](const auto& item){return item.second.bytes->size()>LegacyMaxResourceBytes;}))return "DRAW-DELTA-11";
  if(std::any_of(s.eventIndex->begin(),s.eventIndex->end(),[](const auto& e){return e.engineVersion==10;}))return "DRAW-DELTA-10";
  if(std::any_of(s.nodes->begin(),s.nodes->end(),[](const auto& item){const auto& n=item.second;return n.sourceKind==SourceKind::ImportedRaster && n.stage=="drawborad.lineart.rgba.v1";}))return "DRAW-DELTA-9";
@@ -97,7 +98,7 @@ Result<Bytes> encodeDelta(const DocumentSnapshot& before,const DocumentSnapshot&
 }
 Result<DocumentSnapshot> decodeDelta(std::span<const std::uint8_t> bytes,const DocumentSnapshot& base){
  if(bytes.size()>MaxProjectBytes)return error(ErrorCode::BudgetExceeded,"project.record-limit");
- try{Reader r{bytes};const auto format=r.text(32);if(format!="DRAW-DELTA-1"&&format!="DRAW-DELTA-8"&&format!="DRAW-DELTA-9"&&format!="DRAW-DELTA-10"&&format!="DRAW-DELTA-11"){if(format.starts_with("DRAW-DELTA-"))throw UnsupportedEngine{};throw binary::Invalid{};}auto prevId=r.id();auto prevRev=r.u64();auto prevHash=r.hash();if(prevId!=base.documentId||prevRev!=base.revision)return error(ErrorCode::StaleRevision,"journal.base");if(!base.documentId.empty()){auto h=stateHash(base);if(!h)return h.error();if(h.value()!=prevHash)return error(ErrorCode::DigestMismatch,"journal.base-hash");}
+ try{Reader r{bytes};const auto format=r.text(32);if(format!="DRAW-DELTA-1"&&format!="DRAW-DELTA-8"&&format!="DRAW-DELTA-9"&&format!="DRAW-DELTA-10"&&format!="DRAW-DELTA-11"&&format!="DRAW-DELTA-12"){if(format.starts_with("DRAW-DELTA-"))throw UnsupportedEngine{};throw binary::Invalid{};}auto prevId=r.id();auto prevRev=r.u64();auto prevHash=r.hash();if(prevId!=base.documentId||prevRev!=base.revision)return error(ErrorCode::StaleRevision,"journal.base");if(!base.documentId.empty()){auto h=stateHash(base);if(!h)return h.error();if(h.value()!=prevHash)return error(ErrorCode::DigestMismatch,"journal.base-hash");}
  DocumentSnapshot out;out.documentId=r.id();out.revision=r.u64();out.spec=spec(r);if(!base.documentId.empty()&&(out.documentId!=base.documentId||out.revision<=base.revision))throw binary::Invalid{};
  auto ns=std::make_shared<NodeMap>(*base.nodes);for(auto id:ids(r))ns->erase(id);auto count=r.count(65536);while(count--){auto n=node(r);(*ns)[n.id]=std::move(n);}out.nodes=ns;
  auto rs=std::make_shared<ResourceMap>(*base.resources);for(auto h:hashes(r))rs->erase(h);count=r.count();while(count--){auto a=resource(r);(*rs)[a.id]=std::move(a);}out.resources=rs;bool append=r.boolean();auto ev=append?std::make_shared<EventList>(*base.eventIndex):std::make_shared<EventList>();count=r.count(2000000);if(ev->size()+count>2000000)throw binary::Invalid{};while(count--)ev->push_back(event(r));out.eventIndex=ev;if(!r.done())throw binary::Invalid{};auto v=validateSnapshot(out);if(!v)return v.error();if(format!=requiredFormatHeader(out))return error(ErrorCode::UnsupportedFeature,"project.format-feature-mismatch");return out;

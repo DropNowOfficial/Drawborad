@@ -28,6 +28,18 @@ with tempfile.TemporaryDirectory() as d:
   assert 'error' in rpc('command',type='draw_stroke',layer_id=layer,points=[{'x':10,'y':40,'pressure':2}],width=1,color='#000000',expected_revision=state['revision'])
   state=ok('command',type='draw_stroke',layer_id=layer,points=[{'x':8,'y':40.5,'pressure':1},{'x':55,'y':40.5,'pressure':0}],width=1,color='#000000',expected_revision=state['revision'])
   tapered=pixels('pressure');assert tapered[(40*64+10)*4+3]>200 and 0<tapered[(40*64+50)*4+3]<50
-  print('Fine pen native draw/pressure/undo/redo/stale-revision/save/reopen/ORA passed')
+  revision=state['revision']
+  assert 'error' in rpc('command',type='update_layer',node_id=layer,name='',opacity=.5,expected_revision=revision)
+  state=ok('command',type='update_layer',node_id=layer,name='Ink details',opacity=.5,expected_revision=revision)
+  node=next(n for n in state['nodes'] if n['id']==layer);assert node['name']=='Ink details' and node['opacity']==.5
+  dimmed=pixels('opacity');assert dimmed[(20*64+30)*4+3]==32
+  state=ok('undo',expected_revision=state['revision']);node=next(n for n in state['nodes'] if n['id']==layer);assert node['name']=='Color fill' and node['opacity']==1
+  assert pixels('properties-undo')==tapered
+  state=ok('command',type='draw_stroke',brush='dry_ink',layer_id=layer,points=[{'x':8,'y':55,'pressure':.4},{'x':55,'y':55,'pressure':1}],width=12,color='#222222',expected_revision=state['revision'])
+  assert state['strokes'][-1]['tool']=='dry-ink';dry=pixels('dry-ink');assert dry!=tapered
+  assert 'error' in rpc('save',expected_revision=state['revision'])
+  state=ok('save_copy',path=str(root/'dry.draw'),expected_revision=state['revision']);ok('close',expected_revision=state['revision']);state=ok('open',path=str(root/'dry.draw'));assert pixels('dry-reopened')==dry
+  ok('export',path=str(root/'dry.ora'),format='ora');inspect_ora(root/'dry.ora',dry,(64,64))
+  print('Native fine/dry brush, pressure, layer properties, undo/redo, version-safe save/reopen and ORA passed')
  finally:
   proc.stdin.close();proc.wait(timeout=10)

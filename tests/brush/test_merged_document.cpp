@@ -47,6 +47,13 @@ int main(){
  while(overLimit->size()<8193){auto e=overLimit->front();e.id=Id::fromNumber(1000+overLimit->size());overLimit->push_back(e);}
  excessive.eventIndex=overLimit;assert(!planMergedDocument(excessive));
  auto small=scene(515,519);
+ {auto dry=small;auto strokes=std::make_shared<EventList>(*small.eventIndex);auto& de=strokes->front();
+ de.engineVersion=12;de.toolId="dry-ink";de.style.width=12;de.style.hardness=1;de.geometry={{20,20,1,{},{},0,0,0}};
+ dry.eventIndex=strokes;auto dp=planMergedDocument(dry);auto bp=planMergedDocument(small);assert(dp&&bp);
+ assert(dp.value().tileScratchBytes==512ull*512*46);
+ assert(bp.value().tileScratchBytes==512ull*512*14);
+ MergedBudget tight;tight.maxBytes=dp.value().estimatedBytes-1;auto rejected=planMergedDocument(dry,tight);assert(!rejected&&rejected.error().messageKey=="merged.memory-limit");}
+
  auto brush=small;auto events=std::make_shared<EventList>(*small.eventIndex);
  auto& e=events->front();e.engineVersion=2;e.toolId="fineliner";e.style.width=7;e.style.hardness=.6;
  e.geometry={{1,1,.3,{}, {},0,0,0},{514,518,1,{}, {},0,0,0}};brush.eventIndex=events;oracle(brush);
