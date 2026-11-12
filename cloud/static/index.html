@@ -74,7 +74,7 @@ footer{color:#98a1ac;font-size:11px;margin-top:25px;line-height:1.7}.errors{colo
 <input id="nativeTolerance" class="field" type="number" min="0" max="255" step="1" value="0" disabled>
 <p id="nativeBucketHint" class="helper">Create a new color layer, or show painting sublayers and select an unlocked visible layer. Fill samples the visible full painting. New-format edits may require Save separate copy.</p>
 <label class="fieldlabel"><input id="nativePen" type="checkbox" disabled> Draw on selected layer</label>
-<label class="fieldlabel" for="nativeBrush">Brush</label><select id="nativeBrush" class="field" disabled><option value="fine">Fine pen · 0.05–8 px</option><option value="dry_ink">Dry ink experiment · 0.25–128 px</option></select>
+<label class="fieldlabel" for="nativeBrush">Brush</label><select id="nativeBrush" class="field" disabled><option value="fine">Fine pen · 0.05–8 px</option><option value="dry_ink">Dry ink experiment · 0.25–128 px</option><option id="nativeMyPaintOption" value="mypaint_ink" disabled>MyPaint ink · experimental black</option></select><label class="fieldlabel" for="nativeMyPaintPressure">MyPaint mouse pressure (pen uses real pressure)</label><input class="field" id="nativeMyPaintPressure" type="number" min="0.05" max="1" step="0.05" value="0.35" disabled><div class="helper" id="nativeMyPaintStatus"></div><div class="helper">MyPaint first version: black preset pressure; width/color controls do not apply. ≤ 1,048,576 pixels, ≤ 2048 per axis. Each completed stroke adds a separate locked Multiply layer; no canvas resizing.</div><button class="secondary" id="nativeCancelBrush" disabled>Cancel MyPaint render</button>
 <label class="fieldlabel" for="nativePenWidth">Brush width · document pixels</label>
 <input id="nativePenWidth" class="field" type="number" min="0.05" max="8" step="0.05" value="0.5" disabled>
 <p class="helper">Draw with a mouse or pressure-sensitive pen. Release to commit one undoable stroke. The temporary blue guide is not the final ink. New brush edits may require Save separate copy.</p>
@@ -185,7 +185,10 @@ function nativePenPoint(rect,width,height,clientX,clientY){
  return x>=0&&y>=0&&x<width&&y<height?{x:Math.round(x*1000)/1000,y:Math.round(y*1000)/1000}:null;
 }
 // PEN_HELPERS_END
-function nativePenReady(){return nativeFillReady()&&nativeState?.capabilities?.includes('draw_stroke');}
+function nativePenReady(){
+ if(by('nativeBrush').value==='mypaint_ink')return !nativeBusy&&nativeState?.capabilities?.includes('mypaint_ink')&&nativePreviewKey===nativeState.id+':'+nativeState.revision+':'+nativeState.stroke_count;
+ return nativeFillReady()&&nativeState?.capabilities?.includes('draw_stroke');
+}
 function nativeFillReady(){
  return !nativeBusy&&nativeFillTarget(nativeState,nativeSelectedNodeId)&&
   nativePreviewKey===nativeState.id+':'+nativeState.revision+':'+nativeState.stroke_count;
@@ -208,7 +211,14 @@ function nativeControls(){
  by('nativeBucket').disabled=!fillReady;
  by('nativeTolerance').disabled=!fillReady;
  const penReady=!!nativePenReady();
- by('nativePen').disabled=!penReady;by('nativePenWidth').disabled=!penReady;by('nativeBrush').disabled=!penReady;
+ by('nativeMyPaintOption').disabled=!nativeState?.capabilities?.includes('mypaint_ink');
+ by('nativeMyPaintStatus').textContent=nativeState?.mypaint_status||'MyPaint requires optional pinned runtime and native layer support.';
+ const mypaint=by('nativeBrush').value==='mypaint_ink';
+ by('nativePen').disabled=!penReady;by('nativePenWidth').disabled=!penReady||mypaint;
+ by('nativeBrush').disabled=nativeBusy||!nativeState;
+ if(mypaint)by('nativeColor').disabled=true;
+ by('nativeMyPaintPressure').disabled=!mypaint||!penReady;
+ by('nativeCancelBrush').disabled=!nativeMyPaintRendering;
  if(!nativeBusy&&!penReady)by('nativePen').checked=false;
  by('nativePreview').style.touchAction=by('nativePen').checked?'none':'auto';
  if(!nativeBusy&&!fillReady)by('nativeBucket').checked=false;
@@ -344,7 +354,9 @@ async function nativeAddFillLayer(){
 by('nativeAddFillLayer').onclick=()=>nativeRun(nativeAddFillLayer);
 by('nativeBucket').onchange=()=>{if(by('nativeBucket').checked)by('nativePen').checked=false;nativeControls()};
 by('nativePen').onchange=()=>{if(by('nativePen').checked)by('nativeBucket').checked=false;nativeControls()};
-by('nativeBrush').onchange=()=>{const dry=by('nativeBrush').value==='dry_ink';by('nativePenWidth').min=dry?'0.25':'0.05';by('nativePenWidth').max=dry?'128':'8';by('nativePenWidth').value=String(Math.max(dry?.25:.05,Math.min(dry?128:8,Number(by('nativePenWidth').value))));};
+let nativeMyPaintRendering=false;
+by('nativeCancelBrush').onclick=async()=>{try{await nativePost('/'+nativeState.id+'/cancel-brush',{});nativeError('Cancellation requested; waiting for worker to stop.')}catch(e){nativeError(e.message)}};
+by('nativeBrush').onchange=()=>{const dry=by('nativeBrush').value==='dry_ink';by('nativePenWidth').min=dry?'0.25':'0.05';by('nativePenWidth').max=dry?'128':'8';by('nativePenWidth').value=String(Math.max(dry?.25:.05,Math.min(dry?128:8,Number(by('nativePenWidth').value))));nativeControls();};
 by('nativePreview').onclick=event=>{
  if(!by('nativeBucket').checked||!nativeFillReady())return;
  const point=nativeFillPoint(by('nativePreview').getBoundingClientRect(),Number(nativeState.width),Number(nativeState.height),event.clientX,event.clientY);
@@ -362,13 +374,14 @@ function nativePenCancel(message){
  if(by('nativePreview').hasPointerCapture(pointer))by('nativePreview').releasePointerCapture(pointer);
  nativeControls();if(message)nativeError(message);
 }
-function nativePenSample(event){
+function nativePenSample(event,forceEndpoint=false){
  const drag=nativePenDrag;if(!drag)return false;
  const point=nativePenPoint(by('nativePreview').getBoundingClientRect(),Number(nativeState.width),Number(nativeState.height),event.clientX,event.clientY);
  if(!point){nativePenCancel('Stroke cancelled because the pointer left the canvas.');return false;}
- point.pressure=event.pointerType==='pen'&&Number.isFinite(event.pressure)?Math.round(Math.max(0,Math.min(1,event.pressure))*1000)/1000:1;
+ if(drag.body.brush==='mypaint_ink'){if(drag.startedAt===undefined)drag.startedAt=event.timeStamp;point.time_ms=Math.max(0,Math.round(event.timeStamp-drag.startedAt));}
+ point.pressure=event.pointerType==='pen'&&Number.isFinite(event.pressure)?Math.round(Math.max(0,Math.min(1,event.pressure))*1000)/1000:(drag.body.brush==='mypaint_ink'?Number(by('nativeMyPaintPressure').value):1);
  const last=drag.points[drag.points.length-1];
- if(last&&Math.hypot(point.x-last.x,point.y-last.y)<0.1&&Math.abs(point.pressure-last.pressure)<0.01)return true;
+ if(last&&!forceEndpoint&&Math.hypot(point.x-last.x,point.y-last.y)<0.1&&Math.abs(point.pressure-last.pressure)<0.01)return true;
  if(drag.points.length>=1024){nativePenCancel('Stroke too long. Draw shorter strokes; no partial stroke was saved.');return false;}
  drag.points.push(point);
  const host=by('nativeCanvasHost').getBoundingClientRect(), ctx=by('nativeStrokeDraft').getContext('2d');
@@ -380,11 +393,12 @@ function nativePenSample(event){
 by('nativePreview').onpointerdown=event=>{
  if(!by('nativePen').checked||!nativePenReady()||event.button!==0)return;
  const brush=by('nativeBrush').value||'fine',dry=brush==='dry_ink',width=Number(by('nativePenWidth').value);
- if(!['fine','dry_ink'].includes(brush)||!Number.isFinite(width)||width<(dry?.25:.05)||width>(dry?128:8)){nativeError('Choose a valid brush width: fine pen 0.05–8 px, dry ink 0.25–128 px.');return;}
+ if(brush==='mypaint_ink'&&event.pointerType!=='pen'){const pressure=Number(by('nativeMyPaintPressure').value);if(!Number.isFinite(pressure)||pressure<.05||pressure>1){nativeError('Choose MyPaint mouse pressure 0.05–1. Default 0.35 avoids maximum-width ink.');return;}}
+ if(!['fine','dry_ink','mypaint_ink'].includes(brush)||(brush!=='mypaint_ink'&&(!Number.isFinite(width)||width<(dry?.25:.05)||width>(dry?128:8)))){nativeError('Choose a valid brush width: fine pen 0.05–8 px, dry ink 0.25–128 px.');return;}
  event.preventDefault();nativeError('');
  const host=by('nativeCanvasHost').getBoundingClientRect(),draft=by('nativeStrokeDraft');
  draft.width=Math.ceil(host.width);draft.height=Math.ceil(host.height);draft.hidden=false;
- nativePenDrag={pointerId:event.pointerId,points:[],body:{expected_revision:nativeState.revision,type:'draw_stroke',layer_id:nativeSelectedNodeId,brush,width,color:by('nativeColor').value}};
+ nativePenDrag={pointerId:event.pointerId,points:[],body:brush==='mypaint_ink'?{expected_revision:nativeState.revision,type:'draw_stroke',brush}:{expected_revision:nativeState.revision,type:'draw_stroke',layer_id:nativeSelectedNodeId,brush,width,color:by('nativeColor').value}};
  nativeBusy=true;nativeControls();by('nativePreview').setPointerCapture(event.pointerId);nativePenSample(event);
 };
 by('nativePreview').onpointermove=event=>{
@@ -394,9 +408,9 @@ by('nativePreview').onpointermove=event=>{
 };
 by('nativePreview').onpointerup=event=>{
  if(!nativePenDrag||event.pointerId!==nativePenDrag.pointerId)return;
- event.preventDefault();if(!nativePenSample(event))return;
+ event.preventDefault();if(!nativePenSample(event,nativePenDrag.body.brush==='mypaint_ink'))return;
  const body={...nativePenDrag.body,points:nativePenDrag.points};nativePenCancel();
- nativeRun(async()=>nativeShow(await nativePost('/'+nativeState.id+'/commands',body)));
+ nativeRun(async()=>{nativeMyPaintRendering=body.brush==='mypaint_ink';nativeControls();try{await nativeShow(await nativePost('/'+nativeState.id+'/commands',body))}finally{nativeMyPaintRendering=false;nativeControls();}});
 };
 by('nativePreview').onpointercancel=()=>nativePenCancel('Stroke cancelled; nothing was saved.');
 by('nativePreview').onlostpointercapture=()=>nativePenCancel('Stroke cancelled; nothing was saved.');

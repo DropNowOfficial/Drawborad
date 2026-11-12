@@ -10,7 +10,9 @@
 #include "brush/FreehandStroke.h"
 #include "brush/DryInkStroke.h"
 #include "core/LineartRaster.h"
+#include "core/Digest.h"
 #include "codecs/ImageReader.h"
+#include "storage/FileIO.h"
 #include <cmath>
 #include <random>
 #include <QColorSpace>
@@ -130,7 +132,7 @@ public:
                 {"geometry_count",number(e.geometry.size())}});
         }
         QJsonArray capabilities{"recolor_stroke","set_properties","bucket_fill","add_fill_layer","draw_stroke","update_layer","undo","redo","save","save_copy","replay","png"};
-        capabilities.append("ora");
+        capabilities.append("ora");capabilities.append("append_brush_layer");
         return {{"document_id",idText(s.documentId)},{"revision",number(s.revision)},
             {"saved_revision",saved?QJsonValue(number(*saved)):QJsonValue(QJsonValue::Null)},
             {"dirty",controller->dirty()},{"nodes",nodes},{"strokes",events},
@@ -139,8 +141,13 @@ public:
             {"capabilities",capabilities}};
     }
     QJsonObject request(const QString& method,const QJsonObject& p) {
-        if(method=="import_lineart") {
-            canReplace(p);
+        if(method=="import_lineart" || method=="append_brush_layer") {
+            const bool append=method=="append_brush_layer";
+            if(append) {
+                revision(p);
+                if(parseId(p.value("expected_document_id"))!=snapshot().documentId)
+                    throw Failure{error(ErrorCode::StaleRevision,"session.document-changed")};
+            } else canReplace(p);
             const auto source=pathValue(p.value("path"));
             ResourceBudget budget;budget.scratchBytes=128*1024*1024;budget.ramReclaimBytes=128*1024*1024;
             const auto info=checked(preflightInput(source,budget,128*1024*1024));
@@ -163,6 +170,28 @@ public:
                 const auto& bytes=imported.info.iccProfile;
                 auto space=QColorSpace::fromIccProfile(QByteArray(reinterpret_cast<const char*>(bytes.data()),qsizetype(bytes.size())));
                 need(space.isValid() && space==QColorSpace(QColorSpace::SRgb),"lineart.non-srgb-profile-not-supported");
+            }
+            if(append) {
+                const auto current=snapshot();
+                need(pixels.width==current.spec.pixelSize.width && pixels.height==current.spec.pixelSize.height,"brush-layer.canvas-mismatch");
+                auto manifestBytes=checked(NativeFileIO{}.read(pathValue(p.value("manifest_path")),1024*1024));
+                QJsonParseError parse;
+                const auto manifest=QJsonDocument::fromJson(QByteArray(reinterpret_cast<const char*>(manifestBytes.data()),qsizetype(manifestBytes.size())),&parse);
+                need(parse.error==QJsonParseError::NoError && manifest.isObject(),"brush-layer.manifest-json");
+                Resource replay;replay.kind=ResourceKind::Reference;replay.id=sha256(manifestBytes);
+                replay.bytes=std::make_shared<const Bytes>(std::move(manifestBytes));
+                auto command=checked(makeLineartRasterCommand(std::move(pixels.bytes),std::move(imported.encodedSource),pixels.width,pixels.height,newEventId()));
+                // Preserve raw -> PNG's single dependency contract. PNG -> manifest
+                // retains exact replay inputs without pretending they are native events.
+                auto& png=std::get<InstallResource>(command.operations.at(0)).resource;
+                png.dependencies={replay.id};
+                auto& layer=std::get<AddNode>(command.operations.at(2)).node;
+                layer.name="MyPaint ink (experimental raster)";
+                command.operations.insert(command.operations.begin(),InstallResource{std::move(replay)});
+                auto candidate=checked(Document::fromSnapshot(current));
+                checked(candidate.apply(command,current.revision));
+                checked(planMergedDocument(candidate.snapshot()));
+                checked(controller->apply(command));return state();
             }
             auto next=std::make_unique<ApplicationController>();
             NewDocumentRequest r;r.dimensions={double(pixels.width),double(pixels.height),Unit::Px,300};

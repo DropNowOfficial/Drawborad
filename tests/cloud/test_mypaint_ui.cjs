@@ -1,0 +1,24 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const html=fs.readFileSync('cloud/static/index.html','utf8'),els=new Map();
+const by=id=>{if(!els.has(id))els.set(id,{checked:false,value:'',disabled:false,style:{},hidden:true,querySelectorAll:()=>[],getBoundingClientRect:()=>({left:0,top:0,width:200,height:100}),getContext:()=>({beginPath(){},moveTo(){},lineTo(){},stroke(){}}),setPointerCapture(){},hasPointerCapture:()=>false,releasePointerCapture(){}});return els.get(id)};
+let calls=[],errors=[],pending=[],fail=false;
+const c=vm.createContext({by,window:{addEventListener(){}},nativeFillTarget:()=>null,nativeScopedStrokes:()=>[],nativeError:m=>errors.push(m),nativeShow:async s=>s,nativePost:async(path,body)=>{if(fail)throw Error('worker unavailable');calls.push(JSON.parse(JSON.stringify(body)));return{}},nativeRun:fn=>{const p=fn().catch(e=>errors.push(e.message));pending.push(p);return p}});
+vm.runInContext("let nativeState={id:'p',revision:'7',width:'100',height:'50',stroke_count:0,nodes:[],strokes:[],capabilities:['mypaint_ink']};let nativeSelectedNodeId=null,nativeBusy=false,nativePenDrag=null,nativeMyPaintRendering=false,nativePreviewKey='p:7:0';const nativeActionIds=[];",c);
+vm.runInContext(html.match(/\/\/ PEN_HELPERS_BEGIN([\s\S]*?)\/\/ PEN_HELPERS_END/)[1],c);
+vm.runInContext(html.slice(html.indexOf('function nativePenReady()'),html.indexOf('function nativeError(')),c);
+vm.runInContext(html.slice(html.indexOf('function nativeControls()'),html.indexOf('async function nativePost(')),c);
+vm.runInContext(html.match(/\/\/ PEN_INPUT_BEGIN([\s\S]*?)\/\/ PEN_INPUT_END/)[1],c);
+by('nativeMyPaintPressure').value='0.35';by('nativeBrush').value='mypaint_ink';by('nativePen').checked=true;by('nativePenWidth').value='NaN';by('nativeColor').value='#ff0000';c.nativeControls();
+assert.equal(c.nativePenReady(),true,'no selected editable layer required');assert.equal(by('nativePenWidth').disabled,true);assert.equal(by('nativeColor').disabled,true);assert.equal(by('nativeMyPaintOption').disabled,false);
+const e=(x,t,extra={})=>({clientX:x,clientY:50,timeStamp:t,pointerId:1,button:0,pointerType:'pen',pressure:.4,preventDefault(){},...extra});
+(async()=>{
+ by('nativePreview').onpointerdown(e(20,100));by('nativePreview').onpointermove(e(80,150,{getCoalescedEvents:()=>[e(40,120),e(80,150)]}));by('nativePreview').onpointerup(e(80.01,151));await Promise.all(pending);
+ assert.equal(calls.length,1);const b=calls[0];assert.deepEqual(Object.keys(b).sort(),['brush','expected_revision','points','type']);assert.equal(b.brush,'mypaint_ink');assert.equal(b.expected_revision,'7');assert.equal(b.points.length,4,'coalesced samples plus tiny-movement up endpoint retained');
+ b.points.forEach(p=>assert.deepEqual(Object.keys(p).sort(),['pressure','time_ms','x','y']));assert.equal(b.points.at(-1).time_ms,51);assert.equal(b.points.at(-1).x,40.005);
+ by('nativePreview').onpointerdown(e(20,200));by('nativePreview').onpointercancel();assert.equal(calls.length,1);
+ by('nativePreview').onpointerdown(e(20,300));by('nativePreview').onpointermove(e(300,350));by('nativePreview').onpointerup(e(80,400));assert.equal(calls.length,1,'outside cancels whole stroke');
+ by('nativePreview').onpointerdown(e(20,450,{pointerType:'mouse',pressure:1}));by('nativePreview').onpointerup(e(80,470,{pointerType:'mouse',pressure:1}));await Promise.all(pending);assert.equal(calls.at(-1).points[0].pressure,.35);
+ fail=true;by('nativePreview').onpointerdown(e(20,500));by('nativePreview').onpointerup(e(80,550));await Promise.all(pending);assert.ok(errors.includes('worker unavailable'));assert.equal(vm.runInContext('nativeMyPaintRendering',c),false);assert.equal(by('nativeCancelBrush').disabled,true);
+ vm.runInContext('nativeState.capabilities=[]',c);c.nativeControls();assert.equal(by('nativeMyPaintOption').disabled,true);assert.equal(c.nativePenReady(),false);
+ console.log('PASS actual MyPaint page pointer code: no selection, disabled width/color, exact payload/time, coalesced/up, cancel/error/capability');
+})().catch(e=>{console.error(e);process.exitCode=1});

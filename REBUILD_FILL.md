@@ -25,7 +25,7 @@ do not call low-resolution reconstruction newly recovered native detail.
   Debian. All four browser/cloud-session jobs failed the same screenshot-equality
   assertion after adding an empty layer. No new browser pass is claimed.
 
-## Current increment
+## Persisted fine-pen increment
 
 - Add opt-in engine-10 fineliner-aa and mouse/pen pointer entry, 0.05–8 document px,
   one stroke per undo action. Old engines 1/2 are replayed unchanged.
@@ -70,6 +70,32 @@ redrawing or recovered high-resolution detail. v3 retains facial expression and
 broad/thin hierarchy but has quantized/grainy shadows and red; semantic boundaries
 are approximate and title lettering remains knockout pixels, not editable text.
 It is rejected as a finished high-quality/print-ready work.
+
+## Current persisted checkpoint and next opt-in integration
+
+`00c203f07dd0740a34370aabccbd9851f9b8e304` persisted the experimental dry-ink
+increment below. `38a3b94009f3ad2af16e69e6d84a56dd34c19bce` changes only the
+JPEG ICC test fixture construction to fixed-size byte-identical data: GCC13
+-O3 had warned on the previous vector growth under -Werror. Warning checks were
+not disabled. Run43203822219 completed all eight Linux build/browser/cloud-session/install
+jobs successfully; Debian native69/69 includes the dry-ink tests. Cloud runtime
+run43203822168 passed. These results do not establish artistic quality.
+
+The user requested immediate optional MyPaint integration. The initial contract
+is a separately identified experimental black-ink brush. Each new stroke becomes
+an independent locked Multiply raster layer with immutable original PNG and
+replay manifest resources; native undo/save-copy/reopen must retain them. This
+is NOT native point-editable vector stroke support. Existing tools/files must
+not be silently reinterpreted. Local use requires an available matching runtime;
+no dependency availability or cross-platform determinism is assumed.
+
+Local independent work (not automatically production features): optional input
+stabilization passed mock-DOM tests but no live-browser hand-drawing acceptance;
+original raw samples are only in-page/downloadable before close, not persistent.
+Real libmypaint ink presets produced same-host repeatable pixels; version/preset
+pins, process limits, cancellation, expected-pixel check and no-overwrite commit
+were exercised in an isolated adapter. All face drawings still fail final quality:
+better brushes do not fix inaccurate proportions or black/white construction.
 
 ## Experimental dry ink and retained visual failures
 

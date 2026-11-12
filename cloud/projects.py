@@ -8,7 +8,8 @@ import selectors
 import shutil
 import subprocess
 import tempfile
-from threading import Lock
+from threading import Lock, Event
+from . import mypaint_worker
 import time
 from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -26,6 +27,7 @@ class Projects:
         self.engine=engine
         self.lock=Lock(); self.proc=None; self.active=None; self.sequence=0
         self.lease=None; self.log=None
+        self.mypaint_gate=Lock();self.mypaint_cancel=None
 
     @contextmanager
     def transaction(self):
@@ -108,7 +110,35 @@ class Projects:
         return self.root/pid/'project.draw'
 
     def state(self, value):
-        return dict(value,id=self.active)
+        value=dict(value,id=self.active)
+        caps=list(value.get('capabilities',[]))
+        ok,reason=mypaint_worker.available(value.get('width'),value.get('height'))
+        if 'append_brush_layer' not in caps:ok=False;reason='Native MyPaint layer support is not available in this engine build.'
+        if ok:caps.append('mypaint_ink')
+        value['capabilities']=caps;value['mypaint_status']=reason
+        return value
+
+    def mypaint_stroke(self,body,state):
+        if 'mypaint_ink' not in state.get('capabilities',[]):fail(422,'unsupported',state.get('mypaint_status','MyPaint unavailable'))
+        if body.get('expected_revision')!=state.get('revision'):fail(409,'stale_revision','Stale MyPaint revision')
+        document_id=state.get('document_id');project_id=self.active
+        if not isinstance(document_id,str) or not document_id:fail(422,'unsupported','Native document identity unavailable')
+        cancel=Event()
+        with self.mypaint_gate:self.mypaint_cancel=cancel
+        try:
+            with tempfile.TemporaryDirectory(dir=self.root) as folder:
+                try:png,manifest=mypaint_worker.render(body,state,folder,cancel)
+                except ValueError as e:fail(422,'invalid_input',str(e))
+                except (RuntimeError,OSError) as e:fail(422,'mypaint_failed',str(e))
+                with self.mypaint_gate:
+                    if cancel.is_set():fail(409,'cancelled','MyPaint cancelled; nothing added')
+                    self.mypaint_cancel=None # Commit starts; cancellation no longer reports success.
+                current=self.rpc('state')
+                if self.active!=project_id or current.get('document_id')!=document_id or current.get('revision')!=body['expected_revision']:fail(409,'stale_revision','Document changed while MyPaint rendered; nothing added')
+                return self.state(self.rpc('append_brush_layer',path=str(png),manifest_path=str(manifest),expected_revision=body['expected_revision'],expected_document_id=document_id))
+        finally:
+            with self.mypaint_gate:
+                if self.mypaint_cancel is cancel:self.mypaint_cancel=None
 
     def save_copy(self, expected_revision):
         pid=str(uuid4())
@@ -220,7 +250,9 @@ def install_projects(app,config,authorized):
     @router.post('/{pid}/commands')
     def command(pid:str,body:dict):
         with projects.transaction():
-            projects.select(pid)
+            current=projects.select(pid)
+            if body.get('type')=='draw_stroke' and body.get('brush')=='mypaint_ink':
+                return projects.mypaint_stroke(body,current)
             fields={'recolor_stroke':{'stroke_id','color'},
                     'set_properties':{'node_id','visible','locked'},
                     'add_fill_layer':set(),
@@ -232,6 +264,14 @@ def install_projects(app,config,authorized):
             allowed={'expected_revision','type'}|fields[kind]
             if set(body)-allowed:fail(422,'invalid_input','Unknown command fields')
             return projects.state(projects.rpc('command',**body))
+
+    @router.post('/{pid}/cancel-brush')
+    def cancel_brush(pid:str):
+        projects.project_path(pid)
+        with projects.mypaint_gate:
+            if projects.active!=pid or projects.mypaint_cancel is None:fail(409,'not_rendering','No cancellable MyPaint render; native commit may already have started')
+            projects.mypaint_cancel.set()
+        return {'cancel_requested':True}
 
     def operation(pid,method,body):
         with projects.transaction():
