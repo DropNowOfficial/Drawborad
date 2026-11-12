@@ -56,5 +56,14 @@ int main() {
     auto next=Document::fromSnapshot(before);assert(next);
     assert(!next.value().apply(Command(Paint{bad,{}}),before.revision));
     assert(next.value().snapshot().sameContent(before));
+    NewDocumentRequest largeReq;largeReq.dimensions={2048,2048,Unit::Px,300};
+    auto largeSpec=validateDocument(largeReq,{});assert(largeSpec);
+    auto large=Document::create(largeSpec.value(),Id::fromNumber(100));assert(large);
+    for (unsigned i=0;i<2;++i) {
+        auto add=addFillLayerCommand(large.value().snapshot(),Id::fromNumber(101+i));
+        assert(add && large.value().apply(add.value(),large.value().snapshot().revision));
+    }
+    auto tooMany=addFillLayerCommand(large.value().snapshot(),Id::fromNumber(103));
+    assert(!tooMany && tooMany.error().code==ErrorCode::BudgetExceeded);
     std::cout<<"bucket event tests passed\n";
 }

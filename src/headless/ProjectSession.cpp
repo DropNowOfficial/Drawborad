@@ -156,10 +156,7 @@ public:
                 auto color=browserColor(s,p.value("color"));color.alpha=found->color.alpha;
                 command.operations.emplace_back(RecolorStroke{id,color});
             } else if(type=="add_fill_layer") {
-                const auto s=snapshot();LayerNode layer;layer.id=newEventId();
-                layer.parent=Document::rootId();layer.name="Color fill";
-                layer.bounds={0,0,s.spec.pixelSize.width,s.spec.pixelSize.height};
-                command.operations.emplace_back(AddNode{layer});
+                command=checked(addFillLayerCommand(snapshot(),newEventId()));
             } else if(type=="bucket_fill") {
                 const auto s=snapshot();
                 const auto x=pixelInteger(p.value("x")),y=pixelInteger(p.value("y"));

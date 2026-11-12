@@ -30,7 +30,10 @@ DocumentSnapshot bucketSample() {
 }
 Bytes read(const fs::path& p) {
     std::ifstream f(p,std::ios::binary);
-    return Bytes(std::istreambuf_iterator<char>(f),{});
+    assert(f.is_open());
+    Bytes bytes(std::istreambuf_iterator<char>(f),{});
+    assert(!f.bad());
+    return bytes;
 }
 int main(int argc,char** argv){
     auto s=sample();
@@ -96,6 +99,19 @@ int main(int argc,char** argv){
     assert(!store.recover(dir/"clean-bucket.draw"));
     binary::Reader header{bucketDelta.value()};
     assert(header.text(32)=="DRAW-DELTA-8");
+    auto newFormat=bucketDelta.value();newFormat[19]='9';
+    auto unsupportedFormat=decodeDelta(newFormat,{});
+    assert(!unsupportedFormat && unsupportedFormat.error().code==ErrorCode::UnsupportedFeature);
+    assert(store.save(dir/"v8-journal.draw",bucket));
+    auto nextBucket=bucket;nextBucket.revision=3;
+    auto nextEvents=std::make_shared<EventList>(*bucket.eventIndex);
+    nextEvents->front().color.channels[0]=1;nextBucket.eventIndex=nextEvents;
+    assert(store.appendJournal(dir/"v8-journal.draw",bucket,nextBucket));
+    auto replay=store.recover(dir/"v8-journal.draw");
+    assert(replay && replay.value().snapshot.sameContent(nextBucket));
+    assert(store.save(dir/"v8-journal.draw",nextBucket));
+    assert(!fs::exists(dir/"v8-journal.draw.journal"));
+    assert(store.recover(dir/"v8-journal.draw"));
     if(argc==2){
         const auto primary=fs::path(argv[1]);
         const auto bytes=frameRecord(bucketDelta.value()).value();

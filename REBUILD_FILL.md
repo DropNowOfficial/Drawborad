@@ -58,3 +58,37 @@ A real headless session test is registered for CI; it has not run locally.
 
 Keep subsequent integration on this isolated branch. Do not overwrite PR #9
 or merge this partial component as if the full repair were complete.
+
+## Resume checkpoint (2026-11-12)
+
+Goal: a genuinely usable, editable, layered native drawing workflow. This bucket
+reconstruction is one component, not a claim of artist-level drawing or recovery
+of the lost prior repair.
+
+Persisted checkpoints on PR #10:
+- f6e4d526: bounded selector + tests, six remote files read back exactly.
+- 88b3ddf2: v8 event/renderer, session bridge, UI/API and format-safe save-copy;
+  branch head confirmed and Session/Store/UI read back exactly.
+
+Verified locally: selector, real native event rendering/undo/redo, storage safety,
+14 original F04 recovery cases, six stubbed-transport API tests, JS click guards.
+Qt bridge and full suite are NOT locally verified. No current real GUI acceptance.
+GitHub native run 43180146828 and cloud run 43180146754 started for 88b3ddf2;
+results were pending when recorded. Never treat started as passed.
+
+Next work, in order:
+- [ ] Read CI for the exact latest code SHA and fix real build/regression failures.
+- [ ] Run the real BucketSession test and inspect actual saved/loaded pixels.
+- [ ] Test actual browser fill, undo, redo, separate-copy save, reload and download.
+- [ ] Confirm file delivered and layers independently editable; document limits.
+- [ ] Revisit fine brush quality, semantic layers and original-art quality separately.
+- [ ] Preserve each runnable increment remotely. Do not overwrite PR #9 or merge.
+
+Current limits: no masked-target fill or gap closing; merged visible reference only;
+original full-document 4 Mi pixel renderer budget is unchanged. Existing released
+old readers cannot be patched by these files, so new-version copies remain separate.
+
+Independent review found that adding a layer could exceed the current preview
+memory budget after mutation. A real native regression reproduced this at 2048²
+with three existing nodes; the new preflight now rejects a fourth node before
+mutation. The test is GREEN. This deliberately does not raise rendering limits.
