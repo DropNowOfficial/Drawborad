@@ -27,6 +27,14 @@ class Element {
   getAttribute(key) { return this.attributes[key]; }
   removeAttribute(key) { delete this.attributes[key]; }
   addEventListener() {}
+  async decode() {
+    assert.equal(this.tagName, 'img');
+    assert.ok(this.src?.startsWith('blob:fixture/'));
+    this.decodeCalls = (this.decodeCalls || 0) + 1;
+    if (this.decodeGate) await this.decodeGate;
+    this.naturalWidth = 512; this.naturalHeight = 512; this.complete = true;
+  }
+  getBoundingClientRect() { return {left:0, top:0, width:512, height:512}; }
   querySelectorAll(selector) {
     const choices = selector.split(',').map(s => s.trim());
     const found = [];
@@ -52,7 +60,7 @@ const context = vm.createContext({
   fetch: async (url, options = {}) => {
     requests.push({url, options});
     if (url.endsWith('/capabilities')) return {ok: false, status: 401, headers: {get: () => 'application/json'}, json: async () => ({detail: 'Bearer token required'})};
-    if (url.includes('/preview.png')) { if (previewGate) await previewGate; return {ok: true, blob: async () => ({})}; }
+    if (url.includes('/preview.png')) { if (previewGate) await previewGate; return {ok: true, headers: {get: key => key === 'X-Drawborad-Revision' ? state.revision : 'image/png'}, blob: async () => ({})}; }
     if (url.endsWith('/commands')) {
       const body = JSON.parse(options.body);
       assert.equal(body.expected_revision, state.revision);
@@ -76,7 +84,7 @@ const run = source => vm.runInContext(source, context);
 const optionIds = () => get('nativeStrokes').children.map(o => o.value);
 const button = id => get('nativeNodes').children.find(r => r.dataset.nodeId === id)?.querySelectorAll('button')[0];
 function fixture(id = 'project-one') {
-  return {id, revision: '1', dirty: false, stroke_count: '4', nodes: [
+  return {id, revision: '1', dirty: false, width: '512', height: '512', stroke_count: '4', nodes: [
     {id: 'root', name: 'Document', kind: 0, parent_id: '0'},
     {id: 'cat', name: 'Cat', kind: 1, parent_id: 'root'},
     {id: 'body', name: 'Body', kind: 3, parent_id: 'cat'},
@@ -130,6 +138,17 @@ function select(id, expected) {
   assert.equal(button('body').getAttribute('aria-pressed'), 'true', 'Selection changed while busy');
   releasePreview(); previewGate = null; await pending;
   for (const control of get('nativeNodes').querySelectorAll('input,button')) assert.equal(control.disabled, false);
+  // A downloaded image is not paint-ready until asynchronous decode completes.
+  let releaseDecode;
+  get('nativePreview').decodeGate = new Promise(resolve => { releaseDecode = resolve; });
+  const decoding = get('nativeRecolor').onclick();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(run('nativePreviewKey'), null);
+  assert.equal(get('nativeNew').disabled, true);
+  releaseDecode(); get('nativePreview').decodeGate = null; await decoding;
+  assert.equal(run('nativePreviewKey'), state.id + ':' + state.revision + ':' + state.stroke_count);
+  assert.equal(get('nativeNew').disabled, false);
+  assert.ok(get('nativePreview').decodeCalls > 0);
   select('cat', ['s1', 's2', 's3']);
   select('face', ['s3']);
   select('eyes', ['s3']);
@@ -173,3 +192,4 @@ function select(id, expected) {
   assert.match(get('nativeLayerSummary').textContent, /4 without strokes/);
   console.log('PASS: layer/object/nested-group selection, stable IDs, scoped controls, empty layers, counts, error recovery, project switch, removed node, close reset.');
 })().catch(error => { console.error(error); process.exitCode = 1; });
+

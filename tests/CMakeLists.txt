@@ -29,5 +29,18 @@ else()
 endif()
 add_test(NAME B08.FillStorage COMMAND test_B08_storage)
 
+add_executable(test_B08_merged brush/test_merged_document.cpp ${PROJECT_SOURCE_DIR}/src/ui/PaintedDocument.cpp)
+target_link_libraries(test_B08_merged PRIVATE drawborad_render)
+if(MSVC)
+  target_compile_options(test_B08_merged PRIVATE /UNDEBUG)
+else()
+  target_compile_options(test_B08_merged PRIVATE -UNDEBUG)
+endif()
+add_test(NAME B08.MergedDocument COMMAND test_B08_merged)
+if(DRAWBORAD_HEADLESS_WORKFLOW)
+  add_test(NAME B08.PrintBucketSession COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/headless/test_print_bucket_session.py $<TARGET_FILE:DrawboradHeadless>)
+  set_tests_properties(B08.PrintBucketSession PROPERTIES TIMEOUT 240)
+endif()
+
 # Register B08 before TestTargets labels and snapshots the complete inventory.
 include(${PROJECT_SOURCE_DIR}/cmake/TestTargets.cmake)

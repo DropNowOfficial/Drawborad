@@ -11,7 +11,7 @@ const tokenA='synthetic-only-token-A', tokenB='synthetic-only-token-B';
 const projectId='synthetic-project';
 const json = (data, status=200) => ({ok:status===200,status,headers:{get:()=> 'application/json'},json:async()=>data});
 const unauthorized = () => json({detail:'Bearer token required'},401);
-const project = {id:projectId,revision:'1',dirty:false,stroke_count:'0',nodes:[],strokes:[]};
+const project = {id:projectId,revision:'1',dirty:false,width:'512',height:'512',stroke_count:'0',nodes:[],strokes:[]};
 class Element {
  constructor(){this.value='';this.files=[];this.children=[];this.dataset={};this.style={};this.attributes={};this.listeners={};this.disabled=false;this.textContent='';this.classList={toggle(){},remove(){}}}
  addEventListener(type,fn){(this.listeners[type] ||= []).push(fn)}
@@ -19,6 +19,13 @@ class Element {
  replaceChildren(...children){this.children=children;this.value=''}
  setAttribute(key,value){this.attributes[key]=value}
  querySelectorAll(){return []}
+ async decode(){
+  assert.equal(this.src,'blob:synthetic-preview');
+  await Promise.resolve();
+  this.naturalWidth=512;this.naturalHeight=512;this.complete=true;
+  this.decodeCalls=(this.decodeCalls||0)+1;
+ }
+ getBoundingClientRect(){return {left:0,top:0,width:512,height:512}}
 }
 function setup(){
  const elements=new Map([...html.matchAll(/\bid="([^"]+)"/g)].map(([,id])=>[id,new Element()]));
@@ -42,7 +49,7 @@ function noCredentialPersistence(h){
 }
 function success(url){
  if(url.endsWith('/capabilities'))return json({model_ready:true,device:'synthetic-device'});
- if(url.endsWith('/preview.png'))return {ok:true,blob:async()=>new Blob(['synthetic preview'])};
+ if(url.endsWith('/preview.png'))return {ok:true,headers:{get:key=>key==='X-Drawborad-Revision'?project.revision:'image/png'},blob:async()=>new Blob(['synthetic preview'])};
  assert.equal(url,'/api/v1/projects/'+projectId);return json(project);
 }
 (async()=>{
@@ -52,6 +59,8 @@ function success(url){
  assert.deepEqual(h.requests.map(r=>r.url),['/api/v1/capabilities','/api/v1/projects/'+projectId,'/api/v1/projects/'+projectId+'/preview.png']);
  for(const r of h.requests)assert.equal(r.opts.headers.Authorization,'Bearer '+tokenA);
  assert.equal(h.get('nativePreview').src,'blob:synthetic-preview');assert.equal(h.get('nativePreview').hidden,false);
+ assert.equal(h.get('nativePreview').decodeCalls,1);
+ assert.equal(h.get('nativeError').textContent,'');
  assert.deepEqual(h.writes,[['drawborad.project',projectId]]);noCredentialPersistence(h);
  // Auth failure still labels the action Applied, never authenticated/successful.
  h=setup();await tick();h.requests.length=0;await h.apply(tokenA);
@@ -91,3 +100,4 @@ function success(url){
  assert.equal(h.get('token').value,tokenB);noCredentialPersistence(h);
  console.log('PASS: saved-project Apply success/auth failure/preview failure, Bearer headers, project-only storage; existing busy/stale-response limits characterized');
 })().catch(error=>{console.error(error);process.exitCode=1});
+

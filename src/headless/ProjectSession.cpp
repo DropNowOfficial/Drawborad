@@ -1,6 +1,7 @@
 #include "ProjectSession.h"
 #include "../../apps/studio/ApplicationController.h"
 #include "ui/PaintedDocument.h"
+#include "ui/MergedDocument.h"
 #include "codecs/RasterWriters.h"
 #include "color/ColorService.h"
 #include "brush/BucketFill.h"
@@ -136,9 +137,10 @@ public:
                 saved=next->snapshot()->revision;
             } else {
                 auto w=integer(p.value("width")),h=integer(p.value("height"));
-                need(w>0 && h>0 && w<=4096 && h<=4096 && w*h<=4*1024*1024,"session.size");
+                need(w>0 && h>0 && w<=4096 && h<=4096,"session.size");
                 NewDocumentRequest r;r.dimensions={double(w),double(h),Unit::Px,300};
-                checked(next->newDocument(r));path.clear();saved.reset();
+                checked(next->newDocument(r));
+                checked(planMergedDocument(*next->snapshot()));path.clear();saved.reset();
             }
             controller=std::move(next);return state();
         }
@@ -156,7 +158,7 @@ public:
                 auto color=browserColor(s,p.value("color"));color.alpha=found->color.alpha;
                 command.operations.emplace_back(RecolorStroke{id,color});
             } else if(type=="add_fill_layer") {
-                command=checked(addFillLayerCommand(snapshot(),newEventId()));
+                command=checked(addFillLayerCommand(snapshot(),newEventId(),true));
             } else if(type=="bucket_fill") {
                 const auto s=snapshot();
                 const auto x=pixelInteger(p.value("x")),y=pixelInteger(p.value("y"));
@@ -164,7 +166,7 @@ public:
                 need(tolerance<=255,"session.tolerance");
                 const auto layer=parseId(p.value("layer_id"));
                 const auto color=browserColor(s,p.value("color"));
-                auto frame=checked(renderPaintedDocument(s,{s.revision,s.eventIndex->size()}));
+                auto frame=checked(renderMergedDocument(s,{s.revision,s.eventIndex->size()}));
                 command=checked(bucketFillCommand(s,layer,newEventId(),frame.merged,
                                                   x,y,std::uint8_t(tolerance),color));
             } else if(type=="set_properties") {
@@ -176,6 +178,11 @@ public:
                 }
                 need(any,"session.empty-properties");command.operations.emplace_back(properties);
             } else need(false,"session.command");
+            if(type=="bucket_fill" || type=="add_fill_layer") {
+                const auto s=snapshot();auto candidate=checked(Document::fromSnapshot(s));
+                checked(candidate.apply(command,s.revision));
+                checked(planMergedDocument(candidate.snapshot()));
+            }
             checked(controller->apply(command));return state();
         }
         if(method=="undo" || method=="redo") {
@@ -197,15 +204,22 @@ public:
         if(method=="export") {
             auto s=snapshot();auto limit=p.contains("event_limit")?integer(p.value("event_limit")):s.eventIndex->size();
             need(limit<=s.eventIndex->size(),"session.event-limit");
-            auto frame=checked(renderPaintedDocument(s,{s.revision,limit}));
             auto format=p.value("format").toString();need(format=="png" || format=="ora","session.format");
             ExportRequest r;r.path=pathValue(p.value("path"));r.size=s.spec.pixelSize;
             r.format=format=="ora"?ExportFormat::Ora:ExportFormat::Png;
             RasterEncodingOptions options;options.ppi=s.spec.ppi;
             if(!s.spec.colorSpec.profileId.empty()) options.iccProfile=*s.resources->at(s.spec.colorSpec.profileId).bytes;
-            auto plan=checked(preflightExport(s,r));checked(ExportService{}.write(plan,frame.merged,frame.layers,options));
+            auto plan=checked(preflightExport(s,r));RenderStatistics statistics;
+            if(format=="png") {
+                auto frame=checked(renderMergedDocument(s,{s.revision,limit}));
+                checked(ExportService{}.write(plan,frame.merged,{},options));statistics=frame.statistics;
+            } else {
+                // Layered ORA retains the old full-document allocation budget.
+                auto frame=checked(renderPaintedDocument(s,{s.revision,limit}));
+                checked(ExportService{}.write(plan,frame.merged,frame.layers,options));statistics=frame.statistics;
+            }
             return {{"revision",number(s.revision)},{"event_limit",number(limit)},
-                {"source_asset_reads",number(frame.statistics.sourceAssetReads)}};
+                {"source_asset_reads",number(statistics.sourceAssetReads)}};
         }
         need(false,"session.method");return {};
     }

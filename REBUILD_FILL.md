@@ -98,3 +98,43 @@ Independent review found that adding a layer could exceed the current preview
 memory budget after mutation. A real native regression reproduced this at 2048²
 with three existing nodes; the new preflight now rejects a fourth node before
 mutation. The test is GREEN. This deliberately does not raise rendering limits.
+
+## Merged-only print-size increment (pending new CI)
+
+At 85f3383d, run 43183043870 passed native build/51 CTests/46 Python
+checks/evidence collection on Ubuntu and Debian, plus both runtime-install jobs.
+The same SHA's downloaded Debian engine passed BucketSession again in this cloud
+workspace after artifact SHA256 verification. Dedicated browser jobs failed before their Chromium exercise because older image
+mocks lacked HTMLImage.decode. The separate cloud-session jobs DID execute Chromium
+and reached bucket fill, then returned 422: the real fixture has 4418 strokes and
+the new bucket cap was 4096. This increment repairs image mocks, asserts the decode
+gate, and raises the tested event cap to 8192 while retaining geometry/work limits.
+The existing 4418-event .draw passes the new merged renderer locally. Small-canvas
+coverage accounting now uses actual clipped tile dimensions, not 512 squared for
+every tile. Neither work nor allocation budgets were increased. Four Node suites
+pass locally. No successful complete Chromium fill acceptance is claimed yet.
+
+The next increment introduces a separate merged-only 512-tile renderer for PNG and
+bucket references. It does not retain every full-resolution layer. Local strict
+and ASan/UBSan tests cover old-renderer exact pixels, paper/opacity/hidden layers,
+soft layer and binary ancestor masks, tile edges, cancellation, stale revisions,
+null pointers, and checked memory/index/geometry/work budgets. An independent
+review reproduced null-pointer crashes and missing ancestor-mask scan work before
+both were fixed. A 1725 x 2625 native pixel test passes; this is an engineering
+test target, not confirmation of the assignment's trim/bleed specification.
+
+A local unoptimized full test suite measured 27,828 KiB child-process peak RSS and
+1.803 seconds before the additional review regressions. This is one suite sample,
+not a universal memory/performance guarantee. The 64 MiB renderer allocation model
+excludes existing snapshot resources, later bucket RGBA/visited buffers and encoded
+output; work/index limits are checked independently. Session create remains capped
+at 4096 per axis and now uses the renderer preflight rather than a blanket 4 Mi px
+area limit. Bucket/new-layer candidate state is preflighted before real mutation.
+Legacy callers retain the old add-layer allocation rule.
+
+New real-engine PrintBucketSession covers 1725 x 2625 PNG pixels and 300 DPI,
+fill/undo/redo/save-copy/reopen, and explicitly expects ORA at that size to remain
+unsupported. It was run against 85f3383d and failed at session.size (RED), as expected.
+The new bridge is not locally built; await new CI for GREEN. ORA/PSD streaming,
+external-editor layer validation, and art quality remain unfinished. Do not infer
+large layered export support from a large PNG or from the native .draw event file.

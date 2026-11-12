@@ -1,13 +1,14 @@
 #include "BucketFill.h"
 #include "view/LayerTree.h"
+#include "ui/MergedDocument.h"
 #include <algorithm>
 namespace drawborad {
-Result<Command> addFillLayerCommand(const DocumentSnapshot& s, NodeId id) {
+Result<Command> addFillLayerCommand(const DocumentSnapshot& s, NodeId id, bool mergedPreview) {
     auto valid=validateSnapshot(s);if (!valid) return valid.error();
     const auto size=s.spec.pixelSize;
     // Match the current full-document preview budget before changing state.
-    if(size.width>4096 || size.height>4096 || size.width*size.height>4*1024*1024 ||
-       size.width*size.height*4*((s.nodes->size()+1)*2+2)>128*1024*1024)
+    if(!mergedPreview && (size.width>4096 || size.height>4096 || size.width*size.height>4*1024*1024 ||
+       size.width*size.height*4*((s.nodes->size()+1)*2+2)>128*1024*1024))
         return error(ErrorCode::BudgetExceeded,"bucket.new-layer-layout-limit");
     if(id.empty() || s.nodes->contains(id))
         return error(ErrorCode::InvalidInput,"bucket.layer-id");
@@ -15,7 +16,13 @@ Result<Command> addFillLayerCommand(const DocumentSnapshot& s, NodeId id) {
         return error(ErrorCode::Locked,"bucket.root-locked");
     LayerNode layer;layer.id=id;layer.parent=Document::rootId();layer.name="Color fill";
     layer.bounds={0,0,s.spec.pixelSize.width,s.spec.pixelSize.height};
-    return Command(AddNode{layer});
+    Command command(AddNode{layer});
+    if(mergedPreview){
+        auto candidate=Document::fromSnapshot(s);if(!candidate)return candidate.error();
+        auto applied=candidate.value().apply(command,s.revision);if(!applied)return applied.error();
+        auto plan=planMergedDocument(candidate.value().snapshot());if(!plan)return plan.error();
+    }
+    return command;
 }
 Result<Command> bucketFillCommand(const DocumentSnapshot& s, NodeId layer, Id event,
     const TileData& reference, std::uint32_t x, std::uint32_t y,
@@ -38,7 +45,7 @@ Result<Command> bucketFillCommand(const DocumentSnapshot& s, NodeId layer, Id ev
         reference.bytes.size()!=reference.rowStride*reference.height ||
         reference.profileId!=s.spec.colorSpec.profileId)
         return error(ErrorCode::InvalidInput,"bucket.reference");
-    if (reference.bytes.size()/4>FillBudget{}.maxPixels || s.eventIndex->size()>=4096)
+    if (reference.bytes.size()/4>FillBudget{}.maxPixels || s.eventIndex->size()>=8192)
         return error(ErrorCode::BudgetExceeded,"bucket.document-budget");
     std::uint64_t points=0;
     std::uint64_t tick=0;

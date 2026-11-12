@@ -40,7 +40,7 @@ def click_post(page, control, suffix, status=200):
     with page.expect_response(endpoint("POST", suffix)) as request:
         control.click()
     response = request.value
-    assert response.status == status, f"{suffix} returned {response.status}"
+    assert response.status == status, f"{suffix} returned {response.status}: {response.text()}"
     expect(page.locator("#nativeNew")).to_be_enabled(timeout=90000)
     return response.json()
 

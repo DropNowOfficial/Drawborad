@@ -153,6 +153,7 @@ add_library(drawborad_render STATIC
   src/render/ReferenceRenderer.cpp src/render/CoverageRasterizer.cpp src/render/PixelBlend.cpp
   src/render/TileCache.cpp src/render/DisplayCache.cpp src/render/CacheEvictor.cpp
   src/brush/BrushEngine.cpp src/brush/SampleResampler.cpp src/brush/FloodFill.cpp src/brush/BucketFill.cpp src/platform/TabletInput.cpp
+  src/ui/MergedDocument.cpp
   src/history/EventIndex.cpp src/history/ReplayEngine.cpp
   src/view/Viewport.cpp src/view/HitTest.cpp src/platform/DeviceRecovery.cpp)
 target_include_directories(drawborad_render PUBLIC ${PROJECT_SOURCE_DIR}/src)
