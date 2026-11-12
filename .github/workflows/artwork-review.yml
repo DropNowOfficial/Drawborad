@@ -1,0 +1,34 @@
+name: Artwork region review
+on:
+  pull_request:
+    paths:
+      - 'tools/qa/artwork_review.py'
+      - 'tools/qa/tests/**'
+      - 'tools/qa/ARTWORK_REVIEW.md'
+      - '.github/workflows/artwork-review.yml'
+permissions:
+  contents: read
+jobs:
+  region-review:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install isolated review dependencies
+        run: |
+          python3 -m venv out/review-venv
+          out/review-venv/bin/pip install 'numpy>=1.26,<3' 'pillow>=10.2,<13' pytest 'playwright>=1.50,<2'
+          out/review-venv/bin/python -m playwright install --with-deps chromium
+      - name: Compare pixels and inspect actual browser behavior
+        env:
+          PYTHONPATH: .
+        run: |
+          out/review-venv/bin/python -m pytest tools/qa/tests/test_artwork_review.py -q
+          out/review-venv/bin/python tools/qa/tests/browser_artwork_review.py out/artwork-review
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: artwork-review-${{ github.sha }}
+          path: out/artwork-review/
