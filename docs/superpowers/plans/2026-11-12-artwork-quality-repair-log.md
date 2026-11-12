@@ -132,3 +132,65 @@ The immediate use case includes a cover and six comic pages. Native high-resolut
 - The page-six original-edge clipping/parity experiment used 730,161 original points and 90,735,409 work units and matched its original-edge oracle within budget. It is still not a production `.draw` artifact and remains visually unacceptable in the face, clothing, and photographs.
 - The strengthened 66-nonempty-layer fixture was imported and displayed on the actual cloud desktop. The UI reported zero layers without strokes. This validates fixture handling, not artwork quality.
 - Production-candidate v4 codec, mask, and regression work remains isolated and ongoing. No production-format acceptance or code publication is claimed.
+
+## Follow-up: 2026-11-12 04:10 UTC
+
+This section records later isolated-candidate evidence. It supersedes earlier "ongoing" statements only for the specific checks below, not the overall artistic acceptance status.
+
+### Native v4 candidate and review
+
+- Explicit clipping and original open-run metadata have been connected to codec, document/bounds handling, original-edge chunk parity, and reconstruction mask validation in isolation.
+- Reported candidate checks: core 7/7; E01 20/20; prior regression selection 17/17. Cases include holes, endpoints outside the clip that need no review, and tiny/sub-ULP mask violations inside the clip.
+- Actual v4 save/reopen preserved content. A stable v3 reader rejected the actual v4 file with `project.decode`, rather than pretending to load it.
+- Read-only independent review had not identified a confirmed defect at the reported checkpoint; this is not an independent test rerun. A byte-level corrupt-`runStarts` decoder rejection case was added following review.
+- Original limits remain in force. These are isolated candidate results, not merged implementation or a release.
+
+### Failed fine-line reconstruction experiment
+
+- A bounded single-straight-line coverage fit passed nine synthetic checks, including subpixel position/width recovery and rejection of crossings, texture, and unidentifiable cases.
+- A real 12 × 12 neck-line crop lost natural variation: RMSE 9.94 and maximum error 53.66. It was explicitly rejected, not applied, and not expanded to the face.
+- A lower-degree curved, variable-width model was investigated separately; no accepted reconstruction result is claimed here.
+- Earlier corrected area sampling only slightly reduced dark borders: eyeglasses, fingers, hatching, and lip contours remained too soft.
+
+### Co-development and PR #9 compatibility
+
+- The separate Business-workspace PR #9 snapshot was inspected at head prefix `1a960390`. Its six new QA/documentation/CI paths had no path overlap with the stable repair's 39 paths or the then-current v4 candidate's 11 paths.
+- No PR #9 source files were overwritten and no remote code was merged. Zero path overlap is not a guarantee of semantic compatibility.
+- Its artwork-review tool was used on the native v4 page-six PNG and five important regions. The report was opened in real Chromium and exercised at 100%, 200%, then 100%.
+- Diagnostic mean errors included whole image 7.526, father's face 8.630, and sister's hand 9.691. The face and whole-page rendering still appeared soft; these numbers did not establish quality acceptance.
+- Local pytest was unavailable and was not installed. The official 13 tests were not claimed as locally rerun; the PR's remote CI results remain separate evidence.
+
+### Genuine page-six editing, then conservative object separation
+
+- Actual cloud GUI imported page six as v4: 1,041 events and 17 layers. Selecting event 701, recoloring green, undoing, and saving revision 3 worked visibly.
+- That test also exposed a semantic limitation: one tonal event affected both the sister and the boy. Tonal strips are not person-specific layers.
+- A conservative sister-interior mask excludes uncertain sofa/boundary regions. The candidate split prunes strips with no mask intersection, avoiding unconditional duplication beyond the one-million-vertex budget. The original project is retained; arbitrary expansion of the pruned masks is disallowed to prevent holes.
+- The first split candidate had 2 objects, 34 layers, 1,277 events, and 944,151 vertices. Composite pixels matched the unsplit v4 result exactly; save/reopen matched.
+- Recoloring the foreground changed 6,118 pixels, with zero changes outside its mask; undo was exact.
+- Actual Chromium selection showed 236 filtered sister-interior events. Hiding it visibly removed only the reliable interior while leaving uncertain edges and other figures/panels; undo restored the image.
+- Initial selected events 0/150/235 changed revision without an obvious visible difference, illustrating occlusion/no-effective-mask-intersection usability problems. This was not reported as successful visible editing.
+- Filtered index 190 was subsequently verified headlessly to change 39 pixels and visibly changed a small green region at the girl's left hair tip in Chromium. Undo and Save restored the original. This proves a particular effective edit, not usability of every listed event.
+
+### Source-grid sampling v5 and tonal candidates
+
+- A source-center sampling experiment restored the source's eyeglass, finger, and lip contours more clearly than the old area-averaged rendering. Explicit source-grid sampling was isolated as a v5 candidate; ordinary v4 antialiasing behavior was kept separate.
+- Uniform 16-tone source-grid output matched direct quantization, but retained quantization highlights. It remains derived from a 512 × 512 source, not new high-resolution detail.
+- A Lloyd 16-tone native single-object candidate matched the independent diagnostic output at 829,529 vertices. Two-object variants required 1,038,941 vertices (1,037,818 after conservative coverage pruning) and were actually rejected. The one-million limit was not increased.
+- A Lloyd 15-tone candidate fits: one object has 775,132 vertices, 998 events, and 16 layers; the two-object version has 971,403 vertices, 1,222 events, and 32 layers, including 224 foreground events.
+- The 15-tone candidate saves/reopens exactly; its composite matches the single-object render and independent PNG. Foreground recoloring changes 6,118 pixels with zero mask leakage; undo is exact.
+- The real cloud GUI imported and displayed the two-object 15-tone candidate with the stated counts. Visual review found it clearer than the old antialiased version and without the large highlights seen in uniform quantization. This is a source-fidelity candidate, not final artwork acceptance.
+
+### Object/layer batch recoloring
+
+- A candidate node-recolor operation changes all strokes under the selected object/layer in one transaction, preserving alpha and masks. It enforces a 4,096-event operation guard and atomic rejection when a child layer is locked.
+- Native session and JavaScript selection tests passed. Actual legacy v1/v2 projects with 4,097 events were rejected without state/pixel mutation; partial-lock rejection also left state and pixels unchanged. An independent unlocked object remained recolorable and undoable.
+- Real cloud GUI on the uniform v5, two-object, 34-layer candidate: one-click sister-interior recolor was visibly green while other figures and boundaries stayed unchanged; Undo, Save revision 4, actual native-file download, close, and reopen restored the original.
+- This operation applies a flat chosen color: **it replaces shading and is not shading-preserving repainting**.
+
+### Remaining acceptance gaps
+
+- Accurate complete-person semantic layers, including uncertain boundaries and hidden content, are not complete.
+- Source-grid fidelity improvements do not create new authentic high-resolution detail or human-artist-equivalent work.
+- All six pages, final cover, print-ready acceptance, full standalone desktop acceptance, and an integrated all-green test run remain unestablished.
+- Source/reference quality, semantic-mask approval, performance, compatibility, and artistic quality still require separate gates.
+- Only this log is published by this update. No candidate implementation, artwork source, private path, or credentials are uploaded; no merge or release is performed.
