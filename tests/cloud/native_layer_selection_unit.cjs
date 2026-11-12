@@ -189,7 +189,12 @@ function select(id, expected) {
   await show({...fixture('empty-project'), strokes: [], stroke_count: '0'});
   assert.equal(get('nativeRecolor').disabled, true);
   assert.equal(get('nativeReplay').disabled, true);
-  assert.match(get('nativeLayerSummary').textContent, /4 without strokes/);
+  assert.match(get('nativeLayerSummary').textContent, /0 raster · 4 empty native layers/);
+  const rasterFixture={...fixture('raster-project'),strokes:[],stroke_count:'0'};
+  rasterFixture.nodes.find(n=>n.id==='body').source_kind=0;
+  await show(rasterFixture);
+  assert.match(get('nativeLayerSummary').textContent,/1 raster · 3 empty native layers/);
+  assert.match(get('nativeStatus').textContent,/0 native events · 1 raster layers/);
   console.log('PASS: layer/object/nested-group selection, stable IDs, scoped controls, empty layers, counts, error recovery, project switch, removed node, close reset.');
 })().catch(error => { console.error(error); process.exitCode = 1; });
 

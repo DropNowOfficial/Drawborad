@@ -93,11 +93,12 @@ def verify_layer_selection(page, state):
         assert select.locator("option").evaluate_all("options => options.map(o => o.value)") == expected
         expect(page.locator("#nativeStatus")).to_have_text(expected_status)
         if not expected:
-            empty += node["kind"] == 3
+            empty += node["kind"] == 3 and node.get("source_kind") != 0
             expect(select).to_be_disabled()
             expect(page.locator("#nativeRecolor")).to_be_disabled()
-    expect(page.locator("#nativeLayerSummary")).to_contain_text(str(len(layers)) + " paint layers")
-    expect(page.locator("#nativeLayerSummary")).to_contain_text(str(empty) + " without strokes")
+    expect(page.locator("#nativeLayerSummary")).to_contain_text(str(len(layers)) + " layers")
+    expect(page.locator("#nativeLayerSummary")).to_contain_text(str(empty) + " empty native layers")
+    expect(page.locator("#nativeLayerSummary")).to_contain_text(str(sum(n.get("source_kind")==0 for n in layers)) + " raster")
     page.locator("#nativeShowSublayers").uncheck()
     page.locator("#nativeAllStrokes").click()
     assert select.locator("option").evaluate_all("options => options.map(o => o.value)") == [e["id"] for e in state["strokes"]]
