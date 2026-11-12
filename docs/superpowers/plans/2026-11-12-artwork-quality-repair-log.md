@@ -299,3 +299,47 @@ This entry updates the bucket workflow and compatibility evidence. Candidate cod
 - Support for currently rejected masked v7 cases, if introduced, would need its own design and tests.
 - Artist-quality original creation, accurate complete semantic layers, and finished high-resolution comic delivery remain unachieved.
 - Only documentation is uploaded in this update; no implementation, reference images, or candidate artwork is published.
+
+## Follow-up: 2026-11-12 07:37 UTC
+
+### Updated native regression result
+
+- All targets were rebuilt before the latest full CTest run: **58 passed / 2 failed out of 60**, in 16.68 seconds.
+- C03/C06 remain codec-capability failures involving JPEG/WebP/TIFF; no new codec dependencies were installed. The repository suite is not all green.
+- New fine-line, bucket, streaming/offset ORA checks passed. V07 expanded to 23 cases during this work.
+- Three actual prior samples rendered identical RGBA pixels before/after the event-ROI optimization. This is bounded compatibility evidence, not a claim covering every legacy file.
+
+### v7/v8 GUI integration and export-budget follow-through
+
+- The real GUI subsequently completed fine-v7 ink plus bucket-v8 fill, saving a new copy containing 104 v7 events and one v8 event. This supersedes the earlier “not yet GUI-tested” status for that specific combined workflow.
+- The first combined ORA exceeded the existing work budget. It was rejected, not silently exported after raising limits.
+- Conservative event-bounds empty-tile skipping reduced work; an additional source-type guard prevents skipping imported layers incorrectly.
+- Recorded work for native ORA comparisons: visible 125,058,006; hidden 124,271,574; zero-event limit 25,390,984; a cross-512 stroke case 125,582,345. All stayed below 134,217,728. Independent recomposition matched PNG and retained hidden-layer pixels.
+- v7-specific standard-offset cropped layer PNGs subsequently reduced ORA work further without changing the old export path or increasing the cap. Independent checks apply layer x/y offsets and stack order, rather than assuming full-canvas layers.
+- An existing GIMP 3.0.4 installation opened the four-layer 2048 ORA and correctly hid/restored a shading layer. No new application was installed.
+
+### Licensed semantic-layer demonstration progression
+
+- This remains a Niabot-derived, attributed CC BY-SA 3.0 software demonstration, not an original user artwork or complete reproduction of the source.
+- The author-path Eyes object was actually hidden, restored, and recolored in the GUI. Native recoloring changed 16,246 pixels with zero changes outside the eye region; full visibility matched the prior single-layer render.
+- Four-layer shading (108 events), five-layer pupil/highlight (116 events), and subsequent eye-texture variants were tested incrementally. Local visual review rejected incomplete eye variants before accepting the more complete eye region; a passing local crop is not whole-artwork approval.
+- A six-layer neck sample used 308 events, including 72 effective author hatching paths and one gray shadow. Its concave clipping used strict geometric intersection with a stated 0.005-pixel curve approximation. Hide/recolor/undo/save/reopen and independent ORA recomposition matched; local visual review passed that region.
+- The frozen latest demonstration has **seven layers and 568 events**. PNG work is 43,736,635; ORA work is 61,103,677. Limits remain unchanged.
+
+### Seven-layer real GUI acceptance and precise delivery boundary
+
+- Real GUI sequence completed: import the seven-layer project, hide the U-collar layer, undo, save at revision 3, refresh/recover, and request ORA.
+- The interface displayed “File ready”, a current-version source badge, and a filename containing revision 3 / 568 strokes.
+- Export cards now retain their originating revision/stroke count and filename. After switching projects, an earlier export was visibly marked as an earlier project/version rather than silently renamed to the current project.
+- An API-retrieved ORA corresponding to the GUI-saved seven-layer project was independently saved and inspected: 727,697 bytes, seven layers, and merged pixels exactly matching PNG.
+- That artifact's SHA-256 is `eb5efb3b55c4e621ab6ab5dcedca04258ef7d28fca569ad7641887e1a9df7d7b`.
+- **Browser download-to-disk is still unconfirmed.** A successful response, visible save link, and independently saved API artifact are not proof that the browser saved a file to its Downloads directory.
+- Browser developer tools were unavailable under organization policy; this was not bypassed and does not establish the cause of the download issue.
+
+### Original creation and remaining quality goal
+
+- The licensed seven-layer demonstration is frozen as a software-capability benchmark.
+- Work has moved to a separate, explicitly fallible original single-pose study without reusing the author's paths or using an image-generation model.
+- At this snapshot that original study is planned/in production, with **no completed or accepted sample**.
+- Artist-level original creation, full semantic reconstruction, finished cover/six-page delivery, and dependable browser file delivery remain unfinished. Test passes and licensed-art editing do not establish those goals.
+- This update publishes only the development log. No code, source art, or candidate artwork is uploaded or merged.
