@@ -199,8 +199,8 @@ def exercise_lineart(page, output, url, token):
     lineart = lineart[0]
     assert lineart["locked"] and lineart["visible"] and lineart["blend"] == 1
     assert lineart["source_kind"] == 0
-    assert "ora" not in initial["capabilities"]
-    expect(page.locator("#nativeOra")).to_be_disabled()
+    assert "ora" in initial["capabilities"]
+    expect(page.locator("#nativeOra")).to_be_enabled()
 
     def panel(name):
         page.locator("#nativeEditor").scroll_into_view_if_needed()
@@ -272,6 +272,15 @@ def exercise_lineart(page, output, url, token):
     png = download(page, "Export painting PNG", output, "painting.png")
     with Image.open(png) as saved_png:
         assert saved_png.convert("RGBA").tobytes() == expected.tobytes()
+    ora = download(page, "Export painted layers ORA", output, "painting.ora")
+    with zipfile.ZipFile(ora) as archive:
+        assert archive.testzip() is None
+        layers = ET.fromstring(archive.read("stack.xml")).findall(".//layer")
+        ink = next(n for n in layers if n.get("name") == "Original lineart")
+        fill = next(n for n in layers if n.get("name") == "Color fill")
+        assert ink.get("composite-op") == "svg:multiply" and layers.index(ink) < layers.index(fill)
+        assert Image.open(io.BytesIO(archive.read(ink.get("src")))).convert("RGBA").tobytes() == original.tobytes()
+        assert Image.open(io.BytesIO(archive.read("mergedimage.png"))).convert("RGBA").tobytes() == expected.tobytes()
     click_post(page, page.locator("#nativeClose"), "/close")
     page.locator("#nativeFile").set_input_files(draw)
     reopened = click_post(page, page.locator("#nativeImport"), "/import", 201)
@@ -286,9 +295,9 @@ def exercise_lineart(page, output, url, token):
         "left_region_cyan_only": True, "right_exterior_black_grey_unchanged": True,
         "undo_redo_pixels_equal": True, "download_reopen_pixels_equal": True,
         "color_input": "DOM input/change; native OS picker not tested",
-        "ora": "unsupported for lineart in this increment; not exported or verified",
+        "ora": "downloaded independent ink/fill layers, Multiply order and merged pixels verified",
         "project": copied["id"], "saved_revision": copied["revision"],
-        "exports": [draw.name, png.name],
+        "exports": [draw.name, png.name, ora.name],
         "screenshots": [name + "-panel.png" for name in ("before", "after", "undo", "reopened")]}
     (output / "lineart-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
     return receipt

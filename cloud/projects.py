@@ -155,7 +155,8 @@ class Projects:
             if event_limit is not None:params['event_limit']=event_limit
             result=self.rpc('export',**params)
             return Response(path.read_bytes(),media_type='image/png' if format=='png' else 'image/openraster',
-                            headers={'Cache-Control':'no-store','X-Drawborad-Revision':result['revision'],'X-Drawborad-Source-Asset-Reads':result['source_asset_reads']})
+                            headers={'Cache-Control':'no-store','X-Drawborad-Revision':result['revision'],'X-Drawborad-Source-Asset-Reads':result['source_asset_reads'],
+                                     'X-Drawborad-Export-Warnings':json.dumps(result.get('warnings',[]),ensure_ascii=True)})
 
 
 def install_projects(app,config,authorized):

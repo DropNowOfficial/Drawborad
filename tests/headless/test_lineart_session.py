@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 from PIL import Image, ImageDraw
+from ora_evidence import inspect_ora
 
 
 def fixture(path):
@@ -69,7 +70,7 @@ def main(binary, actual=None):
                 expected = Image.alpha_composite(Image.new('RGBA', dimensions, 'white'), rgba).tobytes()
             state = ok('import_lineart', path=str(path.resolve()))
             assert (int(state['width']), int(state['height'])) == dimensions
-            assert 'ora' not in state['capabilities']
+            assert 'ora' in state['capabilities']
             baseline = pixels(label+'-baseline')
             assert baseline == expected, 'Imported pixels must exactly match original over white'
             before_nodes = {n['id'] for n in state['nodes']}
@@ -107,12 +108,15 @@ def main(binary, actual=None):
             reopened = ok('open', path=str(copy))
             assert reopened['strokes'] == saved['strokes']
             assert pixels(label+'-reopened') == after
+            ora = root / (label+'.ora')
+            ok('export', path=str(ora), format='ora')
+            ora_evidence = inspect_ora(ora, after, dimensions, lineart_rgba=rgba.tobytes(), require_fill=do_fill)
             assert path.read_bytes() == original_bytes
             ok('close', expected_revision=reopened['revision'])
             return {'case': label, 'size': dimensions, 'filled': do_fill,
                     'baseline_sha256': hashlib.sha256(baseline).hexdigest(),
                     'saved_reopened_sha256': hashlib.sha256(after).hexdigest(),
-                    'original_png_unchanged': True}
+                    'original_png_unchanged': True, 'ora': ora_evidence}
 
         dimensions = None
         try:

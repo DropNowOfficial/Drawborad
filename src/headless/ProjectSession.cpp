@@ -2,6 +2,8 @@
 #include "../../apps/studio/ApplicationController.h"
 #include "ui/PaintedDocument.h"
 #include "ui/MergedDocument.h"
+#include "ui/LayerStream.h"
+#include "codecs/OraStream.h"
 #include "codecs/RasterWriters.h"
 #include "color/ColorService.h"
 #include "brush/BucketFill.h"
@@ -126,8 +128,7 @@ public:
                 {"geometry_count",number(e.geometry.size())}});
         }
         QJsonArray capabilities{"recolor_stroke","set_properties","bucket_fill","add_fill_layer","undo","redo","save","save_copy","replay","png"};
-        const bool hasLineart=std::any_of(s.nodes->begin(),s.nodes->end(),[](const auto& pair){return pair.second.stage=="drawborad.lineart.rgba.v1";});
-        if(!hasLineart)capabilities.append("ora");
+        capabilities.append("ora");
         return {{"document_id",idText(s.documentId)},{"revision",number(s.revision)},
             {"saved_revision",saved?QJsonValue(number(*saved)):QJsonValue(QJsonValue::Null)},
             {"dirty",controller->dirty()},{"nodes",nodes},{"strokes",events},
@@ -249,17 +250,25 @@ public:
             r.format=format=="ora"?ExportFormat::Ora:ExportFormat::Png;
             RasterEncodingOptions options;options.ppi=s.spec.ppi;
             if(!s.spec.colorSpec.profileId.empty()) options.iccProfile=*s.resources->at(s.spec.colorSpec.profileId).bytes;
-            auto plan=checked(preflightExport(s,r));RenderStatistics statistics;
+            auto plan=checked(preflightExport(s,r));RenderStatistics statistics;QJsonArray warnings;
             if(format=="png") {
                 auto frame=checked(renderMergedDocument(s,{s.revision,limit}));
                 checked(ExportService{}.write(plan,frame.merged,{},options));statistics=frame.statistics;
             } else {
-                // Layered ORA retains the old full-document allocation budget.
-                auto frame=checked(renderPaintedDocument(s,{s.revision,limit}));
-                checked(ExportService{}.write(plan,frame.merged,frame.layers,options));statistics=frame.statistics;
+                auto stream=checked(NativeLayerStream::create(s,{s.revision,limit}));
+                auto frame=checked(renderMergedDocument(s,{s.revision,limit}));
+                auto report=checked(writeOraStream(plan,stream.size(),
+                    [&stream](std::size_t index,std::stop_token stop){return stream.read(index,stop);},
+                    frame.merged,options));
+                for(const auto& warning:report.warnings)warnings.append(QString::fromStdString(warning));
+                if(std::any_of(s.nodes->begin(),s.nodes->end(),[](const auto& item){return item.second.kind==NodeKind::Group || item.second.kind==NodeKind::Object;}))
+                    warnings.append("ora-groups-flattened-to-leaves");
+                if(std::any_of(s.nodes->begin(),s.nodes->end(),[](const auto& item){return !item.second.maskId.empty();}))
+                    warnings.append("ora-masks-baked-into-layer-pixels");
+                statistics=stream.statistics();
             }
             return {{"revision",number(s.revision)},{"event_limit",number(limit)},
-                {"source_asset_reads",number(statistics.sourceAssetReads)}};
+                {"source_asset_reads",number(statistics.sourceAssetReads)},{"warnings",warnings}};
         }
         need(false,"session.method");return {};
     }

@@ -167,3 +167,41 @@ copies instead. v9 can contain bucket-v8 events; no stroke engine 9 was invented
 Small native resource/alpha and storage tests pass. The new actual PNG entry and
 new closed-region Chromium exercise still require the next CI. Layered ORA with
 imported raster is explicitly disabled, pending the separate streaming export step.
+
+## Streamed layered ORA construction checkpoint (pending next CI)
+
+The opaque RGB PNG import fix reached 56/56 native CTests. A later isolated
+experimental g++ link omitted the new lineart parser object; the immutable parser
+is now header-inline, matching the existing inline layer checks, rather than
+requiring every independent experimental script to link an unrelated builder.
+
+Implemented actual layered export: NativeLayerStream produces one layer at a time,
+OraStream writes each real PNG immediately via bounded ZipStream and atomically
+publishes the archive. Multiply lineart, lower color layer, visibility, opacity and
+paper are represented as independent ORA leaves. Original resources remain
+unchanged. Groups flatten to leaves, masks are baked into exported leaf pixels,
+and locks are not retained; the UI explicitly says to keep .draw for full editing.
+This is not PSD group/mask round-trip fidelity.
+
+Bounded PNG buffers reserve their cap before compression and check writes and
+cancellation; output bytes, ZIP32 offsets, entries and metadata are limited.
+Stage cleanup is armed only after exclusive creation. Pre-publication failures
+retain any existing destination, including a competing creator. A post-publication
+fsync failure can still mean committed-but-not-confirmed, as in existing FileIO.
+
+Real local system-libpng execution passed: 1725x2625 three-layer ORA, independent
+ZIP/PNG CRC/decode, 300DPI and ICC bytes, Multiply/visibility/opacity recomposition,
+existing-target refusal, cancellation/provider/write limits and stage cleanup.
+Strict and ASan/UBSan checks passed. No codec library was installed; three official
+libpng compile headers used locally are NOT included in the repository.
+
+An actual editable historical-bat result was also produced: 1536x1024, 300DPI,
+Original lineart (Multiply) / Color fill / Paper. Original ink RGBA is byte-exact;
+independent re-composition equals the native filled result. ORA SHA256:
+176cb296c6445ecd9f63ed1fd4f30a4216baef02c56b36b29fa2c427390f9239.
+It has not been opened in an external GUI. This is historical bat evidence, not
+the fox or the current assignment. Full current UI/session CI is still required.
+
+Next: collect exact latest CI and new closed-region browser screenshots; run the
+actual bat PNG through the packaged UI; verify external-editor layer behavior;
+then improve fine-line/clean-brush output using whole-scene visual inspection.

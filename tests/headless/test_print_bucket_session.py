@@ -1,8 +1,7 @@
 """Prospective real-engine print-sized PNG/bucket smoke, no mocks.
 
 1725 x 2625 at 300 DPI is an engineering target, NOT a confirmed assignment
-requirement. Requires the merged-only render path. Layered ORA remains explicitly
-unsupported at this size; passing this test does not prove layered print export.
+requirement. Requires the merged-only render path. Streaming ORA must preserve actual independent layers, native size and DPI.
 Run: python tests/headless/test_print_bucket_session.py /path/to/drawborad-engine
 """
 import hashlib
@@ -14,6 +13,7 @@ import sys
 import tempfile
 
 from PIL import Image
+from ora_evidence import inspect_ora
 
 SIZE = (1725, 2625)
 
@@ -90,15 +90,14 @@ def main(binary):
             reopened = ok("open", path=str(copy))
             assert reopened["strokes"] == saved["strokes"]
             assert export_png("reopened.png", filled=True) == after
-            # Old layered renderer deliberately retains its lower budget.
-            ora = root / "unsupported-layers.ora"
-            rejected = call("export", path=str(ora), format="ora")
-            assert rejected.get("error", {}).get("message") == "painted.native-layout-limit", rejected
-            assert not ora.exists(), "Rejected ORA must not leave a misleading artifact"
-            assert export_png("after-ora-rejection.png", filled=True) == after
+            ora = root / "print-layers.ora"
+            ok("export", path=str(ora), format="ora")
+            with Image.open(root / "reopened.png") as png:
+                ora_evidence = inspect_ora(ora, png.convert("RGBA").tobytes(), SIZE, require_fill=True)
+            assert export_png("after-ora.png", filled=True) == after
             print(json.dumps({"test": "print-sized-native-bucket", "size": SIZE,
                               "dpi": 300, "png_undo_redo_reopen": "passed",
-                              "rgba_sha256": after, "ora": "expected-budget-rejection",
+                              "rgba_sha256": after, "ora": ora_evidence,
                               "assignment_size_confirmed": False}))
         finally:
             proc.stdin.close()

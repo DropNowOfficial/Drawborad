@@ -51,6 +51,8 @@ add_library(drawborad_codecs STATIC
   src/codecs/psd/PsdWriter.cpp
   src/codecs/ExportService.cpp
   src/codecs/RasterWriters.cpp
+  src/codecs/ZipStream.cpp
+  src/codecs/OraStream.cpp
   src/codecs/LayerArchive.cpp
   src/codecs/AtomicExport.cpp)
 target_include_directories(drawborad_codecs PUBLIC ${PROJECT_SOURCE_DIR}/src)
@@ -153,7 +155,7 @@ add_library(drawborad_render STATIC
   src/render/ReferenceRenderer.cpp src/render/CoverageRasterizer.cpp src/render/PixelBlend.cpp
   src/render/TileCache.cpp src/render/DisplayCache.cpp src/render/CacheEvictor.cpp
   src/brush/BrushEngine.cpp src/brush/SampleResampler.cpp src/brush/FloodFill.cpp src/brush/BucketFill.cpp src/platform/TabletInput.cpp
-  src/ui/MergedDocument.cpp
+  src/ui/MergedDocument.cpp src/ui/LayerStream.cpp
   src/history/EventIndex.cpp src/history/ReplayEngine.cpp
   src/view/Viewport.cpp src/view/HitTest.cpp src/platform/DeviceRecovery.cpp)
 target_include_directories(drawborad_render PUBLIC ${PROJECT_SOURCE_DIR}/src)
