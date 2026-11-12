@@ -41,6 +41,7 @@ footer{color:#98a1ac;font-size:11px;margin-top:25px;line-height:1.7}.errors{colo
 <button id="nativeUndo" class="secondary" type="button" disabled>Undo</button>
 <button id="nativeRedo" class="secondary" type="button" disabled>Redo</button>
 <button id="nativeSave" class="primary" type="button" disabled>Save project</button>
+<button id="nativeSaveCopy" class="secondary" type="button" disabled>Save separate copy</button>
 </div>
 <div class="nativegrid">
 <div>
@@ -60,6 +61,12 @@ footer{color:#98a1ac;font-size:11px;margin-top:25px;line-height:1.7}.errors{colo
 <p id="nativeStrokeInfo" class="helper">Every entry refers to a stable native stroke ID.</p>
 <label class="fieldlabel" for="nativeColor">New color · sRGB</label><input id="nativeColor" type="color" value="#00ff00" disabled>
 <button id="nativeRecolor" class="primary" type="button" disabled>Apply color</button>
+<div class="divider"></div>
+<button id="nativeAddFillLayer" class="secondary" type="button" disabled>New color layer</button>
+<label class="fieldlabel"><input id="nativeBucket" type="checkbox" disabled> Bucket fill on selected layer</label>
+<label class="fieldlabel" for="nativeTolerance">Tolerance (0–255)</label>
+<input id="nativeTolerance" class="field" type="number" min="0" max="255" step="1" value="0" disabled>
+<p id="nativeBucketHint" class="helper">Create a new color layer, or show painting sublayers and select an unlocked visible layer. Fill samples the visible full painting. New-format edits may require Save separate copy.</p>
 <div class="divider"></div><div class="export">
 <button id="nativeDownload" class="secondary" type="button" disabled>Download saved .draw</button>
 <button id="nativePng" class="secondary" type="button" disabled>Export painting PNG</button>
@@ -131,16 +138,51 @@ by('demo').onclick=async()=>{error('');buttonBusy(true);state('Loading labeled n
 by('import').onclick=async()=>{error('');if(!by('archive').files.length){error('Select a model result ZIP.');return}buttonBusy(true);state('Validating source, masks and hashes…');try{let f=new FormData();f.append('archive',by('archive').files[0]);await show(await api('/import',{method:'POST',body:f}))}catch(e){error(e.message);buttonBusy(false)}};
 by('token').onchange=refreshCapability;refreshCapability();
 // A view of native responses only; the browser owns no painting model/history.
-let nativeState=null, nativeBusy=false, nativeImageUrl=null, nativeSelectedNodeId=null;
+let nativeState=null, nativeBusy=false, nativeImageUrl=null, nativeSelectedNodeId=null, nativePreviewKey=null;
 let nativeStrokeScopes=new Map();
-const nativeActionIds=['nativeImport','nativeNew','nativeUndo','nativeRedo','nativeSave','nativeRecolor','nativeDownload','nativePng','nativeOra','nativeClose'];
+const nativeActionIds=['nativeImport','nativeNew','nativeUndo','nativeRedo','nativeSave','nativeSaveCopy','nativeAddFillLayer','nativeRecolor','nativeDownload','nativePng','nativeOra','nativeClose'];
+// BUCKET_HELPERS_BEGIN
+function nativeFillTarget(state,id){
+ if(!state?.capabilities?.includes('bucket_fill'))return null;
+ const nodes=new Map(state.nodes.map(node=>[node.id,node])), selected=nodes.get(id), seen=new Set();
+ if(selected?.kind!==3)return null;
+ let node=selected;
+ while(node){
+  if(seen.has(node.id)||node.locked||!node.visible)return null;
+  seen.add(node.id);
+  if(node.kind===0)return selected;
+  node=nodes.get(node.parent_id);
+ }
+ return null;
+}
+function nativeFillPoint(rect,width,height,clientX,clientY){
+ if(![rect.left,rect.top,rect.width,rect.height,width,height,clientX,clientY].every(Number.isFinite)||width<=0||height<=0||rect.width<=0||rect.height<=0)return null;
+ const scale=Math.min(rect.width/width,rect.height/height);
+ const x=(clientX-rect.left-(rect.width-width*scale)/2)/scale;
+ const y=(clientY-rect.top-(rect.height-height*scale)/2)/scale;
+ if(x<0||y<0||x>=width||y>=height)return null;
+ return {x:Math.floor(x),y:Math.floor(y)};
+}
+// BUCKET_HELPERS_END
+function nativeFillReady(){
+ return !nativeBusy&&nativeFillTarget(nativeState,nativeSelectedNodeId)&&
+  nativePreviewKey===nativeState.id+':'+nativeState.revision+':'+nativeState.stroke_count;
+}
 function nativeError(message){by('nativeError').textContent=message||'';by('nativeError').style.display=message?'block':'none'}
 function nativeControls(){
  for(const id of nativeActionIds) by(id).disabled=nativeBusy||(!nativeState&&!['nativeImport','nativeNew'].includes(id));
  const hasSelection=nativeScopedStrokes().length>0;
  by('nativeRecolor').disabled=nativeBusy||!hasSelection;
  by('nativeDownload').disabled=nativeBusy||!nativeState||nativeState.dirty;
- for(const id of ['nativeStrokes','nativeColor'])by(id).disabled=nativeBusy||!hasSelection;
+ by('nativeStrokes').disabled=nativeBusy||!hasSelection;
+ by('nativeColor').disabled=nativeBusy||(!hasSelection&&!nativeFillTarget(nativeState,nativeSelectedNodeId));
+ by('nativeSaveCopy').disabled=nativeBusy||!nativeState?.capabilities?.includes('save_copy');
+ by('nativeAddFillLayer').disabled=nativeBusy||!nativeState?.capabilities?.includes('add_fill_layer');
+ const fillReady=!!nativeFillReady();
+ by('nativeBucket').disabled=!fillReady;
+ by('nativeTolerance').disabled=!fillReady;
+ if(!nativeBusy&&!fillReady)by('nativeBucket').checked=false;
+ by('nativePreview').style.cursor=fillReady&&by('nativeBucket').checked?'crosshair':'default';
  by('nativeReplay').disabled=nativeBusy||!nativeState||!nativeState.strokes.length;
  by('nativeAllStrokes').disabled=nativeBusy||!nativeState;
  by('nativeShowSublayers').disabled=nativeBusy||!nativeState;
@@ -148,10 +190,14 @@ function nativeControls(){
 }
 async function nativePost(path,body={}){return api('/projects'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}
 async function nativePreview(limit){
+ nativePreviewKey=null;
+ const requested=nativeState.id+':'+nativeState.revision+':'+(limit===undefined?nativeState.stroke_count:limit);
  const response=await fetch(API+'/projects/'+nativeState.id+'/preview.png'+(limit===undefined?'':'?event_limit='+encodeURIComponent(limit)),{headers:headers(),cache:'no-store'});
  if(!response.ok)throw new Error('Native preview failed: '+await response.text());
  const url=URL.createObjectURL(await response.blob());
  by('nativePreview').src=url;by('nativePreview').hidden=false;by('nativeEmpty').hidden=true;
+ await by('nativePreview').decode();
+ if(response.headers.get('X-Drawborad-Revision')===nativeState.revision)nativePreviewKey=requested;
  if(nativeImageUrl)URL.revokeObjectURL(nativeImageUrl);nativeImageUrl=url;
 }
 function nativeScopedStrokes(){
@@ -179,11 +225,12 @@ function nativeRenderSelection(selected=by('nativeStrokes').value){
 }
 function nativeSelectNode(id){
  if(nativeBusy||!nativeState)return;
+ by('nativeBucket').checked=false;
  nativeSelectedNodeId=id;nativeRenderSelection();
 }
 async function nativeShow(value){
  const sameProject=nativeState?.id===value.id, selected=sameProject?by('nativeStrokes').value:'';
- if(!sameProject||!value.nodes.some(n=>n.id===nativeSelectedNodeId))nativeSelectedNodeId=null;
+ if(!sameProject||!value.nodes.some(n=>n.id===nativeSelectedNodeId)){nativeSelectedNodeId=null;by('nativeBucket').checked=false;}
  nativeState=value;localStorage.setItem('drawborad.project',value.id);
  by('nativeStatus').textContent=(value.dirty?'Unsaved changes':'Saved')+' · revision '+value.revision+' · '+value.stroke_count+' strokes';
  // Include descendants for object/group selection without changing native state or visibility.
@@ -239,6 +286,29 @@ by('nativeShowSublayers').onchange=()=>{
 };
 by('nativeRecolor').onclick=()=>nativeRun(async()=>nativeShow(await nativePost('/'+nativeState.id+'/commands',{expected_revision:nativeState.revision,type:'recolor_stroke',stroke_id:by('nativeStrokes').value,color:by('nativeColor').value})));
 for(const action of ['Undo','Redo','Save'])by('native'+action).onclick=()=>nativeRun(async()=>nativeShow(await nativePost('/'+nativeState.id+'/'+action.toLowerCase(),{expected_revision:nativeState.revision})));
+by('nativeSaveCopy').onclick=()=>nativeRun(async()=>nativeShow(await nativePost('/'+nativeState.id+'/save-copy',{expected_revision:nativeState.revision})));
+async function nativeAddFillLayer(){
+ const previous=new Set(nativeState.nodes.map(node=>node.id));
+ const value=await nativePost('/'+nativeState.id+'/commands',{expected_revision:nativeState.revision,type:'add_fill_layer'});
+ await nativeShow(value);
+ const added=value.nodes.find(node=>node.kind===3&&!previous.has(node.id));
+ if(added){
+  by('nativeShowSublayers').checked=true;
+  nativeSelectedNodeId=added.id;
+  nativeRenderSelection();
+ }
+}
+by('nativeAddFillLayer').onclick=()=>nativeRun(nativeAddFillLayer);
+by('nativeBucket').onchange=nativeControls;
+by('nativePreview').onclick=event=>{
+ if(!by('nativeBucket').checked||!nativeFillReady())return;
+ const point=nativeFillPoint(by('nativePreview').getBoundingClientRect(),Number(nativeState.width),Number(nativeState.height),event.clientX,event.clientY);
+ if(!point)return;
+ const tolerance=Number(by('nativeTolerance').value);
+ if(!Number.isInteger(tolerance)||tolerance<0||tolerance>255){nativeError('Tolerance must be an integer from 0 to 255.');return;}
+ const body={expected_revision:nativeState.revision,type:'bucket_fill',layer_id:nativeSelectedNodeId,...point,tolerance,color:by('nativeColor').value};
+ nativeRun(async()=>nativeShow(await nativePost('/'+nativeState.id+'/commands',body)));
+};
 by('nativeReplay').onchange=()=>nativeRun(async()=>{await nativePreview(by('nativeReplay').value);by('nativeReplayCount').textContent=by('nativeReplay').value});
 for(const [id,path,name] of [['nativeDownload','download','painting.draw'],['nativePng','preview.png','painting.png'],['nativeOra','export.ora','painting.ora']])by(id).onclick=()=>nativeRun(()=>downloadUrl('/projects/'+nativeState.id+'/'+path,name));
 by('nativeClose').onclick=()=>nativeRun(async()=>{await nativePost('/'+nativeState.id+'/close',{expected_revision:nativeState.revision,discard:by('nativeDiscard').checked});nativeState=null;nativeSelectedNodeId=null;nativeStrokeScopes.clear();localStorage.removeItem('drawborad.project');by('nativeStatus').textContent='No painting open';by('nativePreview').hidden=true;by('nativeEmpty').hidden=false;if(nativeImageUrl)URL.revokeObjectURL(nativeImageUrl);nativeImageUrl=null;by('nativePreview').removeAttribute('src');by('nativeNodes').replaceChildren();by('nativeLayerSummary').textContent='';by('nativeReplay').max=0;by('nativeReplay').value=0;by('nativeReplayCount').textContent='0';nativeRenderSelection();by('nativeDiscard').checked=false;});

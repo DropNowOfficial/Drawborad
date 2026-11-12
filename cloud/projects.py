@@ -109,6 +109,16 @@ class Projects:
     def state(self, value):
         return dict(value,id=self.active)
 
+    def save_copy(self, expected_revision):
+        pid=str(uuid4())
+        path=self.project_path(pid)
+        path.parent.mkdir()
+        # Keep a possibly written copy on an uncertain IPC failure. Never delete
+        # an artifact just because the response was lost.
+        result=self.rpc('save_copy',path=str(path),expected_revision=expected_revision)
+        self.active=pid
+        return self.state(result)
+
     def prepare_switch(self):
         self.start()
         if self.active:
@@ -185,7 +195,13 @@ def install_projects(app,config,authorized):
     def command(pid:str,body:dict):
         with projects.transaction():
             projects.select(pid)
-            allowed={'expected_revision','type','stroke_id','color','node_id','visible','locked'}
+            fields={'recolor_stroke':{'stroke_id','color'},
+                    'set_properties':{'node_id','visible','locked'},
+                    'add_fill_layer':set(),
+                    'bucket_fill':{'layer_id','x','y','tolerance','color'}}
+            kind=body.get('type')
+            if not isinstance(kind,str) or kind not in fields:fail(422,'invalid_input','Unknown command type')
+            allowed={'expected_revision','type'}|fields[kind]
             if set(body)-allowed:fail(422,'invalid_input','Unknown command fields')
             return projects.state(projects.rpc('command',**body))
 
@@ -205,6 +221,12 @@ def install_projects(app,config,authorized):
     def redo(pid:str,body:dict):return operation(pid,'redo',body)
     @router.post('/{pid}/save')
     def save(pid:str,body:dict):return operation(pid,'save',body)
+    @router.post('/{pid}/save-copy',status_code=201)
+    def save_copy(pid:str,body:dict):
+        with projects.transaction():
+            projects.select(pid)
+            if set(body)-{'expected_revision'}:fail(422,'invalid_input','Unknown save-copy fields')
+            return projects.save_copy(body.get('expected_revision'))
     @router.post('/{pid}/close')
     def close(pid:str,body:dict):return operation(pid,'close',body)
     @router.get('/{pid}/preview.png')

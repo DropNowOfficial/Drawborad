@@ -1,4 +1,5 @@
 #include "Commands.h"
+#include "BucketEvent.h"
 #include <algorithm>
 #include <cmath>
 #include <set>
@@ -113,10 +114,19 @@ Result<void> validateSnapshot(const DocumentSnapshot& s) {
     }
     std::set<Id> events;
     for (auto& e : *s.eventIndex) {
+        if (e.engineVersion!=1 && e.engineVersion!=2 && e.engineVersion!=8)
+            return error(ErrorCode::UnsupportedFeature,"event.engine-version");
+        if (e.engineVersion==8) {
+            auto valid=validateBucketEvent(e); if (!valid) return valid.error();
+            for (std::size_t i=0;i<e.geometry.size();i+=2)
+                if (e.geometry[i+1].x>s.spec.pixelSize.width ||
+                    e.geometry[i].y>=s.spec.pixelSize.height)
+                    return error(ErrorCode::InvalidInput,"bucket.canvas");
+        }
         if (e.id.empty() || !events.insert(e.id).second || e.geometry.empty() ||
             e.geometry.size() > 1000000 || e.startUs > e.endUs || !validColor(e.color, f.mode) ||
             e.color.profileId != s.spec.colorSpec.profileId ||
-            (e.engineVersion != 1 && e.engineVersion != 2) || e.toolId.empty() ||
+            e.toolId.empty() ||
             e.toolId.size() > 256 || !std::isfinite(e.style.width) || e.style.width <= 0 ||
             e.style.width > 8192 || !std::isfinite(e.style.opacity) || e.style.opacity < 0 ||
             e.style.opacity > 1 || !std::isfinite(e.style.hardness) || e.style.hardness < 0 ||

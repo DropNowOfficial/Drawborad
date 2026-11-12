@@ -8,6 +8,10 @@ fs::path suffix(fs::path p, const std::string& s) {
     p += s;
     return p;
 }
+unsigned formatGeneration(const DocumentSnapshot& s) {
+    return std::any_of(s.eventIndex->begin(),s.eventIndex->end(),
+                       [](const auto& e){ return e.engineVersion==8; }) ? 8 : 2;
+}
 Result<RecoveryResult> load(FileIO& io, const ProjectPath& p) {
     auto one = [&](const fs::path& path) -> Result<DocumentSnapshot> {
         auto b = io.read(path, MaxProjectBytes);
@@ -23,10 +27,20 @@ Result<RecoveryResult> load(FileIO& io, const ProjectPath& p) {
     auto s = one(p);
     std::vector<std::string> warnings;
     if (!s) {
+        if (s.error().code == ErrorCode::UnsupportedFeature) return s.error();
+        const auto primaryError = s.error();
         s = one(suffix(p, ".bak"));
         if (!s)
-            return s.error();
+            return primaryError;
         warnings.push_back("recovery.used-backup");
+    }
+    if (fs::exists(suffix(p, ".bak"))) {
+        auto backup = one(suffix(p, ".bak"));
+        if (!backup && backup.error().code == ErrorCode::UnsupportedFeature)
+            return backup.error();
+        if ((!backup && formatGeneration(s.value())==8) ||
+            (backup && formatGeneration(backup.value())!=formatGeneration(s.value())))
+            return error(ErrorCode::UnsupportedFeature, "project.mixed-format-backup");
     }
     auto jp = suffix(p, ".journal");
     if (fs::exists(jp)) {
@@ -42,7 +56,11 @@ Result<RecoveryResult> load(FileIO& io, const ProjectPath& p) {
             }
             try {
                 binary::Reader peek{r.value().data};
-                (void)peek.text(32);
+                const auto format=peek.text(32);
+                if(format!="DRAW-DELTA-1" && format!="DRAW-DELTA-8")
+                    return error(ErrorCode::UnsupportedFeature,"project.journal-version");
+                if((format=="DRAW-DELTA-8")!=(formatGeneration(s.value())==8))
+                    return error(ErrorCode::UnsupportedFeature,"project.mixed-format-journal");
                 (void)peek.id();
                 (void)peek.u64();
                 (void)peek.hash();
@@ -55,9 +73,12 @@ Result<RecoveryResult> load(FileIO& io, const ProjectPath& p) {
                 if (revision > s.value().revision) {
                     auto next = decodeDelta(r.value().data, s.value());
                     if (!next) {
+                        if (next.error().code == ErrorCode::UnsupportedFeature) return next.error();
                         warnings.push_back("recovery.noncontinuing-tail");
                         break;
                     }
+                    if (formatGeneration(next.value())!=formatGeneration(s.value()))
+                        return error(ErrorCode::UnsupportedFeature, "project.mixed-format-journal");
                     s = std::move(next);
                 }
             } catch (const binary::Invalid&) {
@@ -78,10 +99,15 @@ Result<void> ProjectStore::save(const ProjectPath& p, const DocumentSnapshot& s)
     auto held = lease.acquire(suffix(p, ".lock"));
     if (!held)
         return held.error();
+    if (!fs::exists(p) && (fs::exists(suffix(p, ".bak")) ||
+                           fs::exists(suffix(p, ".journal"))))
+        return error(ErrorCode::UnsupportedFeature, "save.clean-copy-required");
     if (fs::exists(p)) {
         auto old = load(*io_, p);
         if (!old)
             return old.error();
+        if (formatGeneration(old.value().snapshot)!=formatGeneration(s))
+            return error(ErrorCode::UnsupportedFeature, "save.format-copy-required");
         if (old.value().snapshot.documentId != s.documentId ||
             old.value().lastCommittedRevision > s.revision)
             return error(ErrorCode::StaleRevision, "save.stale");
@@ -129,6 +155,8 @@ Result<void> ProjectStore::appendJournal(const ProjectPath& p, const DocumentSna
     auto held = lease.acquire(suffix(p, ".lock"));
     if (!held)
         return held.error();
+    if (formatGeneration(before)!=formatGeneration(after))
+        return error(ErrorCode::UnsupportedFeature, "journal.format-copy-required");
     auto disk = load(*io_, p);
     if (!disk)
         return disk.error();

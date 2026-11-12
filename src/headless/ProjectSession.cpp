@@ -3,6 +3,9 @@
 #include "ui/PaintedDocument.h"
 #include "codecs/RasterWriters.h"
 #include "color/ColorService.h"
+#include "brush/BucketFill.h"
+#include <cmath>
+#include <random>
 #include <QColorSpace>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -22,6 +25,18 @@ void need(bool value,const char* key) {
     if (!value) throw Failure{error(ErrorCode::InvalidInput,key)};
 }
 QString number(std::uint64_t v) { return QString::number(v); }
+std::uint32_t pixelInteger(QJsonValue value) {
+    const auto n=value.toDouble(-1);
+    need(value.isDouble() && std::isfinite(n) && n>=0 && n<=UINT32_MAX &&
+         std::floor(n)==n,"session.pixel-integer");
+    return std::uint32_t(n);
+}
+Id newEventId() {
+    std::random_device random;Id id;
+    for (auto& b:id.bytes) b=std::uint8_t(random());
+    id.bytes[6]=(id.bytes[6]&15)|0x40;id.bytes[8]=(id.bytes[8]&63)|0x80;
+    return id;
+}
 QString idText(Id id) {
     return QByteArray(reinterpret_cast<const char*>(id.bytes.data()),16).toHex();
 }
@@ -110,7 +125,7 @@ public:
             {"dirty",controller->dirty()},{"nodes",nodes},{"strokes",events},
             {"stroke_count",number(s.eventIndex->size())},
             {"width",number(s.spec.pixelSize.width)},{"height",number(s.spec.pixelSize.height)},
-            {"capabilities",QJsonArray{"recolor_stroke","set_properties","undo","redo","save","replay","png","ora"}}};
+            {"capabilities",QJsonArray{"recolor_stroke","set_properties","bucket_fill","add_fill_layer","undo","redo","save","save_copy","replay","png","ora"}}};
     }
     QJsonObject request(const QString& method,const QJsonObject& p) {
         if(method=="open" || method=="create") {
@@ -140,6 +155,21 @@ public:
                 need(found!=s.eventIndex->end(),"stroke.missing");
                 auto color=browserColor(s,p.value("color"));color.alpha=found->color.alpha;
                 command.operations.emplace_back(RecolorStroke{id,color});
+            } else if(type=="add_fill_layer") {
+                const auto s=snapshot();LayerNode layer;layer.id=newEventId();
+                layer.parent=Document::rootId();layer.name="Color fill";
+                layer.bounds={0,0,s.spec.pixelSize.width,s.spec.pixelSize.height};
+                command.operations.emplace_back(AddNode{layer});
+            } else if(type=="bucket_fill") {
+                const auto s=snapshot();
+                const auto x=pixelInteger(p.value("x")),y=pixelInteger(p.value("y"));
+                const auto tolerance=pixelInteger(p.value("tolerance"));
+                need(tolerance<=255,"session.tolerance");
+                const auto layer=parseId(p.value("layer_id"));
+                const auto color=browserColor(s,p.value("color"));
+                auto frame=checked(renderPaintedDocument(s,{s.revision,s.eventIndex->size()}));
+                command=checked(bucketFillCommand(s,layer,newEventId(),frame.merged,
+                                                  x,y,std::uint8_t(tolerance),color));
             } else if(type=="set_properties") {
                 SetProperties properties;properties.id=parseId(p.value("node_id"));bool any=false;
                 for(const auto& key:{"visible","locked"}) if(p.contains(key)) {
@@ -154,8 +184,16 @@ public:
         if(method=="undo" || method=="redo") {
             revision(p);checked(method=="undo"?controller->undo():controller->redo());return state();
         }
-        if(method=="save") {
+        if(method=="save" || method=="save_copy") {
             revision(p);auto target=p.contains("path")?pathValue(p.value("path")):path;
+            if(method=="save_copy") {
+                need(target!=path && !std::filesystem::exists(target),
+                     "session.copy-needs-new-path");
+                for(const auto suffix:{".bak",".journal"}) {
+                    auto sidecar=target;sidecar+=suffix;
+                    need(!std::filesystem::exists(sidecar),"session.copy-sidecar");
+                }
+            }
             need(!target.empty(),"session.path");checked(controller->save(target));path=target;
             saved=snapshot().revision;return state();
         }

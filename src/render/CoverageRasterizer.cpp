@@ -1,4 +1,5 @@
 #include "CoverageRasterizer.h"
+#include "core/BucketEvent.h"
 #include <algorithm>
 #include <cmath>
 namespace drawborad {
@@ -21,6 +22,7 @@ constexpr std::array<std::array<std::int64_t, 2>, 8> Dir{{
     {-32768,0},{-23170,-23170},{0,-32768},{23170,-23170}}};
 }
 Result<void> validateRasterEvent(const StrokeEvent& e) {
+    if (e.engineVersion==8) return validateBucketEvent(e);
     if (e.engineVersion != 1 && e.engineVersion != 2)
         return error(ErrorCode::UnsupportedFeature, "render.engine-version");
     if (e.toolId != "pencil" && e.toolId != "colored-pencil" && e.toolId != "fineliner" &&
@@ -59,6 +61,19 @@ Result<std::vector<std::uint16_t>> strokeCoverage(const StrokeEvent& e, Rect rec
     if (stop.stop_requested()) return error(ErrorCode::Cancelled,"render.cancelled");
     std::vector<std::uint16_t> cov(std::size_t(pixels.value()),0);
     if (time < e.startUs) return cov;
+    if (e.engineVersion==8) {
+        for (std::size_t i=0;i<e.geometry.size();i+=2) {
+            if (stop.stop_requested()) return error(ErrorCode::Cancelled,"render.cancelled");
+            const auto y=std::int64_t(e.geometry[i].y);
+            if (y<rect.y || y>=rect.y+std::int64_t(rect.height)) continue;
+            const auto x0=std::max(rect.x,std::int64_t(e.geometry[i].x));
+            const auto x1=std::min(rect.x+std::int64_t(rect.width),
+                                 std::int64_t(e.geometry[i+1].x));
+            if (x0<x1) std::fill_n(cov.begin()+std::size_t(y-rect.y)*rect.width+
+                                  std::size_t(x0-rect.x),std::size_t(x1-x0),65535);
+        }
+        return cov;
+    }
     const auto radius=std::max<std::int64_t>(1,fixed(e.style.width*.5));
     const auto hard=std::int64_t(std::llround(e.style.hardness*65535));
     const auto dir=Dir[e.style.angle];

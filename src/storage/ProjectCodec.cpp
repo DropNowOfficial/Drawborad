@@ -6,6 +6,7 @@ namespace drawborad {
 namespace {
 using binary::Reader;
 using binary::Writer;
+struct UnsupportedEngine {};
 void put(Writer& w, const ColorValue& c) {
     w.hash(c.profileId);
     for (auto x : c.channels)
@@ -74,24 +75,24 @@ void put(Writer& w,const StrokeEvent& e){
 StrokeEvent event(Reader& r){
  StrokeEvent e;e.id=r.id();e.objectId=r.id();e.layerId=r.id();e.startUs=r.u64();e.endUs=r.u64();e.toolId=r.text(256);e.color=color(r);auto n=r.count();e.geometry.reserve(n);
  while(n--){InputSample p;p.x=r.real();p.y=r.real();p.pressure=r.real();if(r.boolean())p.tiltX=r.real();if(r.boolean())p.tiltY=r.real();p.timestampUs=r.u64();auto d=r.u64(),c=r.u64();if(d>UINT32_MAX||c>UINT32_MAX)throw binary::Invalid{};p.deviceKind=std::uint32_t(d);p.capabilities=std::uint32_t(c);e.geometry.push_back(p);}
- e.seed=r.u64();e.parentRevision=r.u64();auto v=r.u64();if(v!=1&&v!=2)throw binary::Invalid{};e.engineVersion=std::uint32_t(v);
+ e.seed=r.u64();e.parentRevision=r.u64();auto v=r.u64();if(v!=1&&v!=2&&v!=8)throw UnsupportedEngine{};e.engineVersion=std::uint32_t(v);
  if(v>=2){e.style.width=r.real();e.style.opacity=r.real();e.style.hardness=r.real();auto shape=r.u64(),angle=r.u64();if(shape>1||angle>7)throw binary::Invalid{};e.style.shape=NibShape(shape);e.style.angle=std::uint8_t(angle);e.style.grain=r.blob(64);}return e;
 }
 }
 Result<Bytes> encodeDelta(const DocumentSnapshot& before,const DocumentSnapshot& after){
  auto valid=validateSnapshot(after);if(!valid)return valid.error();if(!before.documentId.empty()&&(before.documentId!=after.documentId||after.revision<=before.revision))return error(ErrorCode::StaleRevision,"journal.order");
- Writer w;w.text("DRAW-DELTA-1");w.id(before.documentId);w.u64(before.revision);auto h=before.documentId.empty()?Result<Hash>{Hash{}}:stateHash(before);if(!h)return h.error();w.hash(h.value());w.id(after.documentId);w.u64(after.revision);put(w,after.spec);
+ Writer w;const bool bucket=std::any_of(after.eventIndex->begin(),after.eventIndex->end(),[](const auto& e){return e.engineVersion==8;});w.text(bucket?"DRAW-DELTA-8":"DRAW-DELTA-1");w.id(before.documentId);w.u64(before.revision);auto h=before.documentId.empty()?Result<Hash>{Hash{}}:stateHash(before);if(!h)return h.error();w.hash(h.value());w.id(after.documentId);w.u64(after.revision);put(w,after.spec);
  std::vector<Id> removed;std::vector<LayerNode> changed;for(auto&[id,n]:*before.nodes)if(!after.nodes->contains(id))removed.push_back(id);for(auto&[id,n]:*after.nodes){auto it=before.nodes->find(id);if(it==before.nodes->end()||it->second!=n)changed.push_back(n);}putIds(w,removed);w.u64(changed.size());for(auto& n:changed)put(w,n);
  std::vector<Hash> deleted;std::vector<Resource> resources;for(auto&[id,r]:*before.resources)if(!after.resources->contains(id))deleted.push_back(id);for(auto&[id,r]:*after.resources){auto it=before.resources->find(id);if(it==before.resources->end()||it->second!=r)resources.push_back(r);}putHashes(w,deleted);w.u64(resources.size());for(auto& r:resources)put(w,r);
  bool append=after.eventIndex->size()>=before.eventIndex->size()&&std::equal(before.eventIndex->begin(),before.eventIndex->end(),after.eventIndex->begin());auto start=append?before.eventIndex->size():0;w.boolean(append);w.u64(after.eventIndex->size()-start);for(auto i=start;i<after.eventIndex->size();i++)put(w,after.eventIndex->at(i));if(w.data.size()>MaxProjectBytes)return error(ErrorCode::BudgetExceeded,"project.record-limit");return w.data;
 }
 Result<DocumentSnapshot> decodeDelta(std::span<const std::uint8_t> bytes,const DocumentSnapshot& base){
  if(bytes.size()>MaxProjectBytes)return error(ErrorCode::BudgetExceeded,"project.record-limit");
- try{Reader r{bytes};if(r.text(32)!="DRAW-DELTA-1")throw binary::Invalid{};auto prevId=r.id();auto prevRev=r.u64();auto prevHash=r.hash();if(prevId!=base.documentId||prevRev!=base.revision)return error(ErrorCode::StaleRevision,"journal.base");if(!base.documentId.empty()){auto h=stateHash(base);if(!h)return h.error();if(h.value()!=prevHash)return error(ErrorCode::DigestMismatch,"journal.base-hash");}
+ try{Reader r{bytes};const auto format=r.text(32);if(format!="DRAW-DELTA-1"&&format!="DRAW-DELTA-8"){if(format.starts_with("DRAW-DELTA-"))throw UnsupportedEngine{};throw binary::Invalid{};}auto prevId=r.id();auto prevRev=r.u64();auto prevHash=r.hash();if(prevId!=base.documentId||prevRev!=base.revision)return error(ErrorCode::StaleRevision,"journal.base");if(!base.documentId.empty()){auto h=stateHash(base);if(!h)return h.error();if(h.value()!=prevHash)return error(ErrorCode::DigestMismatch,"journal.base-hash");}
  DocumentSnapshot out;out.documentId=r.id();out.revision=r.u64();out.spec=spec(r);if(!base.documentId.empty()&&(out.documentId!=base.documentId||out.revision<=base.revision))throw binary::Invalid{};
  auto ns=std::make_shared<NodeMap>(*base.nodes);for(auto id:ids(r))ns->erase(id);auto count=r.count(65536);while(count--){auto n=node(r);(*ns)[n.id]=std::move(n);}out.nodes=ns;
- auto rs=std::make_shared<ResourceMap>(*base.resources);for(auto h:hashes(r))rs->erase(h);count=r.count();while(count--){auto a=resource(r);(*rs)[a.id]=std::move(a);}out.resources=rs;bool append=r.boolean();auto ev=append?std::make_shared<EventList>(*base.eventIndex):std::make_shared<EventList>();count=r.count(2000000);if(ev->size()+count>2000000)throw binary::Invalid{};while(count--)ev->push_back(event(r));out.eventIndex=ev;if(!r.done())throw binary::Invalid{};auto v=validateSnapshot(out);if(!v)return v.error();return out;
- }catch(const binary::Invalid&){return error(ErrorCode::CorruptData,"project.decode");}catch(const std::bad_alloc&){return error(ErrorCode::BudgetExceeded,"project.decode-allocation");}
+ auto rs=std::make_shared<ResourceMap>(*base.resources);for(auto h:hashes(r))rs->erase(h);count=r.count();while(count--){auto a=resource(r);(*rs)[a.id]=std::move(a);}out.resources=rs;bool append=r.boolean();auto ev=append?std::make_shared<EventList>(*base.eventIndex):std::make_shared<EventList>();count=r.count(2000000);if(ev->size()+count>2000000)throw binary::Invalid{};while(count--)ev->push_back(event(r));out.eventIndex=ev;if(!r.done())throw binary::Invalid{};auto v=validateSnapshot(out);if(!v)return v.error();const bool bucket=std::any_of(out.eventIndex->begin(),out.eventIndex->end(),[](const auto& e){return e.engineVersion==8;});if(bucket!=(format=="DRAW-DELTA-8"))throw binary::Invalid{};return out;
+ }catch(const UnsupportedEngine&){return error(ErrorCode::UnsupportedFeature,"project.engine-version");}catch(const binary::Invalid&){return error(ErrorCode::CorruptData,"project.decode");}catch(const std::bad_alloc&){return error(ErrorCode::BudgetExceeded,"project.decode-allocation");}
 }
 Result<Hash> stateHash(const DocumentSnapshot& s){auto canonical=s;canonical.revision=0;auto bytes=encodeDelta(DocumentSnapshot{},canonical);if(!bytes)return bytes.error();return sha256(bytes.value());}
 Result<Bytes> frameRecord(std::span<const std::uint8_t> payload){if(payload.size()>MaxProjectBytes)return error(ErrorCode::BudgetExceeded,"journal.record-size");Writer w;w.u64(payload.size());w.hash(sha256(payload));w.raw(payload);return w.data;}
