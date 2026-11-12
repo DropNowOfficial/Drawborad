@@ -70,7 +70,7 @@ footer{color:#98a1ac;font-size:11px;margin-top:25px;line-height:1.7}.errors{colo
 <div class="divider"></div>
 <button id="nativeAddFillLayer" class="secondary" type="button" disabled>New color layer below ink</button>
 <label class="fieldlabel"><input id="nativeBucket" type="checkbox" disabled> Bucket fill on selected layer</label>
-<label class="fieldlabel" for="nativeTolerance">Tolerance (0–255)</label>
+<label class="fine"><input id="nativeInkCover" type="checkbox" disabled> Cover antialiased ink edges (2 px underneath)</label><p class="fine">Optional for white/transparent-background black-and-gray lineart: extends color only under upper ink pixels; normal flood tolerance still applies. Original ink resource stays unchanged. Other stacks are rejected.</p><label class="fieldlabel" for="nativeTolerance">Tolerance (0–255)</label>
 <input id="nativeTolerance" class="field" type="number" min="0" max="255" step="1" value="0" disabled>
 <p id="nativeBucketHint" class="helper">Create a new color layer, or show painting sublayers and select an unlocked visible layer. Fill samples the visible full painting. New-format edits may require Save separate copy.</p>
 <label class="fieldlabel"><input id="nativePen" type="checkbox" disabled> Draw on selected layer</label>
@@ -209,6 +209,8 @@ function nativeControls(){
  by('nativeAddFillLayer').disabled=nativeBusy||!nativeState?.capabilities?.includes('add_fill_layer');
  const fillReady=!!nativeFillReady();
  by('nativeBucket').disabled=!fillReady;
+ const canCoverInk=nativeState?.nodes?.some(n=>n.stage==='drawborad.lineart.rgba.v1'&&n.visible);
+ by('nativeInkCover').disabled=!fillReady||!canCoverInk;if(!canCoverInk)by('nativeInkCover').checked=false;
  by('nativeTolerance').disabled=!fillReady;
  const penReady=!!nativePenReady();
  by('nativeMyPaintOption').disabled=!nativeState?.capabilities?.includes('mypaint_ink');
@@ -364,6 +366,7 @@ by('nativePreview').onclick=event=>{
  const tolerance=Number(by('nativeTolerance').value);
  if(!Number.isInteger(tolerance)||tolerance<0||tolerance>255){nativeError('Tolerance must be an integer from 0 to 255.');return;}
  const body={expected_revision:nativeState.revision,type:'bucket_fill',layer_id:nativeSelectedNodeId,...point,tolerance,color:by('nativeColor').value};
+ if(by('nativeInkCover').checked)body.under_ink=2;
  nativeRun(async()=>nativeShow(await nativePost('/'+nativeState.id+'/commands',body)));
 };
 // PEN_INPUT_BEGIN

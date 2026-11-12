@@ -260,7 +260,7 @@ def install_projects(app,config,authorized):
             fields={'recolor_stroke':{'stroke_id','color'},
                     'set_properties':{'node_id','visible','locked'},
                     'add_fill_layer':set(),
-                    'bucket_fill':{'layer_id','x','y','tolerance','color'},
+                    'bucket_fill':{'layer_id','x','y','tolerance','color','under_ink'},
                     'draw_stroke':{'layer_id','points','width','color','brush'},
                     'update_layer':{'node_id','name','opacity'}}
             kind=body.get('type')

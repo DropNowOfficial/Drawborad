@@ -20,10 +20,27 @@ int main(int argc,char** argv){assert(argc==2);NewDocumentRequest req;req.dimens
  }
  auto stream=NativeLayerStream::create(s,{s.revision});assert(stream&&stream.value().size()==2);
  auto layer=stream.value().read(0);assert(layer);assert(layer.value().blend==BlendMode::Multiply&&layer.value().opacity==.5);
- for(unsigned y=0;y<5100;y++)for(unsigned x=0;x<3300;x++)for(unsigned c=0;c<4;c++){
-  unsigned expected=0;if(x>=510&&x<518&&y>=509&&y<515)expected=local.bytes[((y-509)*8+x-510)*4+c];
-  assert(layer.value().pixels.bytes[(std::size_t(y)*3300+x)*4+c]==expected);
+ assert(layer.value().x==510 && layer.value().y==509);
+ assert(layer.value().pixels.width==8 && layer.value().pixels.height==6);
+ assert(layer.value().pixels.bytes==local.bytes);
+ // Offset masks must sample global coordinates, not the cropped PNG origin.
+ auto maskState=s;auto maskNodes=std::make_shared<NodeMap>(*s.nodes);auto maskResources=std::make_shared<ResourceMap>(*s.resources);
+ auto mask=std::make_shared<Bytes>(3300*5100,255);(*mask)[510*3300+512]=0;(*mask)[510*3300+513]=128;
+ Resource mr;mr.id=sha256(*mask);mr.kind=ResourceKind::Mask;mr.bytes=mask;(*maskResources)[mr.id]=mr;
+ maskNodes->at(Id::fromNumber(30)).maskId=mr.id;maskState.nodes=maskNodes;maskState.resources=maskResources;
+ auto maskStream=NativeLayerStream::create(maskState,{maskState.revision});assert(maskStream);
+ auto maskLeaf=maskStream.value().read(0);assert(maskLeaf && maskLeaf.value().pixels.width==8);
+ assert(maskLeaf.value().pixels.bytes[(1*8+2)*4+3]==0 && maskLeaf.value().pixels.bytes[(1*8+3)*4+3]==64);
+ auto maskMerged=renderMergedDocument(maskState,{maskState.revision});assert(maskMerged);
+ for(unsigned c=0;c<3;c++){
+  assert(maskMerged.value().merged.bytes[(510ull*3300+512)*4+c]==bg[c]);
+  const std::uint64_t sa=32,den=255*255,num=std::uint64_t(bg[c])*255*(255-sa)*255+std::uint64_t(fg[c])*bg[c]*sa*255;
+  const auto expected=(num+den*255/2)/(den*255);
+  assert(maskMerged.value().merged.bytes[(510ull*3300+513)*4+c]==expected);
  }
+ assert(maskLeaf.value().x==510&&maskLeaf.value().y==509&&maskLeaf.value().opacity==.5);
+ // Release full masked composite before export, keeping this test's residency bounded.
+ maskMerged.value().merged.bytes.clear();maskMerged.value().merged.bytes.shrink_to_fit();
  layer.value().pixels.bytes.clear();layer.value().pixels.bytes.shrink_to_fit();
  ExportPlan plan;plan.request.format=ExportFormat::Ora;plan.request.path=argv[1];plan.request.size={3300,5100};plan.request.overwrite=true;
  auto out=writeOraStream(plan,stream.value().size(),[&](std::size_t i,std::stop_token stop){return stream.value().read(i,stop);},merged.value().merged,{});assert(out);
@@ -39,6 +56,8 @@ int main(int argc,char** argv){assert(argc==2);NewDocumentRequest req;req.dimens
  auto largeCommand=croppedRaster::make(std::move(large),{1},{2},{1000,2000,1024,1024},3300,5100,Id::fromNumber(31));assert(largeCommand);assert(doc.value().apply(largeCommand.value(),s.revision));
  auto largeState=doc.value().snapshot();assert(planMergedDocument(largeState));auto largeRender=renderMergedDocument(largeState,{largeState.revision});assert(largeRender);
  assert(largeRender.value().merged.bytes[(2000ull*3300+1000)*4]==0);assert(largeRender.value().merged.bytes[(3024ull*3300+2024)*4]==51);
+ MergedBudget tooSmall;tooSmall.maxBytes=64*1024*1024;assert(!planMergedDocument(largeState,tooSmall));
+ std::stop_source stopped;stopped.request_stop();assert(!stream.value().read(0,stopped.get_token()));
  std::cout<<"PASS prepared views: cross-snapshot rejection, corrupted resource rejection, actual1Mi-pixel ROI on poster within unchanged work budget\n";
  std::cout<<"PASS real merged + LayerStream + PNG/ORA: native3300x5100 ROI crosses512, Multiply/opacity, hidden and transparent canvas\n";
 }

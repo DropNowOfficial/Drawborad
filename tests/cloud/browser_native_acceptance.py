@@ -373,6 +373,59 @@ def exercise_lineart(page, output, url, token):
     return receipt
 
 
+def exercise_under_ink(page, output):
+    """Actual default-off control, synthetic AA lineart and independent color layer."""
+    output.mkdir(parents=True,exist_ok=True)
+    source=output/'technical-aa-lineart.png'
+    ink=Image.new('RGBA',(512,512),'white');pen=ImageDraw.Draw(ink)
+    for left,right in ((40,230),(280,470)):
+        for inset,gray in ((0,0),(2,128),(3,220)):
+            pen.rectangle((left+inset,40+inset,right-inset,470-inset),outline=(gray,gray,gray,255),width=2 if inset==0 else 1)
+    ink.save(source);original=source.read_bytes()
+    click_post(page,page.locator('#nativeClose'),'/close')
+    page.locator('#nativeFile').set_input_files(source)
+    initial=click_post(page,page.locator('#nativeImport'),'/import-lineart',201)
+    expect(page.locator('#nativeInkCover')).not_to_be_checked()
+    added=click_post(page,page.locator('#nativeAddFillLayer'),'/commands')
+    expect(page.locator('#nativeInkCover')).to_be_enabled()
+    page.locator('#nativeColor').evaluate("e=>{e.value='#00ffff';e.dispatchEvent(new Event('input',{bubbles:true}))}")
+    page.locator('#nativeTolerance').fill('0');page.locator('#nativeBucket').check()
+    def fill():
+        image=page.locator('#nativePreview');image.scroll_into_view_if_needed();b=image.bounding_box();assert b
+        with page.expect_response(endpoint('POST','/commands')) as pending:
+            page.mouse.click(b['x']+b['width']*100/512,b['y']+b['height']*200/512)
+        assert pending.value.status==200,pending.value.text()
+        expect(page.locator('#nativeNew')).to_be_enabled(timeout=90000)
+        state=pending.value.json();assert state['nodes']==added['nodes']
+        return state
+    def exported(name):
+        folder=output/name;folder.mkdir(exist_ok=True)
+        path=download(page,'Export painting PNG',folder,'painting.png')
+        with Image.open(path) as image:return image.convert('RGBA').copy()
+    fill();base=exported('default');click_post(page,page.locator('#nativeUndo'),'/undo')
+    page.locator('#nativeInkCover').check();fill();covered=exported('covered')
+    assert covered.getpixel((43,200))[0]==0 and base.getpixel((43,200))[0]==220
+    assert covered.getpixel((42,200))[0]==0 and base.getpixel((42,200))[0]==128
+    changed=0
+    for y in range(512):
+        for x in range(512):
+            if covered.getpixel((x,y))!=base.getpixel((x,y)):
+                changed+=1;assert ink.getpixel((x,y))[:3]!=(255,255,255)
+                assert x<240,'second region changed'
+    assert changed>0
+    page.locator('#nativeEditor').screenshot(path=output/'actual-editor.png',mask=[page.locator('#token')])
+    click_post(page,page.locator('#nativeUndo'),'/undo');assert exported('undo').tobytes()==ink.tobytes()
+    click_post(page,page.locator('#nativeRedo'),'/redo');assert exported('redo').tobytes()==covered.tobytes()
+    click_post(page,page.locator('#nativeSaveCopy'),'/save-copy',201)
+    draw=download(page,'Download saved .draw',output,'painting.draw')
+    click_post(page,page.locator('#nativeClose'),'/close');page.locator('#nativeFile').set_input_files(draw)
+    click_post(page,page.locator('#nativeImport'),'/import',201)
+    assert exported('reopened').tobytes()==covered.tobytes() and source.read_bytes()==original
+    receipt={'actual_chromium_clicks':True,'default_off':True,'under_ink':2,'additional_ink_pixels':changed,'other_white_and_second_region_unchanged':True,'undo_redo_reopen_equal':True,'scope':'synthetic AA edge coverage, not artwork quality'}
+    (output/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
+    return receipt
+
+
 def exercise_mypaint(page, output, width=512, height=512):
     """Actual optional-library UI strokes, not a finished-art acceptance."""
     output.mkdir(parents=True,exist_ok=True)
@@ -515,13 +568,14 @@ def exercise(context, page, source, output, url, token, restart):
     assert imported["id"] != saved["id"] and imported["strokes"] == saved["strokes"]
     assert preview(page) == after
     lineart = exercise_lineart(page, output / "lineart", url, token)
+    under_ink = exercise_under_ink(page, output / 'under-ink')
     mypaint = exercise_mypaint(page, output / "mypaint") if os.environ.get("DRAWBORAD_REQUIRE_MYPAINT")=="1" else {"requested":False}
     mypaint_poster = exercise_mypaint(page, output / "mypaint-poster",3300,5100) if os.environ.get("DRAWBORAD_REQUIRE_MYPAINT")=="1" else {"requested":False}
     changed_pixels = sum(before[i:i+3] != after[i:i+3] for i in range(0, len(after), 3))
     return {"project": saved["id"], "strokes": saved["stroke_count"], "stroke": stroke["id"],
             "changed_browser_pixels": changed_pixels, "saved_revision": saved["revision"],
             "stale_status": 409, "locked_status": 423, "exports": [draw.name, png.name, ora.name],
-            "lineart": lineart, "mypaint": mypaint, "mypaint_poster": mypaint_poster}
+            "lineart": lineart, "under_ink": under_ink, "mypaint": mypaint, "mypaint_poster": mypaint_poster}
 
 
 def verify_in_chromium(source, output, url, token, restart, environment):

@@ -8,6 +8,60 @@ is necessary but does not establish artistic quality. Preserve the chosen
 composition, natural figures, varied clean marks and independent editable layers;
 do not call low-resolution reconstruction newly recovered native detail.
 
+## Opt-in under-ink edge coverage (local integration, CI pending)
+
+The bucket now offers a default-off, bounded 2-pixel under-ink extension. The
+original flood and its tolerance are unchanged. Only extension pixels are limited
+to nonwhite, nontransparent pixels of one locked, unmasked, untransformed upper
+black/gray original-lineart raster over a root-level color layer. Unsupported
+stacks and colored sources reject rather than guess. Original PNG/raw resources
+remain unchanged. Values 0/1/2 are supported by the native command; 0 is the old
+behavior. Existing bucket engine-8 explicit runs persist the result without a new
+file format or changes to old schema meanings.
+
+Local strict C++ tests passed for gray and partially transparent edges, untouched
+white regions, unchanged resources, default identity, undo/redo and rejected
+stacks. A local source-derived hollow contour gained 606 ink-only pixels at 1px
+and 753 at 2px; visible AA fringe reduced, but true-white gaps intentionally remain.
+This is source-contour calibration, not new high-resolution detail or a finished
+cover. All local JS tests and eight transport tests passed. Permanent synthetic C++
+and Qt-session cases plus actual Chromium edge-control/undo/reopen checks are
+registered. New Qt/browser integration has not yet been verified.
+
+## Cropped ORA leaf export (local integration, CI pending)
+
+Cropped MyPaint leaves now export their actual ROI dimensions and global x/y
+placement, rather than a full transparent canvas for every stroke. Other layer
+exports and .draw formats are unchanged. Local strict C++/libpng plus independent
+Pillow verification exercised an 8x6 leaf at (510,509) in a 3300x5100 canvas,
+Multiply at 50% opacity, global mask sampling across a 512 tile boundary, existing
+1Mi-pixel ROI budget, and unchanged full-image recomposition. GIMP 3.0.4 console
+import verified the candidate's cropped dimensions, offsets, blend and opacity;
+this was not a desktop GUI test. The small leaf's pixel buffer is 192 bytes instead
+of 67,320,000, not a claim that the whole app uses only that memory. Full merged
+canvas and paper still exist. New integrated CI remains pending.
+
+## CI and durable continuation
+
+Latest published checkpoint before edge coverage: d23ba38, portrait contained-image
+mouse coordinate mapping. Remote text audit read all 144 test/QA files; obsolete
+raster/native-count assertions were corrected in 61eb204 and 640ac61. Existing
+behavior assertions were retained. d23 cloud runtime passed; Linux/native/browser
+run 43217346552 is still in progress. The last fully verified MyPaint GUI is
+512x512 at e5a845e, not the new poster workflow.
+
+Local actual native poster experiment: 3300x5100, six bounded cropped strokes,
+undo/redo, save-copy/reopen pixel equality and independently recomposed ORA passed.
+It is a technical eye study, not complete artwork. The new poster Chromium receipt
+must still be collected. Save new format-13 work to a separate new file; the
+previous guarded reader rejects it, but arbitrary ancient readers cannot be made
+safe retrospectively by writing a new file.
+
+Next: collect current full CI and actual poster GUI receipt; validate edge coverage
+through Qt and browser; publish only source/tests/docs; optimize cropped ORA leaf
+buffers; continue truthful complete-artwork quality review. No private references
+or credentials are included in source commits, no PR merge or PR9 changes.
+
 ## Cropped integration CI correction
 
 `b680d6d` compiled on both Linux platforms.74/75 tests passed, including allfour

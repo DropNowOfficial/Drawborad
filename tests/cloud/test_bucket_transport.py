@@ -74,6 +74,19 @@ class CommandRoutes(unittest.TestCase):
             self.assertEqual(copied.status_code,201)
             self.assertNotEqual(copied.json()['id'],pid)
             self.assertEqual(calls[-1][0],'save_copy')
+    def test_opt_in_under_ink_is_forwarded_only_for_bucket(self):
+        with tempfile.TemporaryDirectory() as root:
+            app=FastAPI();p=install_projects(app,SimpleNamespace(root=root),lambda:None)
+            pid=str(uuid4());p.active=pid;calls=[]
+            p.select=lambda value:p.state({'revision':'4','dirty':True})
+            p.rpc=lambda method,**params:(calls.append((method,params)) or {'revision':'5','dirty':True})
+            client=TestClient(app)
+            body={'expected_revision':'4','type':'bucket_fill','layer_id':'abc','x':1,'y':2,'tolerance':0,'color':'#aabbcc','under_ink':2}
+            self.assertEqual(client.post('/api/v1/projects/'+pid+'/commands',json=body).status_code,200)
+            self.assertEqual(calls[-1],('command',body))
+            bad={'expected_revision':'4','type':'add_fill_layer','under_ink':2}
+            self.assertEqual(client.post('/api/v1/projects/'+pid+'/commands',json=bad).status_code,422)
+            self.assertEqual(len(calls),1)
     def test_pen_payload_is_forwarded_without_adding_paths(self):
         with tempfile.TemporaryDirectory() as root:
             app=FastAPI();p=install_projects(app,SimpleNamespace(root=root),lambda:None)

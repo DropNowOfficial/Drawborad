@@ -288,11 +288,13 @@ public:
                 const auto x=pixelInteger(p.value("x")),y=pixelInteger(p.value("y"));
                 const auto tolerance=pixelInteger(p.value("tolerance"));
                 need(tolerance<=255,"session.tolerance");
+                const auto underInk=p.contains("under_ink")?pixelInteger(p.value("under_ink")):0;
+                need(underInk<=2,"session.under-ink");
                 const auto layer=parseId(p.value("layer_id"));
                 const auto color=browserColor(s,p.value("color"));
                 auto frame=checked(renderMergedDocument(s,{s.revision,s.eventIndex->size()}));
                 command=checked(bucketFillCommand(s,layer,newEventId(),frame.merged,
-                                                  x,y,std::uint8_t(tolerance),color));
+                                                  x,y,std::uint8_t(tolerance),color,{},std::uint8_t(underInk)));
             } else if(type=="draw_stroke") {
                 const auto s=snapshot();const auto width=p.value("width");
                 need(width.isDouble() && std::isfinite(width.toDouble()),"session.pen-width");

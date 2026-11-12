@@ -22,7 +22,8 @@ const run=html.match(/async function nativeRun\(action\)\{[\s\S]*?\n\}/)[0];
 const click=html.match(/by\('nativePreview'\)\.onclick=event=>\{[\s\S]*?\n\};/)[0];
 const add=html.match(/async function nativeAddFillLayer\(\)\{[\s\S]*?\n\}/);
 assert.ok(add,'new color layer handler must exist');
-const elements={nativeBucket:{checked:true},nativeTolerance:{value:'0'},
+assert.match(html, /id="nativeInkCover" type="checkbox" disabled>/, 'edge coverage defaults off');
+const elements={nativeInkCover:{checked:false},nativeBucket:{checked:true},nativeTolerance:{value:'0'},
  nativeColor:{value:'#aabbcc'},nativePreview:{getBoundingClientRect:()=>rect}};
 let resolvePost,calls=[];
 Object.assign(context,{nativeState:state,nativeSelectedNodeId:'layer',nativeBusy:false,
@@ -43,6 +44,12 @@ vm.runInContext(ready+'\n'+run+'\n'+click,context);
  assert.equal(JSON.stringify(calls[0].body),JSON.stringify({expected_revision:'4',type:'bucket_fill',layer_id:'layer',x:50,y:25,tolerance:0,color:'#aabbcc'}));
  resolvePost({});await new Promise(resolve=>setImmediate(resolve));
  assert.equal(context.nativeBusy,false);
+ elements.nativeInkCover.checked=true;
+ elements.nativePreview.onclick({clientX:110,clientY:120});
+ assert.equal(calls.length,2);
+ assert.equal(calls[1].body.under_ink,2,'explicit opt-in adds bounded under-ink request');
+ resolvePost({});await new Promise(resolve=>setImmediate(resolve));
+ elements.nativeInkCover.checked=false;
  context.nativePost=async(path,body)=>{
   assert.equal(JSON.stringify(body),JSON.stringify({expected_revision:'4',type:'add_fill_layer'}));
   return {...state,revision:'5',nodes:[...state.nodes,{id:'new-color',parent_id:'root',kind:3,locked:false,visible:true}]};

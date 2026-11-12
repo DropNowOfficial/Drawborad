@@ -5,5 +5,5 @@ namespace drawborad {
 Result<Command> addFillLayerCommand(const DocumentSnapshot&, NodeId layer, bool mergedPreview = false, bool belowInk = false);
 Result<Command> bucketFillCommand(const DocumentSnapshot&, NodeId layer, Id event,
     const TileData& reference, std::uint32_t x, std::uint32_t y,
-    std::uint8_t tolerance, ColorValue color, std::stop_token stop = {});
+    std::uint8_t tolerance, ColorValue color, std::stop_token stop = {}, std::uint32_t underInkPixels = 0);
 }

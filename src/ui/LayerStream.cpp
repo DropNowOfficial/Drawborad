@@ -25,6 +25,17 @@ Result<ArchiveLayer> NativeLayerStream::read(std::size_t index,std::stop_token s
  try{
   const auto& s=snapshot_;const auto size=s.spec.pixelSize;const auto id=order_[index];
   ArchiveLayer out;auto& image=out.pixels;
+  if(!id.empty() && s.nodes->at(id).stage==croppedRaster::Stage) {
+   const auto& node=s.nodes->at(id);const auto* crop=croppedViews_.find(s,id);
+   if(!crop)return error(ErrorCode::CorruptData,"crop.prepared-view");
+   out.name=node.name;out.visible=layerVisible(s,id);out.opacity=node.opacity;out.blend=node.blend;
+   out.x=crop->bounds.x;out.y=crop->bounds.y;
+   image.width=std::uint32_t(crop->bounds.width);image.height=std::uint32_t(crop->bounds.height);image.rowStride=crop->bounds.width*4;
+   image.format=s.spec.colorSpec.format;image.profileId=s.spec.colorSpec.profileId;image.engineVersion=2;
+   image.bytes.assign(crop->rgba.begin(),crop->rgba.end());
+   auto masked=nativeMaskedTile(s,id,std::move(image),out.x,out.y,&croppedViews_);if(!masked)return masked.error();
+   out.pixels=std::move(masked.value());return out;
+  }
   image.width=std::uint32_t(size.width);image.height=std::uint32_t(size.height);image.rowStride=size.width*4;
   image.format=s.spec.colorSpec.format;image.profileId=s.spec.colorSpec.profileId;image.engineVersion=2;
   image.bytes.resize(std::size_t(image.rowStride*size.height));
