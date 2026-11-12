@@ -260,3 +260,42 @@ All implementation below remains isolated candidate work. This documentation upd
 ### Current completion boundary
 
 The software can now demonstrably create and round-trip native 2048 strokes and independent layers, but that does not complete high-quality layered character art. Fine-line fidelity, production v7/v8 safety and compatibility, actual bucket UI workflow, complete semantic editing, and artist-level artwork remain separate unfinished gates. No 512-to-2048 “detail restoration” or completed six-page delivery is claimed.
+
+## Follow-up: 2026-11-12 06:36 UTC
+
+This entry updates the bucket workflow and compatibility evidence. Candidate code remains isolated and unpublished.
+
+### Selected native checks and work budgets
+
+- Five selected targets passed in 5.62 seconds: `F04`, `H04.StreamingOra`, `B08.Bucket`, `V07.FineCoverage`, and `B09.FineFill`. This is **not a complete-repository test run**.
+- Native engine-v7 2048 PNG charged 110,042,765 shared work units.
+- Single-pass layered ORA charged 127,016,797 of 134,217,728 allowed work units. Merged pixels matched exactly, and separate empty Color / populated Ink layers were preserved.
+- The native fine-v7 + bucket-v8 combined test charged 127,750,361 work units, with 1,880 fill runs and 215,613 filled pixels. All 104 ink events were unchanged and undo was exact.
+- These cases fit without raising limits, but leave little budget headroom. They do not establish arbitrary-project capacity.
+- Masked v7 operation remains rejected rather than claiming unverified support.
+
+### Actual GUI bucket workflow, with a precise version boundary
+
+- The real cloud browser completed an **engine-v3 authored-path ink + engine-v8 bucket** workflow: manually entered a skin-color hex value, clicked the face, and created one fill event.
+- Saving to the old project path was rejected. Saving an independent new copy worked, followed by Undo, Redo, and Save at revision 4.
+- Earlier Chromium error 9 was traced to GPU-unavailable browser logs. The test browser ran with GPU disabled; its sandbox was not disabled.
+- This verifies the v3-ink/v8-fill GUI path. The **v7-fine-coverage/v8-fill combination has not yet passed actual GUI acceptance**, despite passing the native combined test above.
+- This licensed-source coloring demonstration is not original artist-quality output or completion of the requested comic pages.
+
+### Reproduced old-reader overwrite hazard and new safeguards
+
+- An isolated temporary copy reproduced a serious compatibility hazard: an older reader fell back to a valid legacy backup and then Save overwrote the newer v8 primary file.
+- The new Session/ProjectStore path holds a file lease and requires a clean, distinct file stem for version upgrades/downgrades. Mixed-version primary/backup/journal combinations are rejected.
+- Rejection checks preserved original and backup bytes and active state unchanged.
+- The new reader classifies unknown engines as `UnsupportedFeature`, does not fall back to the older backup, and retains the primary-file error.
+- Actual HTTP save-copy checks rejected stale revisions, switched the active project to the new ID on success, and left downloads of the original project byte-identical.
+- Two old-reader builds, pre-v6 and pre-v8, rejected the tested pure-v8 primary/backup pair.
+- **Already released old readers are not repaired by this candidate.** Keeping new-format copies separate remains necessary. Do not describe this as universal backward compatibility or safe overwriting of legacy projects.
+
+### Unfinished gates
+
+- Actual v7 + v8 combined GUI workflow and its save/reopen/export acceptance.
+- Independent review and broader regressions for the new compatibility protections and budget accounting.
+- Support for currently rejected masked v7 cases, if introduced, would need its own design and tests.
+- Artist-quality original creation, accurate complete semantic layers, and finished high-resolution comic delivery remain unachieved.
+- Only documentation is uploaded in this update; no implementation, reference images, or candidate artwork is published.
