@@ -19,6 +19,7 @@ Result<MergedPlan> plan(const DocumentSnapshot& s,MergedBudget budget){
  const auto size=s.spec.pixelSize;
  if(s.spec.colorSpec.format!=PixelFormat{ColorMode::RGB,Depth::U8,true})return error(ErrorCode::UnsupportedFeature,"merged.rgb8-required");
  auto pixels=checkedMultiply(size.width,size.height);if(!pixels)return pixels.error();
+ if(size.width>budget.maxAxis||size.height>budget.maxAxis||pixels.value()>budget.maxPixels)return error(ErrorCode::BudgetExceeded,"merged.canvas-limit");
  auto bytes=checkedMultiply(pixels.value(),4);if(!bytes)return bytes.error();
  if(size.width>UINT32_MAX || size.height>UINT32_MAX || bytes.value()>std::numeric_limits<std::size_t>::max())return error(ErrorCode::BudgetExceeded,"merged.layout");
  // nativeCompositingSupported scans every binary ancestor mask in full.

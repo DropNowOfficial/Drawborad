@@ -4,6 +4,9 @@
 #include <memory>
 #include <optional>
 namespace drawborad {
+inline constexpr std::uint64_t LegacyMaxResourceBytes=64ull*1024*1024;
+inline constexpr std::uint64_t MaxResourceBytes=128ull*1024*1024;
+inline constexpr std::uint64_t MaxLargeDocumentResourceBytes=256ull*1024*1024;
 enum class NodeKind { Root, Object, Group, Layer };
 enum class SourceKind { ImportedRaster, ReferenceOnly, Reconstructed };
 enum class BlendMode { Normal, Multiply, Screen, Darken, Lighten };

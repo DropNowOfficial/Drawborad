@@ -6,8 +6,8 @@ namespace drawborad {
 // Budget models merged/current-layer/PNG capacities plus metadata and encoder
 // scratch. Caller-owned snapshot and opaque provider caches need their own budget.
 struct OraStreamLimits {
-    std::uint64_t maxWorkingBytes=128*1024*1024, maxLayerBytes=64*1024*1024;
-    std::uint64_t maxPngBytes=64*1024*1024, maxOutputBytes=2*1024*1024*1024ull;
+    std::uint64_t maxWorkingBytes=320*1024*1024, maxLayerBytes=128*1024*1024;
+    std::uint64_t maxPngBytes=128*1024*1024, maxOutputBytes=2*1024*1024*1024ull;
     std::uint64_t maxMetadataBytes=4*1024*1024;
     std::size_t maxLayers=1024;
 };

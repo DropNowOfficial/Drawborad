@@ -8,7 +8,7 @@ void put(Bytes& b,std::uint32_t n){for(unsigned i=0;i<4;i++)b.push_back(std::uin
 }
 Result<Command> makeLineartRasterCommand(Bytes rgba,Bytes originalPng,std::uint32_t w,std::uint32_t h,NodeId id){
  const auto n=std::uint64_t(w)*h;
- if(!w||!h||n>(64*1024*1024-16)/4||rgba.size()!=n*4||id.empty()||originalPng.empty()||originalPng.size()>64*1024*1024)
+ if(!w||!h||n>(MaxResourceBytes-16)/4||rgba.size()!=n*4||id.empty()||originalPng.empty()||originalPng.size()>MaxResourceBytes)
   return error(ErrorCode::InvalidInput,"lineart.rgba-layout");
  try{
   Resource png;png.kind=ResourceKind::Reference;png.id=sha256(originalPng);png.bytes=std::make_shared<const Bytes>(std::move(originalPng));

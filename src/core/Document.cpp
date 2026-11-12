@@ -88,10 +88,14 @@ Result<void> validateSnapshot(const DocumentSnapshot& s) {
     if (listed.size() + 1 != ns.size())
         return error(ErrorCode::CorruptData, "node.unreachable");
     std::map<Hash, int> colors;
+    std::uint64_t resourceBytes=0;bool hasLargeResource=false;
     for (auto& [id, r] : *s.resources) {
-        if (id.empty() || r.id != id || !r.bytes || r.bytes->size() > 64ull * 1024 * 1024 ||
+        if (id.empty() || r.id != id || !r.bytes || r.bytes->size() > MaxResourceBytes ||
             int(r.kind) < 0 || int(r.kind) > 4)
             return error(ErrorCode::CorruptData, "resource.invalid");
+        hasLargeResource=hasLargeResource || r.bytes->size()>LegacyMaxResourceBytes;
+        auto total=checkedAdd(resourceBytes,r.bytes->size());if(!total)return total.error();resourceBytes=total.value();
+        if(hasLargeResource && resourceBytes>MaxLargeDocumentResourceBytes)return error(ErrorCode::BudgetExceeded,"resource.large-document-budget");
         std::vector<std::pair<Hash, bool>> stack{{id, false}};
         while (!stack.empty()) {
             auto [h, exit] = stack.back();

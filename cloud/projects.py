@@ -12,7 +12,8 @@ from threading import Lock
 import time
 from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import Response, FileResponse
+from starlette.background import BackgroundTask
 
 
 def fail(status, code, message):
@@ -149,14 +150,17 @@ class Projects:
 
     def render(self,pid,format,event_limit=None):
         self.select(pid)
-        with tempfile.TemporaryDirectory(dir=self.root) as tmp:
-            path=Path(tmp)/('preview.'+format)
+        tmp=tempfile.TemporaryDirectory(dir=self.root)
+        try:
+            path=Path(tmp.name)/('preview.'+format)
             params=dict(path=str(path),format=format)
             if event_limit is not None:params['event_limit']=event_limit
             result=self.rpc('export',**params)
-            return Response(path.read_bytes(),media_type='image/png' if format=='png' else 'image/openraster',
+            return FileResponse(path,media_type='image/png' if format=='png' else 'image/openraster',background=BackgroundTask(tmp.cleanup),
                             headers={'Cache-Control':'no-store','X-Drawborad-Revision':result['revision'],'X-Drawborad-Source-Asset-Reads':result['source_asset_reads'],
                                      'X-Drawborad-Export-Warnings':json.dumps(result.get('warnings',[]),ensure_ascii=True)})
+        except BaseException:
+            tmp.cleanup();raise
 
 
 def install_projects(app,config,authorized):
@@ -182,21 +186,29 @@ def install_projects(app,config,authorized):
     @router.post('/import',status_code=201)
     def import_project(project:UploadFile=File(...)):
         with projects.transaction():
-            data=project.file.read(64*1024*1024+1)
-            if not data or len(data)>64*1024*1024:fail(413,'invalid_input','Choose a .draw file up to 64 MiB')
             with tempfile.NamedTemporaryFile(dir=projects.root) as tmp:
-                tmp.write(data);tmp.flush()
+                total=0
+                while chunk:=project.file.read(1024*1024):
+                    total+=len(chunk)
+                    if total>256*1024*1024:fail(413,'invalid_input','Choose a .draw file up to 256 MiB')
+                    tmp.write(chunk)
+                if not total:fail(413,'invalid_input','Choose a nonempty .draw file')
+                tmp.flush()
                 return projects.import_file(tmp.name)
 
     @router.post('/import-lineart',status_code=201)
     def import_lineart(lineart:UploadFile=File(...)):
         with projects.transaction():
             params=projects.prepare_switch()
-            data=lineart.file.read(32*1024*1024+1)
-            if not data or len(data)>32*1024*1024:fail(413,'invalid_input','Choose a PNG lineart file up to 32 MiB')
-            if not data.startswith(b'\x89PNG\r\n\x1a\n'):fail(422,'invalid_input','PNG lineart required')
             with tempfile.NamedTemporaryFile(dir=projects.root,suffix='.png') as tmp:
-                tmp.write(data);tmp.flush()
+                total=0
+                while chunk:=lineart.file.read(1024*1024):
+                    if total==0 and not chunk.startswith(b'\x89PNG\r\n\x1a\n'):fail(422,'invalid_input','PNG lineart required')
+                    total+=len(chunk)
+                    if total>128*1024*1024:fail(413,'invalid_input','Choose a PNG lineart file up to 128 MiB')
+                    tmp.write(chunk)
+                if not total:fail(413,'invalid_input','Choose a nonempty PNG lineart file')
+                tmp.flush()
                 state=projects.rpc('import_lineart',path=tmp.name,**params)
             projects.active=str(uuid4());projects.project_path(projects.active).parent.mkdir()
             return projects.state(state)
@@ -255,8 +267,16 @@ def install_projects(app,config,authorized):
         with projects.transaction():
             state=projects.select(pid)
             if state['dirty']:fail(409,'unsaved_changes','Save the project before downloading')
-            return Response(projects.project_path(pid).read_bytes(),media_type='application/octet-stream',
-                            headers={'Content-Disposition':'attachment; filename="project.draw"','Cache-Control':'no-store'})
+            # Snapshot while holding the transaction; later saves cannot mutate
+            # a file already being streamed to the browser.
+            tmp=tempfile.TemporaryDirectory(dir=projects.root)
+            try:
+                snapshot=Path(tmp.name)/'project.draw'
+                shutil.copyfile(projects.project_path(pid),snapshot)
+                return FileResponse(snapshot,media_type='application/octet-stream',background=BackgroundTask(tmp.cleanup),
+                                    headers={'Content-Disposition':'attachment; filename="project.draw"','Cache-Control':'no-store'})
+            except BaseException:
+                tmp.cleanup();raise
 
     app.include_router(router)
     return projects

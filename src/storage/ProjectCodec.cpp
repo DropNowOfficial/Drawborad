@@ -65,7 +65,7 @@ LayerNode node(Reader& r){
  n.bounds={std::bit_cast<std::int64_t>(r.u64()),std::bit_cast<std::int64_t>(r.u64()),r.u64(),r.u64()};n.children=ids(r);n.provenance=ids(r);n.composite=r.boolean();return n;
 }
 void put(Writer& w,const Resource& a){w.hash(a.id);w.u64(std::uint64_t(a.kind));putHashes(w,a.dependencies);w.hash(sha256(*a.bytes));w.blob(*a.bytes);}
-Resource resource(Reader& r){Resource a;a.id=r.hash();auto k=r.u64();if(k>4)throw binary::Invalid{};a.kind=ResourceKind(k);a.dependencies=hashes(r);auto digest=r.hash();a.bytes=std::make_shared<const Bytes>(r.blob());if(sha256(*a.bytes)!=digest)throw binary::Invalid{};return a;}
+Resource resource(Reader& r){Resource a;a.id=r.hash();auto k=r.u64();if(k>4)throw binary::Invalid{};a.kind=ResourceKind(k);a.dependencies=hashes(r);auto digest=r.hash();a.bytes=std::make_shared<const Bytes>(r.blob(MaxResourceBytes));if(sha256(*a.bytes)!=digest)throw binary::Invalid{};return a;}
 void put(Writer& w,const StrokeEvent& e){
  w.id(e.id);w.id(e.objectId);w.id(e.layerId);w.u64(e.startUs);w.u64(e.endUs);w.text(e.toolId);put(w,e.color);w.u64(e.geometry.size());
  for(auto& p:e.geometry){w.real(p.x);w.real(p.y);w.real(p.pressure);w.boolean(bool(p.tiltX));if(p.tiltX)w.real(*p.tiltX);w.boolean(bool(p.tiltY));if(p.tiltY)w.real(*p.tiltY);w.u64(p.timestampUs);w.u64(p.deviceKind);w.u64(p.capabilities);}
@@ -81,6 +81,7 @@ StrokeEvent event(Reader& r){
 }
 namespace {
 const char* requiredFormatHeader(const DocumentSnapshot& s){
+ if(std::any_of(s.resources->begin(),s.resources->end(),[](const auto& item){return item.second.bytes->size()>LegacyMaxResourceBytes;}))return "DRAW-DELTA-11";
  if(std::any_of(s.eventIndex->begin(),s.eventIndex->end(),[](const auto& e){return e.engineVersion==10;}))return "DRAW-DELTA-10";
  if(std::any_of(s.nodes->begin(),s.nodes->end(),[](const auto& item){const auto& n=item.second;return n.sourceKind==SourceKind::ImportedRaster && n.stage=="drawborad.lineart.rgba.v1";}))return "DRAW-DELTA-9";
  if(std::any_of(s.eventIndex->begin(),s.eventIndex->end(),[](const auto& e){return e.engineVersion==8;}))return "DRAW-DELTA-8";
@@ -96,7 +97,7 @@ Result<Bytes> encodeDelta(const DocumentSnapshot& before,const DocumentSnapshot&
 }
 Result<DocumentSnapshot> decodeDelta(std::span<const std::uint8_t> bytes,const DocumentSnapshot& base){
  if(bytes.size()>MaxProjectBytes)return error(ErrorCode::BudgetExceeded,"project.record-limit");
- try{Reader r{bytes};const auto format=r.text(32);if(format!="DRAW-DELTA-1"&&format!="DRAW-DELTA-8"&&format!="DRAW-DELTA-9"&&format!="DRAW-DELTA-10"){if(format.starts_with("DRAW-DELTA-"))throw UnsupportedEngine{};throw binary::Invalid{};}auto prevId=r.id();auto prevRev=r.u64();auto prevHash=r.hash();if(prevId!=base.documentId||prevRev!=base.revision)return error(ErrorCode::StaleRevision,"journal.base");if(!base.documentId.empty()){auto h=stateHash(base);if(!h)return h.error();if(h.value()!=prevHash)return error(ErrorCode::DigestMismatch,"journal.base-hash");}
+ try{Reader r{bytes};const auto format=r.text(32);if(format!="DRAW-DELTA-1"&&format!="DRAW-DELTA-8"&&format!="DRAW-DELTA-9"&&format!="DRAW-DELTA-10"&&format!="DRAW-DELTA-11"){if(format.starts_with("DRAW-DELTA-"))throw UnsupportedEngine{};throw binary::Invalid{};}auto prevId=r.id();auto prevRev=r.u64();auto prevHash=r.hash();if(prevId!=base.documentId||prevRev!=base.revision)return error(ErrorCode::StaleRevision,"journal.base");if(!base.documentId.empty()){auto h=stateHash(base);if(!h)return h.error();if(h.value()!=prevHash)return error(ErrorCode::DigestMismatch,"journal.base-hash");}
  DocumentSnapshot out;out.documentId=r.id();out.revision=r.u64();out.spec=spec(r);if(!base.documentId.empty()&&(out.documentId!=base.documentId||out.revision<=base.revision))throw binary::Invalid{};
  auto ns=std::make_shared<NodeMap>(*base.nodes);for(auto id:ids(r))ns->erase(id);auto count=r.count(65536);while(count--){auto n=node(r);(*ns)[n.id]=std::move(n);}out.nodes=ns;
  auto rs=std::make_shared<ResourceMap>(*base.resources);for(auto h:hashes(r))rs->erase(h);count=r.count();while(count--){auto a=resource(r);(*rs)[a.id]=std::move(a);}out.resources=rs;bool append=r.boolean();auto ev=append?std::make_shared<EventList>(*base.eventIndex):std::make_shared<EventList>();count=r.count(2000000);if(ev->size()+count>2000000)throw binary::Invalid{};while(count--)ev->push_back(event(r));out.eventIndex=ev;if(!r.done())throw binary::Invalid{};auto v=validateSnapshot(out);if(!v)return v.error();if(format!=requiredFormatHeader(out))return error(ErrorCode::UnsupportedFeature,"project.format-feature-mismatch");return out;

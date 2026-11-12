@@ -134,22 +134,23 @@ public:
             {"saved_revision",saved?QJsonValue(number(*saved)):QJsonValue(QJsonValue::Null)},
             {"dirty",controller->dirty()},{"nodes",nodes},{"strokes",events},
             {"stroke_count",number(s.eventIndex->size())},
-            {"width",number(s.spec.pixelSize.width)},{"height",number(s.spec.pixelSize.height)},
+            {"width",number(s.spec.pixelSize.width)},{"height",number(s.spec.pixelSize.height)},{"ppi",s.spec.ppi},
             {"capabilities",capabilities}};
     }
     QJsonObject request(const QString& method,const QJsonObject& p) {
         if(method=="import_lineart") {
             canReplace(p);
             const auto source=pathValue(p.value("path"));
-            ResourceBudget budget;budget.scratchBytes=32*1024*1024;budget.ramReclaimBytes=64*1024*1024;
+            ResourceBudget budget;budget.scratchBytes=128*1024*1024;budget.ramReclaimBytes=128*1024*1024;
             const auto info=checked(preflightInput(source,budget));
             need(info.format==ImageFormat::Png,"lineart.png-required");
-            DecodeOptions options;options.limits.encodedBytes=32*1024*1024;options.limits.decodedBytes=64*1024*1024;
+            DecodeOptions options;options.limits.encodedBytes=128*1024*1024;options.limits.decodedBytes=128*1024*1024;
             auto imported=checked(decodeImage(source,options));
             need(imported.decodedPixels.has_value(),"lineart.decode");
             auto pixels=std::move(*imported.decodedPixels);
             need(pixels.format.mode==ColorMode::RGB && pixels.format.depth==Depth::U8 &&
                  pixels.rowStride==std::uint64_t(pixels.width)*pixels.format.channelCount(),"lineart.rgb8-required");
+            need(pixels.width<=8192 && pixels.height<=8192 && std::uint64_t(pixels.width)*pixels.height<=20000000,"lineart.size");
             if(!pixels.format.alpha) {
                 Bytes rgba(std::size_t(pixels.width)*pixels.height*4);
                 for(std::size_t i=0;i<rgba.size()/4;++i) {
@@ -157,7 +158,6 @@ public:
                 }
                 pixels.bytes=std::move(rgba);pixels.format.alpha=true;pixels.rowStride=std::uint64_t(pixels.width)*4;
             }
-            need(pixels.width<=4096 && pixels.height<=4096,"lineart.size");
             if(!imported.info.iccProfile.empty()) {
                 const auto& bytes=imported.info.iccProfile;
                 auto space=QColorSpace::fromIccProfile(QByteArray(reinterpret_cast<const char*>(bytes.data()),qsizetype(bytes.size())));
@@ -179,7 +179,7 @@ public:
                 saved=next->snapshot()->revision;
             } else {
                 auto w=integer(p.value("width")),h=integer(p.value("height"));
-                need(w>0 && h>0 && w<=4096 && h<=4096,"session.size");
+                need(w>0 && h>0 && w<=8192 && h<=8192 && w*h<=20000000,"session.size");
                 NewDocumentRequest r;r.dimensions={double(w),double(h),Unit::Px,300};
                 checked(next->newDocument(r));
                 checked(planMergedDocument(*next->snapshot()));path.clear();saved.reset();
@@ -220,10 +220,16 @@ public:
                 std::vector<InputSample> samples;samples.reserve(points.size());
                 for(const auto& value:points) {
                     need(value.isObject(),"session.pen-point");const auto point=value.toObject();
-                    need(point.size()==2 && point.value("x").isDouble() && point.value("y").isDouble(),"session.pen-point");
+                    need((point.size()==2 || (point.size()==3 && point.contains("pressure"))) && point.value("x").isDouble() && point.value("y").isDouble(),"session.pen-point");
                     InputSample sample;sample.x=point.value("x").toDouble();sample.y=point.value("y").toDouble();
                     need(std::isfinite(sample.x) && std::isfinite(sample.y),"session.pen-point");
-                    sample.pressure=1;sample.timestampUs=samples.size();samples.push_back(sample);
+                    sample.pressure=1;
+                    if(point.contains("pressure")) {
+                        need(point.value("pressure").isDouble(),"session.pen-pressure");
+                        sample.pressure=point.value("pressure").toDouble();
+                        need(std::isfinite(sample.pressure) && sample.pressure>=0 && sample.pressure<=1,"session.pen-pressure");
+                    }
+                    sample.timestampUs=samples.size();samples.push_back(sample);
                 }
                 command=checked(freehandStrokeCommand(s,parseId(p.value("layer_id")),newEventId(),
                     samples,width.toDouble(),browserColor(s,p.value("color"))));

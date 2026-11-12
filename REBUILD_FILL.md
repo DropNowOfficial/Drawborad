@@ -34,6 +34,38 @@ do not call low-resolution reconstruction newly recovered native detail.
   screenshots susceptible to subpixel layout resampling. Retain real screenshots
   as separate visual evidence. The new run is still required.
 
+## Native poster / transport increment
+
+11x17 inches at 300 DPI is 3300x5100, 16.83 million pixels. The prior 4096-axis
+and 64MiB single-layer limits could not support it. The new bounded path allows
+8192 per axis and 20 million total pixels, 128MiB merged/layer buffers, and 320MiB
+ORA working capacities. Work/index/geometry ceilings are unchanged. Source
+snapshots are additional memory; these limits are not a total process-RSS promise.
+Only resources larger than 64MiB require file floor11. Their total resource bytes
+are capped at 256MiB, each resource 128MiB, project file still 512MiB. Legacy small-
+resource collections retain their existing compatibility.
+
+Actual local C++ execution produced a 3300x5100 three-layer ORA, with a one-pixel
+black/gray imported guide retained exactly, lower cyan layer, 70 native tiles,
+v11 resource codec roundtrip and mixed-file safeguards. Independent PNG/layer
+recomposition passed. This is direct-size technical evidence, not the artwork.
+New canvas UI accepts explicit dimensions and shows native size/PPI. Browser
+.draw uploads stream in 1MiB chunks up to 256MiB; export/download streams retain
+an immutable temporary file until response completion, avoiding whole-file RAM
+loads. PNG uploads stream up to 128MiB. Native storage still accepts 512MiB, so files above 256MiB require direct
+native access rather than this browser import.
+
+Pen pointer events now retain device pressure (mouse remains constant pressure),
+and an empty coalesced-events array no longer drops ordinary movement samples.
+These Session/UI changes and poster integration require the next CI.
+
+Reference-driven cover experiment: complete original-size 1024x1536 region trace,
+no embedded bitmap resources, separate semantic zones. It is not an original
+redrawing or recovered high-resolution detail. v3 retains facial expression and
+broad/thin hierarchy but has quantized/grainy shadows and red; semantic boundaries
+are approximate and title lettering remains knockout pixels, not editable text.
+It is rejected as a finished high-quality/print-ready work.
+
 ## Next steps and remaining gaps
 
 1. Run exact current Session/API/browser fine-pen and lineart workflows, fix failures,

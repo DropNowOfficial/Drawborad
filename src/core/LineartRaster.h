@@ -20,7 +20,7 @@ inline Result<std::span<const std::uint8_t>> lineartRasterPixels(const DocumentS
  const auto& raw=resource->second;const auto& b=*raw.bytes;
  if(b.size()<16||!std::equal(std::begin(magic),std::end(magic),b.begin()))return error(ErrorCode::CorruptData,"lineart.header");
  auto w=get(b,8),h=get(b,12);const auto pixels=std::uint64_t(w)*h;
- if(!w||!h||w!=s.spec.pixelSize.width||h!=s.spec.pixelSize.height||pixels>(64*1024*1024-16)/4||b.size()!=16+pixels*4||raw.dependencies.size()!=1)
+ if(!w||!h||w!=s.spec.pixelSize.width||h!=s.spec.pixelSize.height||pixels>(MaxResourceBytes-16)/4||b.size()!=16+pixels*4||raw.dependencies.size()!=1)
   return error(ErrorCode::CorruptData,"lineart.rgba-layout");
  const auto png=s.resources->find(raw.dependencies.front());
  if(png==s.resources->end()||png->second.kind!=ResourceKind::Reference||!png->second.bytes||png->second.bytes->empty())return error(ErrorCode::CorruptData,"lineart.original-missing");

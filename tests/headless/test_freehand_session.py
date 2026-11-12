@@ -25,6 +25,9 @@ with tempfile.TemporaryDirectory() as d:
   state=ok('save_copy',path=str(root/'fine.draw'),expected_revision=state['revision']);ok('close',expected_revision=state['revision']);state=ok('open',path=str(root/'fine.draw'));assert pixels('reopened')==after
   assert state['strokes'][-1]['tool']=='fineliner-aa'
   ok('export',path=str(root/'fine.ora'),format='ora');inspect_ora(root/'fine.ora',after,(64,64))
-  print('Fine pen native draw/undo/redo/stale-revision/save/reopen/ORA passed')
+  assert 'error' in rpc('command',type='draw_stroke',layer_id=layer,points=[{'x':10,'y':40,'pressure':2}],width=1,color='#000000',expected_revision=state['revision'])
+  state=ok('command',type='draw_stroke',layer_id=layer,points=[{'x':8,'y':40.5,'pressure':1},{'x':55,'y':40.5,'pressure':0}],width=1,color='#000000',expected_revision=state['revision'])
+  tapered=pixels('pressure');assert tapered[(40*64+10)*4+3]>200 and 0<tapered[(40*64+50)*4+3]<50
+  print('Fine pen native draw/pressure/undo/redo/stale-revision/save/reopen/ORA passed')
  finally:
   proc.stdin.close();proc.wait(timeout=10)

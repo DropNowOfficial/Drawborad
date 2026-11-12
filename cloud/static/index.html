@@ -37,6 +37,8 @@ footer{color:#98a1ac;font-size:11px;margin-top:25px;line-height:1.7}.errors{colo
 <div class="panelbody nativebar">
 <label class="fieldlabel" for="nativeFile">Open .draw / PNG lineart <input id="nativeFile" type="file" accept=".draw,.png,image/png"></label>
 <button id="nativeImport" class="secondary" type="button">Open project</button>
+<label class="fieldlabel" for="nativeWidth">Width · px <input id="nativeWidth" class="field" style="width:100px" type="number" min="1" max="8192" step="1" value="512"></label>
+<label class="fieldlabel" for="nativeHeight">Height · px <input id="nativeHeight" class="field" style="width:100px" type="number" min="1" max="8192" step="1" value="512"></label>
 <button id="nativeNew" class="secondary" type="button">New canvas</button>
 <button id="nativeUndo" class="secondary" type="button" disabled>Undo</button>
 <button id="nativeRedo" class="secondary" type="button" disabled>Redo</button>
@@ -50,6 +52,7 @@ footer{color:#98a1ac;font-size:11px;margin-top:25px;line-height:1.7}.errors{colo
 </div>
 <aside class="panelbody native-sidebar">
 <p id="nativeStatus" role="status" aria-live="polite">No painting open</p>
+<p id="nativeDimensions" class="helper">Choose the required pixel dimensions before creating a canvas. New canvases use 300 DPI; importing lineart preserves its pixels.</p>
 <p id="nativeError" role="alert" class="errors"></p>
 <div class="native-layers-header"><div class="sectionlabel">Objects &amp; painting layers</div><button id="nativeAllStrokes" class="secondary native-all" type="button" aria-pressed="true" disabled>All strokes</button></div>
 <p id="nativeLayerSummary" class="helper"></p>
@@ -70,7 +73,7 @@ footer{color:#98a1ac;font-size:11px;margin-top:25px;line-height:1.7}.errors{colo
 <label class="fieldlabel"><input id="nativePen" type="checkbox" disabled> Fine pen on selected layer</label>
 <label class="fieldlabel" for="nativePenWidth">Pen width · document pixels (0.05–8)</label>
 <input id="nativePenWidth" class="field" type="number" min="0.05" max="8" step="0.05" value="0.5" disabled>
-<p class="helper">Draw with a mouse or pen. Release to commit one undoable stroke. The temporary blue guide is not the final ink. New fine-pen projects require a separate version-10 copy.</p>
+<p class="helper">Draw with a mouse or pressure-sensitive pen. Release to commit one undoable stroke. The temporary blue guide is not the final ink. New fine-pen projects require a separate version-10 copy.</p>
 <div class="divider"></div><div class="export">
 <button id="nativeDownload" class="secondary" type="button" disabled>Download saved .draw</button>
 <button id="nativePng" class="secondary" type="button" disabled>Export painting PNG</button>
@@ -186,6 +189,7 @@ function nativeFillReady(){
 function nativeError(message){by('nativeError').textContent=message||'';by('nativeError').style.display=message?'block':'none'}
 function nativeControls(){
  for(const id of nativeActionIds) by(id).disabled=nativeBusy||(!nativeState&&!['nativeImport','nativeNew'].includes(id));
+ by('nativeWidth').disabled=nativeBusy;by('nativeHeight').disabled=nativeBusy;
  by('nativeOra').disabled=nativeBusy||!nativeState||(nativeState.capabilities&&!nativeState.capabilities.includes('ora'));
  const hasSelection=nativeScopedStrokes().length>0;
  by('nativeRecolor').disabled=nativeBusy||!hasSelection;
@@ -252,6 +256,7 @@ async function nativeShow(value){
  const sameProject=nativeState?.id===value.id, selected=sameProject?by('nativeStrokes').value:'';
  if(!sameProject||!value.nodes.some(n=>n.id===nativeSelectedNodeId)){nativeSelectedNodeId=null;by('nativeBucket').checked=false;}
  nativeState=value;localStorage.setItem('drawborad.project',value.id);
+ by('nativeDimensions').textContent=value.width+' × '+value.height+' px · '+value.ppi+' DPI · native canvas';
  by('nativeStatus').textContent=(value.dirty?'Unsaved changes':'Saved')+' · revision '+value.revision+' · '+value.stroke_count+' strokes';
  // Include descendants for object/group selection without changing native state or visibility.
  const nodes=new Map(value.nodes.map(n=>[n.id,n]));
@@ -291,7 +296,11 @@ async function nativeRun(action){
  try{await action()}catch(e){const message=e.message;if(nativeState){try{await nativeShow(await api('/projects/'+nativeState.id))}catch(refreshError){by('nativeStatus').textContent='Disconnected · last displayed state may be stale'}}nativeError(message)}finally{nativeBusy=false;nativeControls()}
 }
 by('nativeImport').onclick=()=>nativeRun(async()=>{const f=by('nativeFile').files[0];if(!f)throw new Error('Choose a .draw project or PNG lineart first.');const isPng=/\.png$/i.test(f.name)||f.type==='image/png';const form=new FormData();form.append(isPng?'lineart':'project',f);await nativeShow(await api(isPng?'/projects/import-lineart':'/projects/import',{method:'POST',body:form}))});
-by('nativeNew').onclick=()=>nativeRun(async()=>nativeShow(await nativePost('',{width:'512',height:'512'})));
+by('nativeNew').onclick=()=>nativeRun(async()=>{
+ const width=Number(by('nativeWidth').value),height=Number(by('nativeHeight').value);
+ if(!Number.isInteger(width)||!Number.isInteger(height)||width<1||height<1||width>8192||height>8192||width*height>20000000)throw new Error('Choose integer dimensions up to 8192 pixels per side and 20 million pixels total.');
+ await nativeShow(await nativePost('',{width:String(width),height:String(height)}));
+});
 by('nativeStrokes').onchange=nativeSelection;
 by('nativeAllStrokes').onclick=()=>nativeSelectNode(null);
 by('nativeShowSublayers').onchange=()=>{
@@ -342,8 +351,9 @@ function nativePenSample(event){
  const drag=nativePenDrag;if(!drag)return false;
  const point=nativePenPoint(by('nativePreview').getBoundingClientRect(),Number(nativeState.width),Number(nativeState.height),event.clientX,event.clientY);
  if(!point){nativePenCancel('Stroke cancelled because the pointer left the canvas.');return false;}
+ point.pressure=event.pointerType==='pen'&&Number.isFinite(event.pressure)?Math.round(Math.max(0,Math.min(1,event.pressure))*1000)/1000:1;
  const last=drag.points[drag.points.length-1];
- if(last&&Math.hypot(point.x-last.x,point.y-last.y)<0.1)return true;
+ if(last&&Math.hypot(point.x-last.x,point.y-last.y)<0.1&&Math.abs(point.pressure-last.pressure)<0.01)return true;
  if(drag.points.length>=1024){nativePenCancel('Stroke too long. Draw shorter strokes; no partial stroke was saved.');return false;}
  drag.points.push(point);
  const host=by('nativeCanvasHost').getBoundingClientRect(), ctx=by('nativeStrokeDraft').getContext('2d');
@@ -364,7 +374,8 @@ by('nativePreview').onpointerdown=event=>{
 };
 by('nativePreview').onpointermove=event=>{
  if(!nativePenDrag||event.pointerId!==nativePenDrag.pointerId)return;
- event.preventDefault();for(const sample of event.getCoalescedEvents?.()||[event]){if(!nativePenSample(sample))break;}
+ event.preventDefault();const samples=event.getCoalescedEvents?.()||[];
+ for(const sample of samples.length?samples:[event]){if(!nativePenSample(sample))break;}
 };
 by('nativePreview').onpointerup=event=>{
  if(!nativePenDrag||event.pointerId!==nativePenDrag.pointerId)return;
