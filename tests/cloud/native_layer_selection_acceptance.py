@@ -98,8 +98,9 @@ def exercise(page):
     expect(page.locator("#nativeNew")).to_be_enabled()
     expect(page.locator("#nativeStrokes option")).to_have_count(4)
     expect(page.locator("#nativeLayerSummary")).to_contain_text("2 objects")
-    expect(page.locator("#nativeLayerSummary")).to_contain_text("5 paint layers")
-    expect(page.locator("#nativeLayerSummary")).to_contain_text("2 without strokes")
+    expect(page.locator("#nativeLayerSummary")).to_contain_text("5 layers")
+    expect(page.locator("#nativeLayerSummary")).to_contain_text("0 raster")
+    expect(page.locator("#nativeLayerSummary")).to_contain_text("2 empty native layers")
     expect(page.locator("#nativeNodes b")).to_have_count(0)
     assert page.locator("#nativeNodes").evaluate("e => parseFloat(getComputedStyle(e).maxHeight)") >= 360
 
