@@ -85,5 +85,17 @@ if(PNG_FOUND)
   set_tests_properties(B10.OraIndependent PROPERTIES FIXTURES_REQUIRED StreamOra TIMEOUT 120)
 endif()
 
+lineart_repair_test(B11.FineLine test_fine_line.cpp)
+lineart_repair_test(B11.FreehandStroke test_freehand_stroke.cpp)
+
+if(DRAWBORAD_HEADLESS_WORKFLOW)
+  add_test(NAME B11.FreehandSession COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/headless/test_freehand_session.py $<TARGET_FILE:DrawboradHeadless>)
+  set_tests_properties(B11.FreehandSession PROPERTIES TIMEOUT 120)
+endif()
+find_program(DRAWBORAD_NODE_EXECUTABLE node)
+if(DRAWBORAD_NODE_EXECUTABLE)
+  add_test(NAME B11.PenUI COMMAND ${DRAWBORAD_NODE_EXECUTABLE} tests/cloud/test_pen_ui.cjs)
+  set_tests_properties(B11.PenUI PROPERTIES WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+endif()
 # Register B08 before TestTargets labels and snapshots the complete inventory.
 include(${PROJECT_SOURCE_DIR}/cmake/TestTargets.cmake)

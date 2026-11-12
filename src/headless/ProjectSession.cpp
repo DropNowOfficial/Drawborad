@@ -7,6 +7,7 @@
 #include "codecs/RasterWriters.h"
 #include "color/ColorService.h"
 #include "brush/BucketFill.h"
+#include "brush/FreehandStroke.h"
 #include "core/LineartRaster.h"
 #include "codecs/ImageReader.h"
 #include <cmath>
@@ -127,7 +128,7 @@ public:
                 {"start_us",number(e.startUs)},{"end_us",number(e.endUs)},
                 {"geometry_count",number(e.geometry.size())}});
         }
-        QJsonArray capabilities{"recolor_stroke","set_properties","bucket_fill","add_fill_layer","undo","redo","save","save_copy","replay","png"};
+        QJsonArray capabilities{"recolor_stroke","set_properties","bucket_fill","add_fill_layer","draw_stroke","undo","redo","save","save_copy","replay","png"};
         capabilities.append("ora");
         return {{"document_id",idText(s.documentId)},{"revision",number(s.revision)},
             {"saved_revision",saved?QJsonValue(number(*saved)):QJsonValue(QJsonValue::Null)},
@@ -210,6 +211,22 @@ public:
                 auto frame=checked(renderMergedDocument(s,{s.revision,s.eventIndex->size()}));
                 command=checked(bucketFillCommand(s,layer,newEventId(),frame.merged,
                                                   x,y,std::uint8_t(tolerance),color));
+            } else if(type=="draw_stroke") {
+                const auto s=snapshot();const auto width=p.value("width");
+                need(width.isDouble() && std::isfinite(width.toDouble()),"session.pen-width");
+                need(p.value("points").isArray(),"session.pen-points");
+                const auto points=p.value("points").toArray();
+                need(!points.isEmpty() && points.size()<=1024,"session.pen-points");
+                std::vector<InputSample> samples;samples.reserve(points.size());
+                for(const auto& value:points) {
+                    need(value.isObject(),"session.pen-point");const auto point=value.toObject();
+                    need(point.size()==2 && point.value("x").isDouble() && point.value("y").isDouble(),"session.pen-point");
+                    InputSample sample;sample.x=point.value("x").toDouble();sample.y=point.value("y").toDouble();
+                    need(std::isfinite(sample.x) && std::isfinite(sample.y),"session.pen-point");
+                    sample.pressure=1;sample.timestampUs=samples.size();samples.push_back(sample);
+                }
+                command=checked(freehandStrokeCommand(s,parseId(p.value("layer_id")),newEventId(),
+                    samples,width.toDouble(),browserColor(s,p.value("color"))));
             } else if(type=="set_properties") {
                 SetProperties properties;properties.id=parseId(p.value("node_id"));bool any=false;
                 for(const auto& key:{"visible","locked"}) if(p.contains(key)) {
@@ -219,7 +236,7 @@ public:
                 }
                 need(any,"session.empty-properties");command.operations.emplace_back(properties);
             } else need(false,"session.command");
-            if(type=="bucket_fill" || type=="add_fill_layer") {
+            if(type=="bucket_fill" || type=="add_fill_layer" || type=="draw_stroke") {
                 const auto s=snapshot();auto candidate=checked(Document::fromSnapshot(s));
                 checked(candidate.apply(command,s.revision));
                 checked(planMergedDocument(candidate.snapshot()));

@@ -1,5 +1,7 @@
 #include "CoverageRasterizer.h"
+#include "FineLineCoverage.h"
 #include "core/BucketEvent.h"
+#include "core/FreehandEvent.h"
 #include <algorithm>
 #include <cmath>
 namespace drawborad {
@@ -23,9 +25,11 @@ constexpr std::array<std::array<std::int64_t, 2>, 8> Dir{{
 }
 Result<void> validateRasterEvent(const StrokeEvent& e) {
     if (e.engineVersion==8) return validateBucketEvent(e);
-    if (e.engineVersion != 1 && e.engineVersion != 2)
+    if (e.engineVersion != 1 && e.engineVersion != 2 && e.engineVersion != 10)
         return error(ErrorCode::UnsupportedFeature, "render.engine-version");
-    if (e.toolId != "pencil" && e.toolId != "colored-pencil" && e.toolId != "fineliner" &&
+    if(e.engineVersion==10){
+        auto fine=validateFreehandEvent(e);if(!fine)return fine.error();
+    }else if (e.toolId != "pencil" && e.toolId != "colored-pencil" && e.toolId != "fineliner" &&
         e.toolId != "marker" && e.toolId != "highlight" && e.toolId != "guide" &&
         e.toolId != "eraser")
         return error(ErrorCode::UnsupportedFeature, "render.tool");
@@ -59,6 +63,7 @@ Result<std::vector<std::uint16_t>> strokeCoverage(const StrokeEvent& e, Rect rec
         return error(ErrorCode::BudgetExceeded, "render.coverage-region");
     auto pixels=checkedMultiply(rect.width,rect.height); if(!pixels) return pixels.error();
     if (stop.stop_requested()) return error(ErrorCode::Cancelled,"render.cancelled");
+    if(e.engineVersion==10)return fineLineCoverage(e,rect,time,stop);
     std::vector<std::uint16_t> cov(std::size_t(pixels.value()),0);
     if (time < e.startUs) return cov;
     if (e.engineVersion==8) {

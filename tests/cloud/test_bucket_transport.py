@@ -74,6 +74,18 @@ class CommandRoutes(unittest.TestCase):
             self.assertEqual(copied.status_code,201)
             self.assertNotEqual(copied.json()['id'],pid)
             self.assertEqual(calls[-1][0],'save_copy')
+    def test_pen_payload_is_forwarded_without_adding_paths(self):
+        with tempfile.TemporaryDirectory() as root:
+            app=FastAPI();p=install_projects(app,SimpleNamespace(root=root),lambda:None)
+            pid=str(uuid4());p.active=pid;calls=[]
+            p.select=lambda value:p.state({'revision':'4','dirty':True})
+            p.rpc=lambda method,**params:(calls.append((method,params)) or {'revision':'5','dirty':True})
+            body={'expected_revision':'4','type':'draw_stroke','layer_id':'abc','points':[{'x':1.25,'y':2}],'width':.25,'color':'#101020'}
+            client=TestClient(app)
+            self.assertEqual(client.post('/api/v1/projects/'+pid+'/commands',json=body).status_code,200)
+            self.assertEqual(calls[-1],('command',body))
+            self.assertEqual(client.post('/api/v1/projects/'+pid+'/commands',json={**body,'path':'/arbitrary'}).status_code,422)
+            self.assertEqual(len(calls),1)
     def test_unknown_or_cross_command_fields_are_rejected(self):
         with tempfile.TemporaryDirectory() as root:
             app=FastAPI();p=install_projects(app,SimpleNamespace(root=root),lambda:None)

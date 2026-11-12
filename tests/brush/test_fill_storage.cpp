@@ -38,6 +38,14 @@ DocumentSnapshot lineartSample(bool bucket=true) {
     auto nodes=std::make_shared<NodeMap>(*s.nodes);(*nodes)[layer.id]=layer;nodes->at(Document::rootId()).children.push_back(layer.id);s.nodes=nodes;
     return s;
 }
+DocumentSnapshot freehandSample(bool lineart=false){
+    auto s=lineart?lineartSample():sample();auto events=std::make_shared<EventList>(*s.eventIndex);
+    auto& e=events->front();e.engineVersion=10;e.toolId="fineliner-aa";e.style.width=.25;
+    e.geometry={{1,1,1,{},{},0,0,0},{8,8,.5,{},{},0,0,0}};s.eventIndex=events;return s;
+}
+Bytes formatHeader(const Bytes& bytes,const std::string& header){
+    binary::Reader reader{bytes};(void)reader.text(32);binary::Writer writer;writer.text(header);writer.raw(std::span<const std::uint8_t>(bytes).subspan(reader.pos));return writer.data;
+}
 Bytes read(const fs::path& p) {
     std::ifstream f(p,std::ios::binary);
     assert(f.is_open());
@@ -158,6 +166,31 @@ int main(int argc,char** argv){
     write(dir/"future9.draw",frameRecord(futureLineart).value());write(dir/"future9.draw.bak",legacy.value());
     auto future9=store.recover(dir/"future9.draw");assert(!future9 && future9.error().code==ErrorCode::UnsupportedFeature);
     assert(!store.save(dir/"future9.draw",lineart));assert(read(dir/"future9.draw")==frameRecord(futureLineart).value());
+    for(bool withLineart:{false,true}){
+        auto aa=freehandSample(withLineart);auto encoded=encodeDelta({},aa);assert(encoded);
+        binary::Reader reader{encoded.value()};assert(reader.text(32)=="DRAW-DELTA-10");
+        auto decodedAA=decodeDelta(encoded.value(),{});assert(decodedAA && decodedAA.value().sameContent(aa));
+        for(const auto& header:{"DRAW-DELTA-1","DRAW-DELTA-8","DRAW-DELTA-9","DRAW-DELTA-11"}){
+            auto bad=decodeDelta(formatHeader(encoded.value(),header),{});assert(!bad && bad.error().code==ErrorCode::UnsupportedFeature);
+        }
+    }
+    auto aa=freehandSample();assert(store.save(dir/"aa.draw",aa));const auto aaBytes=read(dir/"aa.draw");
+    for(auto old:{sample(),bucketSample(),lineartSample()}){
+        assert(!store.save(dir/"aa.draw",old));assert(read(dir/"aa.draw")==aaBytes);
+        const auto path=dir/"aa-old.draw";assert(store.save(path,old));const auto oldBytes=read(path);
+        assert(!store.save(path,aa));assert(read(path)==oldBytes);
+        auto newerAA=aa;newerAA.revision=old.revision+1;assert(!store.appendJournal(path,old,newerAA));
+        auto newerOld=old;newerOld.revision=aa.revision+1;assert(!store.appendJournal(dir/"aa.draw",aa,newerOld));
+        write(path.string()+".bak",aaBytes);assert(!store.recover(path));fs::remove(path.string()+".bak");
+        write(path.string()+".journal",aaBytes);assert(!store.recover(path));fs::remove(path.string()+".journal");
+        write(dir/"aa.draw.bak",oldBytes);assert(!store.recover(dir/"aa.draw"));fs::remove(dir/"aa.draw.bak");
+        write(dir/"aa.draw.journal",oldBytes);assert(!store.recover(dir/"aa.draw"));fs::remove(dir/"aa.draw.journal");
+        fs::remove(path);
+    }
+    auto nextAA=aa;nextAA.revision=1;assert(store.appendJournal(dir/"aa.draw",aa,nextAA));assert(store.recover(dir/"aa.draw"));
+    assert(store.save(dir/"aa.draw",nextAA));assert(store.recover(dir/"aa.draw"));
+    auto wrongEngine=freehandSample();auto wrongEvents=std::make_shared<EventList>(*wrongEngine.eventIndex);wrongEvents->front().engineVersion=2;wrongEngine.eventIndex=wrongEvents;
+    assert(!encodeDelta({},wrongEngine));
     if(argc==2){
         const auto primary=fs::path(argv[1]);
         const auto bytes=frameRecord(bucketDelta.value()).value();

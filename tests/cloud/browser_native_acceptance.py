@@ -1,4 +1,5 @@
 """Drive the packaged native editor in Chromium on an isolated Compose host."""
+import base64
 import io
 import json
 import os
@@ -48,8 +49,18 @@ def click_post(page, control, suffix, status=200):
 def preview(page, destination=None):
     image = page.get_by_alt_text("Native painting preview")
     image.evaluate("(image) => image.decode()")
-    png = image.screenshot(path=destination, animations="disabled")
-    return Image.open(io.BytesIO(png)).convert("RGB").tobytes()
+    # Compare the actual displayed image at its native dimensions, not a CSS
+    # screenshot resampled at a different subpixel scroll/layout position.
+    # Real screenshots remain separate visual evidence.
+    if destination:
+        image.screenshot(path=destination, animations="disabled")
+    encoded = image.evaluate("""image => {
+        const canvas=document.createElement('canvas');
+        canvas.width=image.naturalWidth;canvas.height=image.naturalHeight;
+        canvas.getContext('2d').drawImage(image,0,0);
+        return canvas.toDataURL('image/png').split(',')[1];
+    }""")
+    return Image.open(io.BytesIO(base64.b64decode(encoded))).convert("RGBA").tobytes()
 
 
 def download(page, button, output, filename):
@@ -300,6 +311,41 @@ def exercise_lineart(page, output, url, token):
         "exports": [draw.name, png.name, ora.name],
         "screenshots": [name + "-panel.png" for name in ("before", "after", "undo", "reopened")]}
     (output / "lineart-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    # Actual new pen entry: a native subpixel stroke, not a painted browser overlay.
+    page.locator("#nativeShowSublayers").check()
+    page.locator('[data-node-id="' + color["id"] + '"] .native-node-select').click()
+    page.locator("#nativePenWidth").fill("0.25")
+    page.locator("#nativeColor").evaluate("input => {input.value='#000000';input.dispatchEvent(new Event('input',{bubbles:true}));}")
+    page.locator("#nativePen").check()
+    image.scroll_into_view_if_needed()
+    bounds=image.bounding_box();scale=min(bounds["width"]/512,bounds["height"]/512)
+    ox=bounds["x"]+(bounds["width"]-512*scale)/2;oy=bounds["y"]+(bounds["height"]-512*scale)/2
+    with page.expect_response(endpoint("POST", "/commands")) as painted:
+        page.mouse.move(ox+20*scale,oy+490.5*scale)
+        page.mouse.down()
+        page.mouse.move(ox+200*scale,oy+490.5*scale,steps=20)
+        page.mouse.up()
+    assert painted.value.status==200,painted.value.text()
+    expect(page.locator("#nativeNew")).to_be_enabled(timeout=90000)
+    penstate=painted.value.json();assert penstate["strokes"][-1]["tool"]=="fineliner-aa"
+    pen_pixels=exported("fine-pen").tobytes();assert pen_pixels!=expected.tobytes()
+    center=(490*512+100)*4
+    assert pen_pixels[center:center+4]==bytes([191,191,191,255])
+    panel("fine-pen")
+    click_post(page,page.locator("#nativeUndo"),"/undo")
+    assert exported("fine-pen-undo").tobytes()==expected.tobytes()
+    click_post(page,page.locator("#nativeRedo"),"/redo")
+    assert exported("fine-pen-redo").tobytes()==pen_pixels
+    pen_saved=click_post(page,page.locator("#nativeSaveCopy"),"/save-copy",201)
+    pen_dir=output/"fine-pen-download";pen_dir.mkdir(exist_ok=True)
+    pen_draw=download(page,"Download saved .draw",pen_dir,"painting.draw")
+    pen_draw.rename(output/"fine-pen.draw")
+    click_post(page,page.locator("#nativeClose"),"/close")
+    page.locator("#nativeFile").set_input_files(output/"fine-pen.draw")
+    click_post(page,page.locator("#nativeImport"),"/import",201)
+    assert exported("fine-pen-reopened").tobytes()==pen_pixels
+    panel("fine-pen-reopened")
+    (output/"fine-pen-receipt.json").write_text(json.dumps({"workflow":"passed","width":.25,"tool":"fineliner-aa","pointer_input":"real Chromium mouse","undo_redo_reopen_equal":True,"project":pen_saved["id"]},indent=2))
     return receipt
 
 

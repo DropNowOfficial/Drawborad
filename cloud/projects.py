@@ -212,7 +212,8 @@ def install_projects(app,config,authorized):
             fields={'recolor_stroke':{'stroke_id','color'},
                     'set_properties':{'node_id','visible','locked'},
                     'add_fill_layer':set(),
-                    'bucket_fill':{'layer_id','x','y','tolerance','color'}}
+                    'bucket_fill':{'layer_id','x','y','tolerance','color'},
+                    'draw_stroke':{'layer_id','points','width','color'}}
             kind=body.get('type')
             if not isinstance(kind,str) or kind not in fields:fail(422,'invalid_input','Unknown command type')
             allowed={'expected_revision','type'}|fields[kind]

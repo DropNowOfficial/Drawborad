@@ -1,3 +1,56 @@
+# Current Drawborad reconstruction checkpoint
+
+## Goal and acceptance
+
+Build an editable layered drawing workflow and use it for a complete high-quality
+work in the user's red DELETE cover / six-page comic direction. Tool correctness
+is necessary but does not establish artistic quality. Preserve the chosen
+composition, natural figures, varied clean marks and independent editable layers;
+do not call low-resolution reconstruction newly recovered native detail.
+
+## Persisted baseline: cfb92a149664810305febe8c346f6a1e4bd8b0e2
+
+- PNG lineart imports at its original dimensions with untouched original pixels
+  and encoded resource. A locked Multiply ink layer sits above independent color.
+- Native single-region fill, undo/redo, separate-copy save and reopen are verified
+  on the actual historical 1536x1024 bat lineart (7,085 changed pixels confined to
+  one face). It is a workflow sample, not the fox or the current assignment.
+- 512-tile merged rendering and streamed independent ORA leaves operate at the
+  actual target dimensions. Packaged engine passed 1725x2625 / 300 DPI PNG and ORA.
+  This test size does not settle the assignment's trim/bleed specification.
+- GIMP 3.0.4 actually imported the ORA through its console interface: three layers,
+  Multiply and 300 DPI. Hiding color reproduces the input pixel-for-pixel. Restoring
+  color differs from native composite at 1,080 pixels by at most 1/255/channel.
+- GitHub run 43192748407 built/passed native and runtime-install jobs on Ubuntu and
+  Debian. All four browser/cloud-session jobs failed the same screenshot-equality
+  assertion after adding an empty layer. No new browser pass is claimed.
+
+## Current increment
+
+- Add opt-in engine-10 fineliner-aa and mouse/pen pointer entry, 0.05–8 document px,
+  one stroke per undo action. Old engines 1/2 are replayed unchanged.
+- Add version-10 storage floor with mixed-version overwrite/backup/journal guards.
+- Compare decoded native preview pixels in browser acceptance instead of CSS
+  screenshots susceptible to subpixel layout resampling. Retain real screenshots
+  as separate visual evidence. The new run is still required.
+
+## Next steps and remaining gaps
+
+1. Run exact current Session/API/browser fine-pen and lineart workflows, fix failures,
+   and publish before/after/undo/reopen screenshots from the real running version.
+2. Use the user's red DELETE references and existing story for complete-art work.
+3. Improve AA fill edges/gap handling; neither is currently implemented.
+4. ORA groups are flattened, masks baked, locks omitted. Keep .draw for full edits.
+   PSD group/mask fidelity is not implemented.
+5. Native cloud engine + browser editor are the executed path. Windows desktop GUI
+   and final artist-quality output remain unverified. Never merge PR9 or this draft
+   without authorization. This is reconstruction, not recovery of lost source.
+
+The chronological notes below describe prior checkpoints and known failures at
+those points; the current status above supersedes their pending/completed labels.
+
+---
+
 # Bounded bucket selection reconstruction
 
 This is a newly reconstructed small component based on PR #7

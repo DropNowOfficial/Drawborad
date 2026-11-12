@@ -152,9 +152,9 @@ target_include_directories(drawborad_reconstruct PUBLIC ${PROJECT_SOURCE_DIR}/sr
 target_link_libraries(drawborad_reconstruct PUBLIC drawborad_models drawborad_color drawborad_core)
 
 add_library(drawborad_render STATIC
-  src/render/ReferenceRenderer.cpp src/render/CoverageRasterizer.cpp src/render/PixelBlend.cpp
+  src/render/ReferenceRenderer.cpp src/render/CoverageRasterizer.cpp src/render/FineLineCoverage.cpp src/render/PixelBlend.cpp
   src/render/TileCache.cpp src/render/DisplayCache.cpp src/render/CacheEvictor.cpp
-  src/brush/BrushEngine.cpp src/brush/SampleResampler.cpp src/brush/FloodFill.cpp src/brush/BucketFill.cpp src/platform/TabletInput.cpp
+  src/brush/BrushEngine.cpp src/brush/SampleResampler.cpp src/brush/FloodFill.cpp src/brush/BucketFill.cpp src/brush/FreehandStroke.cpp src/platform/TabletInput.cpp
   src/ui/MergedDocument.cpp src/ui/LayerStream.cpp
   src/history/EventIndex.cpp src/history/ReplayEngine.cpp
   src/view/Viewport.cpp src/view/HitTest.cpp src/platform/DeviceRecovery.cpp)
