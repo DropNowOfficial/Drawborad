@@ -18,7 +18,7 @@ with tempfile.TemporaryDirectory() as d:
   before=pixels('before');rev=state['revision']
   state=ok('command',type='draw_stroke',layer_id=layer,points=[{'x':8,'y':20.5},{'x':55,'y':20.5}],width=.25,color='#000000',expected_revision=rev)
   after=pixels('after');assert after!=before
-  assert after[(20*64+30)*4:(20*64+30)*4+4]==bytes([191,191,191,255])
+  assert after[(20*64+30)*4:(20*64+30)*4+4]==bytes([0,0,0,64])
   assert 'error' in rpc('command',type='draw_stroke',layer_id=layer,points=[{'x':1,'y':1}],width=.5,color='#000000',expected_revision=rev)
   state=ok('undo',expected_revision=state['revision']);assert pixels('undo')==before
   state=ok('redo',expected_revision=state['revision']);assert pixels('redo')==after
