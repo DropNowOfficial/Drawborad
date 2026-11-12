@@ -22,3 +22,7 @@ const e=(x,t,extra={})=>({clientX:x,clientY:50,timeStamp:t,pointerId:1,button:0,
  vm.runInContext('nativeState.capabilities=[]',c);c.nativeControls();assert.equal(by('nativeMyPaintOption').disabled,true);assert.equal(c.nativePenReady(),false);
  console.log('PASS actual MyPaint page pointer code: no selection, disabled width/color, exact payload/time, coalesced/up, cancel/error/capability');
 })().catch(e=>{console.error(e);process.exitCode=1});
+// Raster content is not an empty native-event layer. Evaluate the actual row expression.
+const rowExpression=html.match(/meta\.textContent=(node\.kind[^\n]+);/)[1];
+assert.equal(vm.runInNewContext(rowExpression,{node:{kind:3,source_kind:0},count:0}),'Raster layer · pixel content');
+assert.match(vm.runInNewContext(rowExpression,{node:{kind:3,source_kind:2},count:0}),/no native events/);

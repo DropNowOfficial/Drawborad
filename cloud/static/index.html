@@ -48,7 +48,7 @@ footer{color:#98a1ac;font-size:11px;margin-top:25px;line-height:1.7}.errors{colo
 <div class="nativegrid">
 <div>
 <div id="nativeCanvasHost" class="viewport" style="min-height:400px;position:relative"><canvas id="nativeStrokeDraft" hidden style="position:absolute;inset:0;pointer-events:none"></canvas><img id="nativePreview" alt="Native painting preview" hidden style="max-width:100%;max-height:560px;object-fit:contain"><p id="nativeEmpty">Open a .draw project to edit its original brush strokes.</p></div>
-<div class="panelbody"><label class="fieldlabel" for="nativeReplay">Replay · <span id="nativeReplayCount">0</span> strokes</label><input id="nativeReplay" type="range" min="0" max="0" value="0" disabled style="width:100%"><p class="fine">Replay reads saved brush events. The reference photograph is not required.</p></div>
+<div class="panelbody"><label class="fieldlabel" for="nativeReplay">Native-event replay · <span id="nativeReplayCount">0</span> events</label><input id="nativeReplay" type="range" min="0" max="0" value="0" disabled style="width:100%"><p class="fine">Replay controls native brush events only. Imported ink and MyPaint raster layers remain visible; their pixels are not replayed by this slider.</p></div>
 </div>
 <aside class="panelbody native-sidebar">
 <p id="nativeStatus" role="status" aria-live="polite">No painting open</p>
@@ -275,7 +275,7 @@ async function nativeShow(value){
  if(!sameProject||!value.nodes.some(n=>n.id===nativeSelectedNodeId)){nativeSelectedNodeId=null;by('nativeBucket').checked=false;}
  nativeState=value;localStorage.setItem('drawborad.project',value.id);
  by('nativeDimensions').textContent=value.width+' × '+value.height+' px · '+value.ppi+' DPI · native canvas';
- by('nativeStatus').textContent=(value.dirty?'Unsaved changes':'Saved')+' · revision '+value.revision+' · '+value.stroke_count+' strokes';
+ by('nativeStatus').textContent=(value.dirty?'Unsaved changes':'Saved')+' · revision '+value.revision+' · '+value.stroke_count+' native events · '+value.nodes.filter(n=>n.kind===3&&n.source_kind===0).length+' raster layers';
  // Include descendants for object/group selection without changing native state or visibility.
  const nodes=new Map(value.nodes.map(n=>[n.id,n]));
  nativeStrokeScopes=new Map(value.nodes.map(n=>[n.id,[]]));
@@ -285,8 +285,8 @@ async function nativeShow(value){
    while(nodes.has(id)&&!visited.has(id)){visited.add(id);nativeStrokeScopes.get(id).push(stroke);id=nodes.get(id).parent_id}
   }
  }
- const layers=value.nodes.filter(n=>n.kind===3), empty=layers.filter(n=>!nativeStrokeScopes.get(n.id).length).length;
- by('nativeLayerSummary').textContent=value.nodes.filter(n=>n.kind===1).length+' objects · '+layers.length+' paint layers · '+empty+' without strokes';
+ const layers=value.nodes.filter(n=>n.kind===3), empty=layers.filter(n=>n.source_kind!==0&&!nativeStrokeScopes.get(n.id).length).length;
+ by('nativeLayerSummary').textContent=value.nodes.filter(n=>n.kind===1).length+' objects · '+layers.length+' layers · '+layers.filter(n=>n.source_kind===0).length+' raster · '+empty+' empty native layers';
  by('nativeReplay').max=value.stroke_count;by('nativeReplay').value=value.stroke_count;by('nativeReplayCount').textContent=value.stroke_count;
  by('nativeNodes').replaceChildren();
  const rendered=new Set();
@@ -297,7 +297,7 @@ async function nativeShow(value){
    const select=document.createElement('button');select.type='button';select.disabled=nativeBusy;select.className='native-node-select';select.setAttribute('aria-label','Select '+node.name);select.onclick=()=>nativeSelectNode(node.id);
    const name=document.createElement('span');name.className='layername';name.textContent=node.name;
    const count=nativeStrokeScopes.get(node.id).length;
-   const meta=document.createElement('span');meta.className='layermeta';meta.textContent=(node.kind===1?'Object':node.kind===3?'Paint layer':'Group')+' · '+count+' strokes'+(count?'':' · empty');
+   const meta=document.createElement('span');meta.className='layermeta';meta.textContent=node.kind===3&&node.source_kind===0?'Raster layer · pixel content':(node.kind===1?'Object':node.kind===3?'Paint layer':'Group')+' · '+count+' native events'+(count?'':' · no native events');
    select.append(name,meta);line.append(select);
    const controls=document.createElement('span');controls.className='native-node-controls';
    for(const key of ['visible','locked']){const label=document.createElement('label');label.className='fine';const cb=document.createElement('input');cb.type='checkbox';cb.disabled=nativeBusy;cb.checked=node[key];cb.setAttribute('aria-label',node.name+' '+key);cb.onchange=()=>nativeRun(async()=>nativeShow(await nativePost('/'+nativeState.id+'/commands',{expected_revision:nativeState.revision,type:'set_properties',node_id:node.id,[key]:cb.checked})));label.append(cb,document.createTextNode(key==='visible'?'Show':'Lock'));controls.append(label)}

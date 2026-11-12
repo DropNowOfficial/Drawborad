@@ -8,6 +8,32 @@ is necessary but does not establish artistic quality. Preserve the chosen
 composition, natural figures, varied clean marks and independent editable layers;
 do not call low-resolution reconstruction newly recovered native detail.
 
+## Verified optional MyPaint GUI checkpoint (2026-11-12)
+
+Code `e5a845e5d92c6fec061bbbc218ef27978abf9931`, run43208963274:
+all8 Linux/native/runtime-install/Chromium/cloud-session jobs passed on Ubuntu24.04
+and Debian13. Native CTest71/71; cloud run43208963249 passed too.
+The new MyPaint UI was actually exercised by Chromium: 512x512 canvas, two mouse
+strokes, two independent locked Multiply raster layers, undo/redo, saved .draw
+with replay metadata, download/reimport pixel equality and PNG/ORA downloads.
+This is a technical eyelid-curve test, NOT artwork quality or poster-size proof.
+Owner-approved temporary CI runtime used official distro packages; Debian's
+libmypaint1.6.0-4 matched the pre-existing default library digest. No user-machine
+package installation or settings change occurred. License/preset notices remain.
+
+The actual screenshot exposed a UI reporting defect: raster content was labeled
+"empty" because only native events were counted. Current text distinguishes
+native events from raster layers; it does not pretend raster marks are point-editable.
+Actual row-expression and pointer handler tests passed locally; this text-only fix
+has not yet completed a new Chromium run.
+
+Next in an isolated local mirror: cropped MyPaint strokes on full3300x5100 canvas,
+format13 old-reader protections, actual-dab fail-closed bounds and ROI-aware native
+renderer/ORA. Core/storage/renderer and real library tests pass, including1Mi ROI
+and old-reader refusal despite a valid old backup. Qt Session and whole HTTP/native
+chain are not yet verified or published. Existing app MyPaint limit remains1Mi
+canvas pixels; do not claim the crop prototype has shipped.
+
 ## Persisted baseline: cfb92a149664810305febe8c346f6a1e4bd8b0e2
 
 - PNG lineart imports at its original dimensions with untouched original pixels
