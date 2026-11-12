@@ -372,11 +372,11 @@ def exercise_lineart(page, output, url, token):
     return receipt
 
 
-def exercise_mypaint(page, output):
+def exercise_mypaint(page, output, width=512, height=512):
     """Actual optional-library UI strokes, not a finished-art acceptance."""
     output.mkdir(parents=True,exist_ok=True)
     click_post(page,page.locator('#nativeClose'),'/close')
-    page.locator('#nativeWidth').fill('512');page.locator('#nativeHeight').fill('512')
+    page.locator('#nativeWidth').fill(str(width));page.locator('#nativeHeight').fill(str(height))
     initial=click_post(page,page.locator('#nativeNew'),'/projects',201)
     assert 'mypaint_ink' in initial['capabilities'],initial.get('mypaint_status')
     page.locator('#nativeBrush').select_option('mypaint_ink')
@@ -391,6 +391,8 @@ def exercise_mypaint(page, output):
             t=i/30;u=1-t
             x=u**3*curve[0][0]+3*u*u*t*curve[1][0]+3*u*t*t*curve[2][0]+t**3*curve[3][0]
             y=u**3*curve[0][1]+3*u*u*t*curve[1][1]+3*u*t*t*curve[2][1]+t**3*curve[3][1]
+            if width>512:
+                x=(450+x*512)/width;y=(450+y*512)/height
             points.append((box['x']+x*box['width'],box['y']+y*box['height']))
         page.mouse.move(*points[0]);page.mouse.down()
         for point in points[1:]:page.mouse.move(*point)
@@ -413,7 +415,7 @@ def exercise_mypaint(page, output):
     assert preview(page,output/'reopened.png')==after
     added=[n for n in reopened['nodes'] if n['name']=='MyPaint ink (experimental raster)']
     assert len(added)==2 and all(n['locked'] and n['blend']==1 for n in added)
-    receipt={'actual_chromium_mouse':True,'real_mypaint_worker':True,'independent_locked_layers':2,'undo_redo':True,'download_reopen_pixel_equal':True,'manifest_in_draw':True,'canvas':[512,512],'scope':'technical eyelid curves, not finished artwork or poster-size acceptance'}
+    receipt={'actual_chromium_mouse':True,'real_mypaint_worker':True,'independent_locked_layers':2,'undo_redo':True,'download_reopen_pixel_equal':True,'manifest_in_draw':True,'canvas':[width,height],'scope':'actual native canvas with local technical eyelid strokes; not finished artwork'}
     (output/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n');return receipt
 
 
@@ -508,11 +510,12 @@ def exercise(context, page, source, output, url, token, restart):
     assert preview(page) == after
     lineart = exercise_lineart(page, output / "lineart", url, token)
     mypaint = exercise_mypaint(page, output / "mypaint") if os.environ.get("DRAWBORAD_REQUIRE_MYPAINT")=="1" else {"requested":False}
+    mypaint_poster = exercise_mypaint(page, output / "mypaint-poster",3300,5100) if os.environ.get("DRAWBORAD_REQUIRE_MYPAINT")=="1" else {"requested":False}
     changed_pixels = sum(before[i:i+3] != after[i:i+3] for i in range(0, len(after), 3))
     return {"project": saved["id"], "strokes": saved["stroke_count"], "stroke": stroke["id"],
             "changed_browser_pixels": changed_pixels, "saved_revision": saved["revision"],
             "stale_status": 409, "locked_status": 423, "exports": [draw.name, png.name, ora.name],
-            "lineart": lineart, "mypaint": mypaint}
+            "lineart": lineart, "mypaint": mypaint, "mypaint_poster": mypaint_poster}
 
 
 def verify_in_chromium(source, output, url, token, restart, environment):

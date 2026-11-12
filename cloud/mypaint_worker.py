@@ -1,4 +1,6 @@
-"""Optional, hash-pinned MyPaint worker. Never substitutes for native engines."""
+"""Optional hash-pinned MyPaint worker with bounded, guarded crop rendering.
+Never substitutes for existing native brush engines.
+"""
 import hashlib,json,math,os,subprocess,sys,time,tempfile,re
 try:
  import resource
@@ -52,13 +54,14 @@ def validate_request(body,state):
 
 def _limits():
  resource.setrlimit(resource.RLIMIT_AS,(256*1024*1024,256*1024*1024));resource.setrlimit(resource.RLIMIT_CPU,(10,10))
-def render(body,state,folder,cancel):
+def render_legacy(body,state,folder,cancel,guard_geometry=None):
  width,height=dimensions(state['width'],state['height']);state=dict(state,width=width,height=height)
  points=validate_request(body,state);ok,reason=available(width,height)
  if not ok:raise ValueError(reason)
  if cancel.is_set():raise RuntimeError('MyPaint cancelled; nothing added.')
  folder=Path(folder);request=folder/'request.json';png=folder/'stroke.png';manifest=folder/'manifest.json'
  record={'backend':'mypaint-pointy-ink-raster-v1','pins':load_pins(),'worker_sha256':sha(__file__),'canvas':[state['width'],state['height']],'color':'#000000','preset':'pointy_ink','width_policy':'original preset; pressure not equivalent to native width','encoding':'RGBA15 over opaque white -> RGBA8 nearest, no ICC transform','initial_zero_pressure_seconds':10,'points':points,'expected_revision':body['expected_revision'],'document_id':state.get('document_id')}
+ record['guard_geometry']=guard_geometry or {'full_canvas':[width,height],'origin':[0,0]}
  request.write_text(json.dumps(record,allow_nan=False));proc=None
  try:
   proc=subprocess.Popen([sys.executable,__file__,'worker',str(request),str(png),str(manifest)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=dict(os.environ,OMP_NUM_THREADS='1'))
@@ -83,20 +86,34 @@ def worker(request,png,manifest):
  import importlib.util
  spec=importlib.util.spec_from_file_location('mypaint_pinned_abi',DATA/'abi15.py');a=importlib.util.module_from_spec(spec);spec.loader.exec_module(a)
  from PIL import Image,PngImagePlugin
- surface=a.new(w,h);assert surface;iface=a.interface(surface);assert iface==surface;assert a.C.cast(surface,a.C.POINTER(a.Tiled)).contents.tile_size==64
+ surface=a.new(w,h)
+ if not surface:raise RuntimeError('MyPaint surface allocation failed')
+ iface=a.interface(surface)
+ if iface!=surface or a.C.cast(surface,a.C.POINTER(a.Tiled)).contents.tile_size!=64:raise RuntimeError('Unsupported MyPaint surface ABI')
  nx=(w+63)//64;ny=(h+63)//64
  for ty in range(ny):
   for tx in range(nx):
    r=a.Request();a.reqinit(a.C.byref(r),0,tx,ty,0);a.start(surface,a.C.byref(r))
    for i in range(64*64*4):r.buffer[i]=32768
    a.end(surface,a.C.byref(r))
- b=a.bnew();assert a.load(b,PATHS['preset'].read_bytes())==1
+ b=a.bnew()
+ if not b or a.load(b,PATHS['preset'].read_bytes())!=1:raise RuntimeError('MyPaint preset load failed')
  for key in ['color_h','color_s','color_v']:a.setbase(b,a.setting(key.encode()),0)
- a.clear(b);a.reset(b);a.begin(iface);first=m['points'][0];a.stroke(b,iface,first['x'],first['y'],0,0,0,10.)
- last=first['time_ms']
- for p in m['points']:
-  dt=max(.001,(p['time_ms']-last)/1000);a.stroke(b,iface,p['x'],p['y'],p['pressure'],0,0,dt);last=p['time_ms']
- a.stroke(b,iface,p['x'],p['y'],0,0,0,.02);roi=a.Rect();a.finish(iface,a.C.byref(roi));a.bfree(b)
+ from dab_guard import DabGuard
+ guard=DabGuard(a,iface,w,h,m['guard_geometry'])
+ failed=True
+ try:
+  a.clear(b);a.reset(b);a.begin(iface);first=m['points'][0];a.stroke(b,iface,first['x'],first['y'],0,0,0,10.);guard.check()
+  last=first['time_ms']
+  for p in m['points']:
+   dt=max(.001,(p['time_ms']-last)/1000);a.stroke(b,iface,p['x'],p['y'],p['pressure'],0,0,dt);last=p['time_ms'];guard.check()
+  a.stroke(b,iface,p['x'],p['y'],0,0,0,.02);guard.check()
+  roi=a.Rect();a.finish(iface,a.C.byref(roi));guard.check()
+  m['actual_dab_guard']={'checked_dabs':guard.count,'passed':True,'support':'actual circular dab radius + 1 surface fringe; only actual canvas edges may clip'}
+  failed=False
+ finally:
+  guard.restore();a.bfree(b)
+  if failed:a.sfree(iface)
  rgba=bytearray(w*h*4)
  for ty in range(ny):
   for tx in range(nx):
@@ -125,6 +142,57 @@ def worker(request,png,manifest):
  finally:Path(tmp).unlink(missing_ok=True)
  with open(manifest,'xb') as f:f.write(manifest_bytes)
  print(json.dumps({'png_sha256':sha(png),'manifest_sha256':manifest_hash}))
+
+def available_crop(width,height):
+ ok,reason=available()
+ if not ok:return ok,reason
+ try:w,h=dimensions(width,height)
+ except ValueError as e:return False,str(e)
+ if max(w,h)>8192 or w*h>20000000:return False,'Crop MyPaint canvas limit: 8192 per axis / 20,000,000 pixels.'
+ return True,'Experimental cropped ink: unchanged full canvas; each stroke ROI <= 1,048,576 pixels / 2048 per axis; oversized strokes rejected.'
+
+def render(body,state,folder,cancel):
+ if 'append_brush_crop' not in state.get('capabilities',[]):return render_legacy(body,state,folder,cancel)
+ w,h=dimensions(state['width'],state['height']);validate_request(body,state)
+ ok,reason=available_crop(w,h)
+ if not ok:raise ValueError(reason)
+ if cancel.is_set():raise RuntimeError('MyPaint cancelled')
+ folder=Path(folder);request=folder/'global-request.json';png=folder/'stroke.png';manifest=folder/'crop-manifest.json'
+ record={'body':body,'state':{'width':w,'height':h,'revision':state['revision'],'document_id':state['document_id']},'pins':load_pins(),'worker_sha256':sha(__file__),'helper_sha256':{name:sha(Path(__file__).with_name(name)) for name in ['crop_plan.py','dab_guard.py']}}
+ request.write_text(json.dumps(record,allow_nan=False));proc=None
+ try:
+  proc=subprocess.Popen([sys.executable,__file__,'crop',str(request),str(png),str(manifest)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=dict(os.environ,OMP_NUM_THREADS='1'))
+  deadline=time.monotonic()+15
+  while proc.poll() is None:
+   if cancel.is_set() or time.monotonic()>deadline:
+    proc.kill();proc.communicate();raise RuntimeError('MyPaint cancelled or exceeded 15-second budget; nothing added.')
+   time.sleep(.02)
+  stdout,err=proc.communicate()
+  if proc.returncode:raise RuntimeError('Crop worker failed; nothing added. '+err.decode(errors='replace')[-400:])
+  receipt=json.loads(stdout);result=json.loads(manifest.read_text())
+  if receipt['png_sha256']!=sha(png) or receipt['manifest_sha256']!=sha(manifest) or result['worker_manifest']['pins']!=record['pins']:raise RuntimeError('Crop output verification failed')
+  return png,manifest
+ finally:
+  if proc and proc.poll() is None:proc.kill();proc.communicate()
+
+def crop_child(request,png,manifest):
+ from crop_plan import plan
+ import io,contextlib
+ record=json.loads(Path(request).read_text());body=record['body'];state=record['state']
+ if record['pins']!=load_pins() or record['worker_sha256']!=sha(__file__) or record['helper_sha256']!={name:sha(Path(__file__).with_name(name)) for name in ['crop_plan.py','dab_guard.py']}:raise ValueError('Crop pins mismatch')
+ validate_request(body,state);w,h=dimensions(state['width'],state['height'])
+ ok,reason=available_crop(w,h)
+ if not ok:raise ValueError(reason)
+ roi,local,proof=plan([w,h],body['points']);x,y,rw,rh=roi
+ m={'backend':'mypaint-pointy-ink-raster-v1','pins':load_pins(),'worker_sha256':sha(__file__),'canvas':[rw,rh],'color':'#000000','preset':'pointy_ink','width_policy':'original preset; pressure not equivalent to native width','encoding':'RGBA15 over opaque white -> RGBA8 nearest, no ICC transform','initial_zero_pressure_seconds':10,'points':local,'expected_revision':body['expected_revision'],'document_id':state['document_id'],'guard_geometry':{'full_canvas':[w,h],'origin':[x,y]}}
+ local_request=Path(request).with_name('request.json');local_manifest=Path(request).with_name('manifest.json')
+ local_request.write_text(json.dumps(m,allow_nan=False))
+ # Same bounded child, not a parent-thread render or a second unbounded process.
+ with contextlib.redirect_stdout(io.StringIO()):worker(local_request,png,local_manifest)
+ metadata={'helper_sha256':record['helper_sha256'],'prototype':'mypaint-cropped-study-v1','full_canvas':[w,h],'origin':[x,y],'roi_size':[rw,rh],'original_global_points':body['points'],'translated_local_points':local,'conservative_bound':proof,'worker_manifest':json.loads(local_manifest.read_text()),'png_sha256':sha(png),'canvas_resized':False,'full_canvas_rgba_allocated':False}
+ with open(manifest,'x') as out:json.dump(metadata,out,sort_keys=True,separators=(',',':'),allow_nan=False)
+ print(json.dumps({'png_sha256':sha(png),'manifest_sha256':sha(manifest)}))
+
 if __name__=='__main__':
- _limits() # Set limits inside child; no unsafe preexec_fn in threaded FastAPI.
- worker(*sys.argv[2:])
+ _limits()
+ (crop_child if sys.argv[1]=='crop' else worker)(*sys.argv[2:])

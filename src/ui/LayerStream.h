@@ -1,5 +1,6 @@
 #pragma once
 #include "MergedDocument.h"
+#include "core/MyPaintCroppedRaster.h"
 #include "codecs/LayerArchive.h"
 namespace drawborad {
 // Front-to-back leaf stream. Groups are flattened, ancestor visibility and masks
@@ -11,6 +12,7 @@ class NativeLayerStream {
  EventLimit limit_;
  std::vector<NodeId> order_;
  ReferenceRenderer renderer_;
+ croppedRaster::PreparedViews croppedViews_;
  public:
  static Result<NativeLayerStream> create(const DocumentSnapshot&,EventLimit,MergedBudget={});
  std::size_t size()const{return order_.size();}

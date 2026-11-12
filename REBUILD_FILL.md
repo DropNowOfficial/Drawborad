@@ -8,6 +8,37 @@ is necessary but does not establish artistic quality. Preserve the chosen
 composition, natural figures, varied clean marks and independent editable layers;
 do not call low-resolution reconstruction newly recovered native detail.
 
+## Cropped-stroke integration: source ready, new CI pending
+
+Added a separate cropped MyPaint stage and DRAW-DELTA-13 floor. Old raster/native
+formats keep their meanings. Native API validates document/revision before reads,
+PNG/ROI/manifest placement, PNG hash, global/local sample equivalence, dab guard
+receipt and worker document identity;1Mi ROI /2048axis and256Mi aggregate resources
+are preflighted. Save-copy/mixed backup/journal guards preserve old projects.
+
+The cloud child plans a conservative102px pointy-ink support margin, checks actual
+dab support at every callback, and rejects the entire stroke if an interior ROI
+edge is exceeded. Only actual canvas edges may crop. It never downsizes the canvas.
+The child retains10s CPU/15s wall/256Mi limits; global inputs, ROI, runtime/preset/
+worker/helper hashes are preserved. Oversized strokes fail rather than lose ink.
+
+Native merged renderer and ORA use ROI placement. Immutable parsed views avoid
+per-tile hashing and cannot cross snapshot identities. ORA still exports full-size
+leaf PNGs with correct placement, not cropped PNG+x/y leaves. New-layer pixels
+remain locked raster content, not point-editable native strokes.
+
+Locally VERIFIED after integration: strict C++ format13/12/legacy storage tests;
+real3300x5100 renderer with cross512 placement, Multiply/opacity/visibility and
+1024x1024 ROI; actual libpng/ORA independently decoded and recomposited. Real
+libmypaint child and HTTP-to-native-stub tests passed. A found optimization-mode
+bug (`assert` removed preset loading) is corrected with explicit checks; actual
+normal versus PYTHONOPTIMIZE=1 output pixels agree and contain ink.
+
+NOT YET VERIFIED: Qt native append_brush_crop RPC and complete new app chain.
+New CTest and actual Chromium tests cover512x512 then3300x5100 small local strokes;
+they require the next CI result. Native local tests do not imply they passed.
+Artwork is still a partial eye study, not the user's finished cover/comic.
+
 ## Verified optional MyPaint GUI checkpoint (2026-11-12)
 
 Code `e5a845e5d92c6fec061bbbc218ef27978abf9931`, run43208963274:

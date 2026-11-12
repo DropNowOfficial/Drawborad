@@ -112,8 +112,8 @@ class Projects:
     def state(self, value):
         value=dict(value,id=self.active)
         caps=list(value.get('capabilities',[]))
-        ok,reason=mypaint_worker.available(value.get('width'),value.get('height'))
-        if 'append_brush_layer' not in caps:ok=False;reason='Native MyPaint layer support is not available in this engine build.'
+        ok,reason=(mypaint_worker.available_crop if 'append_brush_crop' in caps else mypaint_worker.available)(value.get('width'),value.get('height'))
+        if 'append_brush_layer' not in caps and 'append_brush_crop' not in caps:ok=False;reason='Native MyPaint layer support is not available in this engine build.'
         if ok:caps.append('mypaint_ink')
         value['capabilities']=caps;value['mypaint_status']=reason
         return value
@@ -135,7 +135,11 @@ class Projects:
                     self.mypaint_cancel=None # Commit starts; cancellation no longer reports success.
                 current=self.rpc('state')
                 if self.active!=project_id or current.get('document_id')!=document_id or current.get('revision')!=body['expected_revision']:fail(409,'stale_revision','Document changed while MyPaint rendered; nothing added')
-                return self.state(self.rpc('append_brush_layer',path=str(png),manifest_path=str(manifest),expected_revision=body['expected_revision'],expected_document_id=document_id))
+                params=dict(path=str(png),manifest_path=str(manifest),expected_revision=body['expected_revision'],expected_document_id=document_id)
+                method='append_brush_layer'
+                if 'append_brush_crop' in state.get('capabilities',[]):
+                    crop=json.loads(manifest.read_text());params.update(origin_x=str(crop['origin'][0]),origin_y=str(crop['origin'][1]));method='append_brush_crop'
+                return self.state(self.rpc(method,**params))
         finally:
             with self.mypaint_gate:
                 if self.mypaint_cancel is cancel:self.mypaint_cancel=None

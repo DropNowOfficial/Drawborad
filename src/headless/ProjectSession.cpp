@@ -10,6 +10,7 @@
 #include "brush/FreehandStroke.h"
 #include "brush/DryInkStroke.h"
 #include "core/LineartRaster.h"
+#include "core/MyPaintCroppedRaster.h"
 #include "core/Digest.h"
 #include "codecs/ImageReader.h"
 #include "storage/FileIO.h"
@@ -132,7 +133,7 @@ public:
                 {"geometry_count",number(e.geometry.size())}});
         }
         QJsonArray capabilities{"recolor_stroke","set_properties","bucket_fill","add_fill_layer","draw_stroke","update_layer","undo","redo","save","save_copy","replay","png"};
-        capabilities.append("ora");capabilities.append("append_brush_layer");
+        capabilities.append("ora");capabilities.append("append_brush_layer");capabilities.append("append_brush_crop");
         return {{"document_id",idText(s.documentId)},{"revision",number(s.revision)},
             {"saved_revision",saved?QJsonValue(number(*saved)):QJsonValue(QJsonValue::Null)},
             {"dirty",controller->dirty()},{"nodes",nodes},{"strokes",events},
@@ -141,8 +142,9 @@ public:
             {"capabilities",capabilities}};
     }
     QJsonObject request(const QString& method,const QJsonObject& p) {
-        if(method=="import_lineart" || method=="append_brush_layer") {
-            const bool append=method=="append_brush_layer";
+        if(method=="import_lineart" || method=="append_brush_layer" || method=="append_brush_crop") {
+            const bool crop=method=="append_brush_crop";
+            const bool append=method=="append_brush_layer" || crop;
             if(append) {
                 revision(p);
                 if(parseId(p.value("expected_document_id"))!=snapshot().documentId)
@@ -150,15 +152,17 @@ public:
             } else canReplace(p);
             const auto source=pathValue(p.value("path"));
             ResourceBudget budget;budget.scratchBytes=128*1024*1024;budget.ramReclaimBytes=128*1024*1024;
-            const auto info=checked(preflightInput(source,budget,128*1024*1024));
+            const std::uint64_t sourceLimit=(crop?16:128)*1024*1024;
+            const auto info=checked(preflightInput(source,budget,sourceLimit));
             need(info.format==ImageFormat::Png,"lineart.png-required");
-            DecodeOptions options;options.limits.encodedBytes=128*1024*1024;options.limits.decodedBytes=128*1024*1024;
+            DecodeOptions options;options.limits.encodedBytes=sourceLimit;options.limits.decodedBytes=sourceLimit;
             auto imported=checked(decodeImage(source,options));
             need(imported.decodedPixels.has_value(),"lineart.decode");
             auto pixels=std::move(*imported.decodedPixels);
             need(pixels.format.mode==ColorMode::RGB && pixels.format.depth==Depth::U8 &&
                  pixels.rowStride==std::uint64_t(pixels.width)*pixels.format.channelCount(),"lineart.rgb8-required");
             need(pixels.width<=8192 && pixels.height<=8192 && std::uint64_t(pixels.width)*pixels.height<=20000000,"lineart.size");
+            if(crop)need(pixels.width<=2048 && pixels.height<=2048 && std::uint64_t(pixels.width)*pixels.height<=1048576,"brush-crop.pixel-budget");
             if(!pixels.format.alpha) {
                 Bytes rgba(std::size_t(pixels.width)*pixels.height*4);
                 for(std::size_t i=0;i<rgba.size()/4;++i) {
@@ -173,11 +177,59 @@ public:
             }
             if(append) {
                 const auto current=snapshot();
-                need(pixels.width==current.spec.pixelSize.width && pixels.height==current.spec.pixelSize.height,"brush-layer.canvas-mismatch");
+                if(!crop)need(pixels.width==current.spec.pixelSize.width && pixels.height==current.spec.pixelSize.height,"brush-layer.canvas-mismatch");
                 auto manifestBytes=checked(NativeFileIO{}.read(pathValue(p.value("manifest_path")),1024*1024));
                 QJsonParseError parse;
                 const auto manifest=QJsonDocument::fromJson(QByteArray(reinterpret_cast<const char*>(manifestBytes.data()),qsizetype(manifestBytes.size())),&parse);
                 need(parse.error==QJsonParseError::NoError && manifest.isObject(),"brush-layer.manifest-json");
+                if(crop) {
+                    const auto x=integer(p.value("origin_x")),y=integer(p.value("origin_y"));
+                    need(x<=8192 && y<=8192,"brush-crop.origin");
+                    Rect roi{std::int64_t(x),std::int64_t(y),pixels.width,pixels.height};
+                    need(croppedRaster::fits(roi,current.spec.pixelSize.width,current.spec.pixelSize.height),"brush-crop.bounds");
+                    const auto meta=manifest.object();
+                    need(meta.value("prototype").toString()=="mypaint-cropped-study-v1","brush-crop.manifest-format");
+                    const auto origin=meta.value("origin").toArray(),size=meta.value("roi_size").toArray(),canvas=meta.value("full_canvas").toArray();
+                    need(origin.size()==2 && size.size()==2 && canvas.size()==2,"brush-crop.manifest-layout");
+                    auto metaInteger=[](QJsonValue v)->std::uint64_t {
+                        const double d=v.toDouble(-1);need(v.isDouble() && std::isfinite(d) && d>=0 && d<=8192 && std::floor(d)==d,"brush-crop.manifest-number");return std::uint64_t(d);
+                    };
+                    need(metaInteger(origin.at(0))==x && metaInteger(origin.at(1))==y && metaInteger(size.at(0))==pixels.width && metaInteger(size.at(1))==pixels.height && metaInteger(canvas.at(0))==current.spec.pixelSize.width && metaInteger(canvas.at(1))==current.spec.pixelSize.height,"brush-crop.manifest-placement");
+                    need(meta.value("original_global_points").isArray() && !meta.value("original_global_points").toArray().isEmpty() && meta.value("translated_local_points").isArray() && meta.value("worker_manifest").isObject(),"brush-crop.manifest-inputs");
+                    need(meta.value("png_sha256").toString().toStdString()==sha256(imported.encodedSource).hex(),"brush-crop.png-digest");
+                    const auto globals=meta.value("original_global_points").toArray(),locals=meta.value("translated_local_points").toArray();
+                    need(globals.size()==locals.size() && globals.size()<=1024,"brush-crop.point-count");
+                    double last=-1;
+                    for(qsizetype i=0;i<globals.size();++i) {
+                        need(globals.at(i).isObject() && locals.at(i).isObject(),"brush-crop.point-object");
+                        const auto g=globals.at(i).toObject(),l=locals.at(i).toObject();
+                        auto scalar=[](const QJsonObject& o,const char* key) {const auto v=o.value(key);const double d=v.toDouble();need(v.isDouble() && std::isfinite(d),"brush-crop.point-finite");return d;};
+                        const double gx=scalar(g,"x"),gy=scalar(g,"y"),pressure=scalar(g,"pressure"),time=scalar(g,"time_ms");
+                        need(gx>=0 && gy>=0 && gx<current.spec.pixelSize.width && gy<current.spec.pixelSize.height && pressure>=0 && pressure<=1 && time>=0 && time<=60000 && time>=last,"brush-crop.point-bounds");
+                        need(scalar(l,"x")>=0 && scalar(l,"x")<pixels.width && scalar(l,"y")>=0 && scalar(l,"y")<pixels.height,"brush-crop.local-bounds");
+                        need(std::abs(scalar(l,"x")-(gx-double(x)))<1e-6 && std::abs(scalar(l,"y")-(gy-double(y)))<1e-6 && scalar(l,"pressure")==pressure && scalar(l,"time_ms")==time,"brush-crop.point-translation");last=time;
+                    }
+                    const auto worker=meta.value("worker_manifest").toObject();
+                    need(worker.value("document_id").toString()==idText(current.documentId),"brush-crop.worker-document");
+                    const auto guard=worker.value("actual_dab_guard").toObject();
+                    const auto dabs=guard.value("checked_dabs");const double dabCount=dabs.toDouble(-1);
+                    need(guard.value("passed")==QJsonValue(true) && dabs.isDouble() && std::isfinite(dabCount) && dabCount>=0 && dabCount<=10000000 && std::floor(dabCount)==dabCount,"brush-crop.guard-proof");
+                    need(worker.value("points").toArray()==locals && worker.value("canvas").toArray()==size,"brush-crop.worker-inputs");
+                    auto command=checked(croppedRaster::make(std::move(pixels.bytes),std::move(imported.encodedSource),std::move(manifestBytes),roi,current.spec.pixelSize.width,current.spec.pixelSize.height,newEventId()));
+                    // Preflight before copying/applying the command. Shared resource IDs count once.
+                    std::uint64_t total=0;constexpr std::uint64_t limit=256ull*1024*1024;
+                    for(const auto& [id,res]:*current.resources) {
+                        (void)id;need(bool(res.bytes),"brush-crop.resource-bytes");
+                        need(res.bytes->size()<=limit-total,"brush-crop.total-budget");total+=res.bytes->size();
+                    }
+                    for(const auto& op:command.operations)if(const auto* install=std::get_if<InstallResource>(&op)) {
+                        if(current.resources->contains(install->resource.id))continue;
+                        const auto bytes=install->resource.bytes->size();
+                        need(bytes<=limit-total,"brush-crop.total-budget");total+=bytes;
+                    }
+                    auto candidate=checked(Document::fromSnapshot(current));checked(candidate.apply(command,current.revision));
+                    checked(planMergedDocument(candidate.snapshot()));checked(controller->apply(command));return state();
+                }
                 Resource replay;replay.kind=ResourceKind::Reference;replay.id=sha256(manifestBytes);
                 replay.bytes=std::make_shared<const Bytes>(std::move(manifestBytes));
                 auto command=checked(makeLineartRasterCommand(std::move(pixels.bytes),std::move(imported.encodedSource),pixels.width,pixels.height,newEventId()));

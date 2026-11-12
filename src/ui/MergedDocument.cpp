@@ -29,6 +29,14 @@ Result<MergedPlan> plan(const DocumentSnapshot& s,MergedBudget budget){
  std::uint64_t work=0;
  const auto tileCount=checkedMultiply((size.width+TileSide-1)/TileSide,(size.height+TileSide-1)/TileSide);
  if(!tileCount)return tileCount.error();
+ // Snapshot validation, planner preparation and render preparation each scan once.
+ // Account four scans conservatively; no per-tile hashing with prepared views.
+ for(const auto& [id,node]:*s.nodes)if(node.stage==croppedRaster::Stage){
+  (void)id;const auto& raw=s.resources->at(node.sourceResource);std::uint64_t scanned=raw.bytes->size();
+  for(const auto dep:raw.dependencies)if(!addWithin(scanned,s.resources->at(dep).bytes->size(),budget.maxRasterWork))return error(ErrorCode::BudgetExceeded,"merged.crop-validation-work");
+  const auto repeats=checkedMultiply(scanned,4);
+  if(!repeats||!addWithin(work,repeats.value(),budget.maxRasterWork))return error(ErrorCode::BudgetExceeded,"merged.crop-validation-work");
+ }
  for(const auto& [id,node]:*s.nodes){
   std::uint64_t scans=0;
   for(auto ancestor=id;!ancestor.empty();ancestor=s.nodes->at(ancestor).parent){
@@ -44,8 +52,9 @@ Result<MergedPlan> plan(const DocumentSnapshot& s,MergedBudget budget){
    if(!repeats || !addWithin(work,repeats.value(),budget.maxRasterWork))return error(ErrorCode::BudgetExceeded,"merged.mask-scan-limit");
   }
  }
+ auto prepared=croppedRaster::PreparedViews::prepare(s);if(!prepared)return prepared.error();
  for(const auto& [id,node]:*s.nodes)
-  if(node.transform!=LayerTransform{} || !nativeCompositingSupported(s,id))return error(ErrorCode::UnsupportedFeature,"merged.native-compositing-required");
+  if(node.transform!=LayerTransform{} || !nativeCompositingSupported(s,id,&prepared.value()))return error(ErrorCode::UnsupportedFeature,"merged.native-compositing-required");
  MergedPlan out;out.mergedBytes=bytes.value();
  // One RGBA tile + uint16 coverage; two extra RGBA tiles of conservative slack.
  const auto tilePixels=std::min<std::uint64_t>(TileSide,size.width)*std::min<std::uint64_t>(TileSide,size.height);
@@ -54,7 +63,7 @@ Result<MergedPlan> plan(const DocumentSnapshot& s,MergedBudget budget){
  for(const auto& [id,node]:*s.nodes)if(node.kind==NodeKind::Layer && layerVisible(s,id))
   if(!addWithin(work,pixels.value(),budget.maxRasterWork))return error(ErrorCode::BudgetExceeded,"merged.composite-work-limit");
  for(const auto& e:*s.eventIndex){
-  if(s.nodes->contains(e.layerId) && s.nodes->at(e.layerId).stage==LineartStage)return error(ErrorCode::UnsupportedFeature,"lineart.paint-events");
+  if(s.nodes->contains(e.layerId) && (s.nodes->at(e.layerId).stage==LineartStage || s.nodes->at(e.layerId).stage==croppedRaster::Stage))return error(ErrorCode::UnsupportedFeature,"lineart.paint-events");
   auto b=strokeBounds(e);if(!b)return b.error();
   const auto& r=b.value();
   const auto nx=std::uint64_t(tileAt(r.x+std::int64_t(r.width)-1)-tileAt(r.x)+1);
@@ -81,7 +90,7 @@ Result<MergedPlan> plan(const DocumentSnapshot& s,MergedBudget budget){
  }
  out.estimatedBytes=out.mergedBytes;
  // Index map nodes/vectors, candidate copies, bounds and node traversal allowance.
- const auto indexBytes=out.indexEntries*256+s.eventIndex->size()*128+s.nodes->size()*128+65536;
+ const auto indexBytes=out.indexEntries*256+s.eventIndex->size()*128+s.nodes->size()*384+65536;
  if(!addWithin(out.estimatedBytes,out.tileScratchBytes,budget.maxBytes) || !addWithin(out.estimatedBytes,indexBytes,budget.maxBytes))return error(ErrorCode::BudgetExceeded,"merged.memory-limit");
  return out;
 }
@@ -94,6 +103,7 @@ Result<MergedDocument> renderMergedDocument(const DocumentSnapshot& s,EventLimit
  if(limit.revision!=s.revision)return error(ErrorCode::StaleRevision,"merged.revision");
  auto p=planMergedDocument(s,budget);if(!p)return p.error();
  try{
+  auto prepared=croppedRaster::PreparedViews::prepare(s);if(!prepared)return prepared.error();
   MergedDocument out;out.plan=p.value();auto& dest=out.merged;
   const auto size=s.spec.pixelSize;dest.width=std::uint32_t(size.width);dest.height=std::uint32_t(size.height);
   dest.rowStride=size.width*4;dest.format=s.spec.colorSpec.format;dest.profileId=s.spec.colorSpec.profileId;dest.engineVersion=2;
@@ -109,17 +119,21 @@ Result<MergedDocument> renderMergedDocument(const DocumentSnapshot& s,EventLimit
    for(std::uint64_t y=0;y<size.height;y+=TileSide)for(std::uint64_t x=0;x<size.width;x+=TileSide){
     if(stop.stop_requested())return error(ErrorCode::Cancelled,"merged.cancelled");
     Rect rect{std::int64_t(x),std::int64_t(y),std::min<std::uint64_t>(TileSide,size.width-x),std::min<std::uint64_t>(TileSide,size.height-y)};
-    const bool raster=s.nodes->at(id).stage==LineartStage;
+    const bool cropped=s.nodes->at(id).stage==croppedRaster::Stage;
+    const bool raster=s.nodes->at(id).stage==LineartStage || cropped;
     Result<TileData> tile=error(ErrorCode::UnsupportedFeature,"lineart.tile");
     if(raster){
-     auto raw=lineartRasterPixels(s,id);if(!raw)return raw.error();
+     std::span<const std::uint8_t> raw;croppedRaster::View crop;
+     if(cropped){const auto* v=prepared.value().find(s,id);if(!v)return error(ErrorCode::CorruptData,"crop.prepared-view");crop=*v;}
+     else {auto v=lineartRasterPixels(s,id);if(!v)return v.error();raw=v.value();}
      TileData t;t.width=std::uint32_t(rect.width);t.height=std::uint32_t(rect.height);t.rowStride=rect.width*4;
      t.format=s.spec.colorSpec.format;t.profileId=s.spec.colorSpec.profileId;t.bytes.resize(std::size_t(t.rowStride*t.height));
-     for(std::uint32_t row=0;row<t.height;row++)std::copy_n(raw.value().begin()+std::ptrdiff_t(((y+row)*size.width+x)*4),std::size_t(t.rowStride),t.bytes.begin()+std::ptrdiff_t(row*t.rowStride));
+     if(cropped){auto copied=croppedRaster::copyRegion(crop,rect,t.bytes);if(!copied)return copied.error();}
+     else for(std::uint32_t row=0;row<t.height;row++)std::copy_n(raw.begin()+std::ptrdiff_t(((y+row)*size.width+x)*4),std::size_t(t.rowStride),t.bytes.begin()+std::ptrdiff_t(row*t.rowStride));
      tile=std::move(t);
     }else tile=renderer.renderRegion(s,id,rect,limit,stop);
     if(!tile)return tile.error();
-    auto masked=nativeMaskedTile(s,id,std::move(tile.value()),rect.x,rect.y);if(!masked)return masked.error();
+    auto masked=nativeMaskedTile(s,id,std::move(tile.value()),rect.x,rect.y,&prepared.value());if(!masked)return masked.error();
     const auto& src=masked.value();
     for(std::uint32_t row=0;row<src.height;row++)for(std::uint32_t col=0;col<src.width;col++){
      const auto from=std::size_t(row*src.rowStride+col*4),to=std::size_t((y+row)*dest.rowStride+(x+col)*4);

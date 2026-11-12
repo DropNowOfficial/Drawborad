@@ -1,6 +1,7 @@
 #pragma once
 #include "core/Document.h"
 #include "core/LineartRaster.h"
+#include "core/MyPaintCroppedRaster.h"
 #include <algorithm>
 namespace drawborad {
 // Document child order is the painting order, from bottom to top.
@@ -43,13 +44,13 @@ inline bool layerLocked(const DocumentSnapshot& snapshot, NodeId id) {
     }
     return false;
 }
-inline bool nativeCompositingSupported(const DocumentSnapshot& snapshot, NodeId id) {
+inline bool nativeCompositingSupported(const DocumentSnapshot& snapshot, NodeId id,const croppedRaster::PreparedViews* prepared=nullptr) {
     bool masked=false,transformed=false;
     while (!id.empty()) {
         const auto found = snapshot.nodes->find(id);
         if (found == snapshot.nodes->end()) return false;
         const auto& node = found->second;
-        const bool lineart=node.stage==LineartStage && bool(lineartRasterPixels(snapshot,id));
+        const bool lineart=(node.stage==LineartStage && bool(lineartRasterPixels(snapshot,id))) || (node.stage==croppedRaster::Stage && (prepared?prepared->find(snapshot,id)!=nullptr:bool(croppedRaster::parse(snapshot,id))));
         if (!lineart && (!node.content.empty() || node.sourceKind != SourceKind::Reconstructed ||
             !node.sourceResource.empty() || node.blend != BlendMode::Normal ||
             (node.kind != NodeKind::Layer && node.opacity != 1))) return false;
@@ -73,8 +74,8 @@ inline bool nativeCompositingSupported(const DocumentSnapshot& snapshot, NodeId 
 // Apply masks to a display/export copy, leaving raw stroke tiles and replay
 // checkpoints untouched. Reapplying a soft mask to a checkpoint would darken it.
 inline Result<TileData> nativeMaskedTile(const DocumentSnapshot& snapshot,NodeId id,
-                                        TileData tile,std::int64_t originX,std::int64_t originY){
-    if(!nativeCompositingSupported(snapshot,id) || tile.format!=PixelFormat{ColorMode::RGB,Depth::U8,true} ||
+                                        TileData tile,std::int64_t originX,std::int64_t originY,const croppedRaster::PreparedViews* prepared=nullptr){
+    if(!nativeCompositingSupported(snapshot,id,prepared) || tile.format!=PixelFormat{ColorMode::RGB,Depth::U8,true} ||
        tile.rowStride<std::uint64_t(tile.width)*4 || tile.bytes.size()<tile.rowStride*tile.height)
         return error(ErrorCode::UnsupportedFeature,"display.mask-layout");
     std::vector<const Bytes*> masks;

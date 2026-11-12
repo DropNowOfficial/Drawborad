@@ -1,4 +1,4 @@
-import sys,tempfile,threading,unittest,json,hashlib
+import os,sys,tempfile,threading,unittest,json,hashlib
 from pathlib import Path
 from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]))
@@ -45,4 +45,14 @@ class WorkerTest(unittest.TestCase):
     with self.assertRaises(RuntimeError):m.render(self.body,self.state,folder,cancel)
    finally:timer.join()
    self.assertFalse((folder/'stroke.png').exists())
+ def test_python_optimization_does_not_skip_preset(self):
+  if not m.available(513,257)[0]:self.skipTest('optional pinned runtime unavailable')
+  with tempfile.TemporaryDirectory() as root:
+   pixels=[]
+   for optimize in ['0','1']:
+    folder=Path(root)/optimize;folder.mkdir()
+    with patch.dict(os.environ,{'PYTHONOPTIMIZE':optimize}):
+     png,manifest=m.render(self.body,self.state,folder,threading.Event())
+    pixels.append(Image.open(png).convert('RGBA').tobytes())
+   self.assertEqual(pixels[0],pixels[1]);self.assertTrue(any(pixels[0][3::4]),'preset must actually produce ink')
 if __name__=='__main__':unittest.main()

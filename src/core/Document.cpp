@@ -1,4 +1,5 @@
 #include "Commands.h"
+#include "MyPaintCroppedRaster.h"
 #include "BucketEvent.h"
 #include "FreehandEvent.h"
 #include "DryInkEvent.h"
@@ -155,6 +156,14 @@ Result<void> validateSnapshot(const DocumentSnapshot& s) {
             last = p.timestampUs;
         }
     }
+    bool hasCropped=false;
+    for(const auto& [id,node]:ns)if(node.stage==croppedRaster::Stage){
+        hasCropped=true;auto parsed=croppedRaster::parse(s,id);if(!parsed)return parsed.error();
+    }
+    if(hasCropped && resourceBytes>MaxLargeDocumentResourceBytes)
+        return error(ErrorCode::BudgetExceeded,"crop.document-resources");
+    for(const auto& e:*s.eventIndex)if(ns.contains(e.layerId) && ns.at(e.layerId).stage==croppedRaster::Stage)
+        return error(ErrorCode::UnsupportedFeature,"crop.paint-events");
     return {};
 }
 Result<Document> Document::create(const DocumentSpec& s, DocumentId id) {
