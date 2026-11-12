@@ -63,13 +63,13 @@ The immediate use case includes a cover and six comic pages. Native high-resolut
 - Cloud desktop Chromium: imported a two-object, 66-layer project; hid the person object; undid; recolored the background; undid; saved/downloaded; reopened.
 - Downloaded and reopened snapshots retained the same content (revision metadata advanced from 2 to 6).
 - A separate 1536 × 1024, 66-layer software fixture exported PNG successfully. The initial fixture had only two painted crossing strokes and 64 empty layers, so it was not a representative dense comic.
-- A strengthened fixture places native strokes in all 66 layers. Latest report: five preview tests passed; protocol PNG approximately 1.285 seconds, 20,312 KiB RSS, `sourceAssetReads=0`. These are software fixtures, not delivered comic artwork.
+- A strengthened fixture places native strokes in all 66 layers. Latest expanded suite: six preview tests passed, including pixel checks across tile boundaries, transparent gaps, and first-33-event replay. All 66 layers have indexed native events. Protocol PNG approximately 1.285 seconds, 20,312 KiB RSS, `sourceAssetReads=0`. These are software fixtures, not delivered comic artwork.
 
 ### Build status and review
 
 - Latest complete recorded CTest run: **52 of 54 targets passed**.
 - C03 and C06 failed with JPEG/TIFF/WebP development libraries reported NOTFOUND. They remain failures, not passes or waived requirements.
-- Independent review found that the new preview path could miss rejection of an unsupported tool when all layers were hidden. At this snapshot the repair was undergoing RED-to-GREEN validation; **do not mark resolved without the subsequent test result**.
+- Independent review found that the new preview path could miss rejection of an unsupported tool when all layers were hidden. The regression first failed, then passed after renderer preparation was moved before skipping hidden layers. All six preview cases now pass.
 - No new remote CI pass, production release, complete desktop installer, or all-platform acceptance is claimed.
 
 ## Full-page investigation: not a completed implementation
@@ -78,6 +78,7 @@ The immediate use case includes a cover and six comic pages. Native high-resolut
 - Simple contour clipping was rejected: native C++ rendering demonstrated a 1/16 coverage difference/seam.
 - An isolated original-edge clipping plus cross-chunk parity experiment rendered page six at 512 × 512 with 16 tones, matching its original-edge oracle. Reported work: 730,161 points and about 90.7 million work units, below a 128 Mi-unit cap.
 - This remains a **lossy 16-tone research experiment**, not a production native.draw format, not a completed v4 primitive, not full-resolution restoration, and not an accepted comic page.
+- Visual comparison against the source **failed artistic acceptance**: quantization produced unnatural bright spots and stepped gray tones in the man's face/clothing and photographs. Do not promote this experiment as a completed high-quality page.
 - Matching an experimental oracle only validates that experiment's rasterization, not similarity to the source or professional drawing quality.
 
 ## Unresolved / not implemented / not accepted
@@ -93,7 +94,7 @@ The immediate use case includes a cover and six comic pages. Native high-resolut
 
 ## Next work and exit gates
 
-1. Finish unsupported-tool rejection regression and rerun preview safety tests.
+1. Retain the now-passing unsupported-tool rejection regression in the final integrated suite and independent review.
 2. Resolve codec dependencies and rerun all 54 native test targets; report actual counts.
 3. Review full-page parity/coverage experiments against source crops and error images before choosing a production design. Do not ship the known seamed clipping approach.
 4. Improve semantic masks and inspect faces, hair, panel borders, and background at native size; preserve rejected versions for comparison.
