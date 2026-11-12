@@ -1,5 +1,9 @@
 """Real native bucket/save-copy regression. Requires a built engine, no mocks."""
 import json
+import io
+import zipfile
+import xml.etree.ElementTree as ET
+from PIL import Image
 import subprocess
 import sys
 import tempfile
@@ -37,7 +41,18 @@ with tempfile.TemporaryDirectory() as tmp:
                    tolerance=255, color="#ff00ff", expected_revision=state["revision"])
         assert state["strokes"][-1]["tool"] == "bucket"
         ok("export", path=str(root/"after.png"), format="png")
-        assert (root/"before.png").read_bytes() != (root/"after.png").read_bytes()
+        # Color layers now go BELOW ink. This legacy smoke fixture is fully
+        # opaque, so it must remain visually unchanged; inspect the independent
+        # exported color leaf rather than requiring an incorrect top overlay.
+        assert (root/"before.png").read_bytes() == (root/"after.png").read_bytes()
+        parent = next(n for n in state["nodes"] if n["kind"] == 0)
+        assert parent["children"][0] == layer
+        ok("export", path=str(root/"filled-layers.ora"), format="ora")
+        with zipfile.ZipFile(root/"filled-layers.ora") as archive:
+            leaves=ET.fromstring(archive.read("stack.xml")).findall(".//layer")
+            fill=next(n for n in leaves if n.get("name")=="Color fill")
+            pixels=Image.open(io.BytesIO(archive.read(fill.get("src")))).convert("RGBA")
+            assert pixels.getextrema()==((255,255),(0,0),(255,255),(255,255))
         unchanged = call("save", expected_revision=state["revision"])
         assert "error" in unchanged
         assert original.read_bytes() == original_bytes

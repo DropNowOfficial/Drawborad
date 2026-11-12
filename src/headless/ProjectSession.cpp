@@ -146,7 +146,15 @@ public:
             auto imported=checked(decodeImage(source,options));
             need(imported.decodedPixels.has_value(),"lineart.decode");
             auto pixels=std::move(*imported.decodedPixels);
-            need(pixels.format==PixelFormat{ColorMode::RGB,Depth::U8,true} && pixels.rowStride==std::uint64_t(pixels.width)*4,"lineart.rgba8-required");
+            need(pixels.format.mode==ColorMode::RGB && pixels.format.depth==Depth::U8 &&
+                 pixels.rowStride==std::uint64_t(pixels.width)*pixels.format.channelCount(),"lineart.rgb8-required");
+            if(!pixels.format.alpha) {
+                Bytes rgba(std::size_t(pixels.width)*pixels.height*4);
+                for(std::size_t i=0;i<rgba.size()/4;++i) {
+                    std::copy_n(pixels.bytes.begin()+std::ptrdiff_t(i*3),3,rgba.begin()+std::ptrdiff_t(i*4));rgba[i*4+3]=255;
+                }
+                pixels.bytes=std::move(rgba);pixels.format.alpha=true;pixels.rowStride=std::uint64_t(pixels.width)*4;
+            }
             need(pixels.width<=4096 && pixels.height<=4096,"lineart.size");
             if(!imported.info.iccProfile.empty()) {
                 const auto& bytes=imported.info.iccProfile;

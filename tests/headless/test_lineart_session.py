@@ -117,6 +117,9 @@ def main(binary, actual=None):
         dimensions = None
         try:
             receipts = [run_case(source, 'technical-512', True)]
+            rgb_source = root / 'technical-rgb-no-alpha.png'
+            with Image.open(source) as original: original.convert('RGB').save(rgb_source)
+            receipts.append(run_case(rgb_source, 'technical-rgb-no-alpha', True))
             if actual:
                 receipts.append(run_case(Path(actual), 'real-lineart-baseline-only', False))
             print(json.dumps({'native_lineart_smoke': 'passed', 'cases': receipts,
