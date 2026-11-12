@@ -1,6 +1,8 @@
 # Drawborad artwork-quality repair: goal, requirements, and evidence log
 
-**Snapshot:** 2026-11-12 UTC. **Status: experimental repair in progress, not production-ready.**
+**Snapshot:** 2026-11-12 UTC. **Status: repair working copy unavailable; separate reconstruction in progress, not production-ready.**
+> **Current status correction, 2026-11-12 07:50 UTC:** The cloud environment disconnected and returned without the isolated repair working copy. The candidate source, patches, local evidence, and latest artwork are currently inaccessible. Earlier test and GUI results in this document describe the former, now-unavailable version; they are **historical reports, not currently reproducible results from an available checkout**. PR #7 remains available as a baseline. Rebuilding separately is underway; feature recovery and revalidation have not been established. See the final incident entry.
+
 
 本日志区分需求、隔离环境中已实现并测试的功能，以及尚未完成的艺术质量目标。代码测试通过不等于画面达到要求；本次提交只同步日志，不发布修复代码。
 
@@ -343,3 +345,36 @@ This entry updates the bucket workflow and compatibility evidence. Candidate cod
 - At this snapshot that original study is planned/in production, with **no completed or accepted sample**.
 - Artist-level original creation, full semantic reconstruction, finished cover/six-page delivery, and dependable browser file delivery remain unfinished. Test passes and licensed-art editing do not establish those goals.
 - This update publishes only the development log. No code, source art, or candidate artwork is uploaded or merged.
+
+## Incident and recovery status: 2026-11-12 07:50 UTC
+
+### What changed
+
+- The cloud environment disconnected. After reconnection the prior desktop/processes and repair working copy were not available; the returned workspace did not contain the candidate implementation.
+- The accumulated repair source/patch chain, local verification artifacts, seven-layer native demonstration, and recent original drawing studies are currently inaccessible. This is an availability finding, not proof of deliberate deletion or permanent loss.
+- The latest original V2 study had been reported as native 2048, six layers, and 73 strokes with save/reopen equality, but failed visual acceptance: the supporting hand did not convincingly bear weight and the pen grip remained schematic. V3 hand work had no completed accepted artifact before the interruption.
+
+### Read-only backup search and recoverable versions
+
+- All 26 returned GitHub branches were checked. No branch containing this session's isolated repair implementation was found.
+- PR #7 is still available at `f9085f9934b5f0c2dba42b0433ecde15c862a794` on `work/serverless-generation-20261111`. It is the recoverable implementation baseline, **not the repaired v3–v8 candidate**.
+- PR #9 remains at `1a960390c271a293de32961a8066874bb3932f12`, with six QA/documentation/CI files. It is not a backup of the repair engine.
+- PR #8 at `ad76cd7cb239da1b62ecf08557299bdf93133cdc` retained the preceding log text. That snapshot was read back successfully. This PR contains documentation only, not the implementation described by its entries.
+- Library metadata was inspected for all 350 returned items created since November 11, plus targeted title searches for Drawborad and patch names. No current repair-source bundle or patch backup was found.
+- Three plausible packages were opened for directory inspection: Thin_Contour_NATIVE_TEST_Package, Drawborad_Linework_Editable, and Page1_Native_Editable. They contain earlier project/image/verification/readme assets, not repair source code.
+- A November 7 Ubuntu24/Debian13 patch package exists and contains 13 packaging/CI source files, based on PR #6 commit `ee98444984a8beaeafc769231fd6107a8755e1c8`. It is an older packaging change, not a recovery of the missing drawing-engine repairs.
+- These searches did not modify, merge, reset, or overwrite any repository. Failure to find a backup in these checked locations does not establish absence from every possible storage system.
+
+### How to interpret the earlier evidence
+
+- The preceding 58/60 test report, GUI workflows, pixel comparisons, budgets, and artifact hashes remain records of results reported for the former environment.
+- The corresponding candidate source and local artifacts are not currently available for rerun or independent inspection. **Do not present those historical passes as validation of the newly available baseline or the reconstruction now underway.**
+- The recorded seven-layer ORA hash identifies the former artifact; it is not a currently verified downloadable copy. Browser download-to-disk had already remained unconfirmed before the interruption.
+- Documentation continuity is not source-code persistence. The engineering progress log must not be treated as a runnable backup.
+
+### Current action and unfinished recovery
+
+- Work is being reconstructed separately from the available baseline and recorded requirements, without overwriting the shared repository or pretending to have restored the missing checkout.
+- Reconstructed features must be distinguished from recovered originals, and tested again on their actual new source version.
+- No claim is made that the patch chain, seven-layer artwork, test evidence, or complete repaired feature set has been restored.
+- Next acceptance requires a durable source checkpoint, explicit version identification, fresh relevant tests, and fresh GUI/artifact validation. Artist-level artwork remains unachieved.
