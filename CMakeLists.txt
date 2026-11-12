@@ -28,7 +28,7 @@ else()
     add_link_options(-fsanitize=address,undefined)
   endif()
 endif()
-add_library(drawborad_core STATIC src/core/DocumentSpec.cpp src/core/Document.cpp src/core/CommandBus.cpp src/core/Digest.cpp src/storage/FileIO.cpp src/storage/TileStore.cpp src/storage/ProjectCodec.cpp src/storage/ProjectStore.cpp src/storage/Journal.cpp src/jobs/Protocol.cpp src/jobs/ResourceGovernor.cpp src/jobs/JobBroker.cpp src/jobs/WinWorkerHost.cpp src/platform/WinDiagnostics.cpp apps/studio/ApplicationController.cpp apps/studio/AlphaImportPolicy.cpp)
+add_library(drawborad_core STATIC src/core/DocumentSpec.cpp src/core/Document.cpp src/core/LineartRaster.cpp src/core/CommandBus.cpp src/core/Digest.cpp src/storage/FileIO.cpp src/storage/TileStore.cpp src/storage/ProjectCodec.cpp src/storage/ProjectStore.cpp src/storage/Journal.cpp src/jobs/Protocol.cpp src/jobs/ResourceGovernor.cpp src/jobs/JobBroker.cpp src/jobs/WinWorkerHost.cpp src/platform/WinDiagnostics.cpp apps/studio/ApplicationController.cpp apps/studio/AlphaImportPolicy.cpp)
 target_include_directories(drawborad_core PUBLIC ${PROJECT_SOURCE_DIR}/src)
 add_library(drawborad_color STATIC
   src/color/ProfileStore.cpp src/color/ColorService.cpp src/color/BlendPolicy.cpp src/color/ProofTransform.cpp)

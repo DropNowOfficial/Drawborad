@@ -1,5 +1,6 @@
 #pragma once
 #include "core/Document.h"
+#include "core/LineartRaster.h"
 #include <algorithm>
 namespace drawborad {
 // Document child order is the painting order, from bottom to top.
@@ -48,9 +49,10 @@ inline bool nativeCompositingSupported(const DocumentSnapshot& snapshot, NodeId 
         const auto found = snapshot.nodes->find(id);
         if (found == snapshot.nodes->end()) return false;
         const auto& node = found->second;
-        if (!node.content.empty() || node.sourceKind != SourceKind::Reconstructed ||
+        const bool lineart=node.stage==LineartStage && bool(lineartRasterPixels(snapshot,id));
+        if (!lineart && (!node.content.empty() || node.sourceKind != SourceKind::Reconstructed ||
             !node.sourceResource.empty() || node.blend != BlendMode::Normal ||
-            (node.kind != NodeKind::Layer && node.opacity != 1)) return false;
+            (node.kind != NodeKind::Layer && node.opacity != 1))) return false;
         transformed=transformed || node.transform!=LayerTransform{};
         if(!node.maskId.empty()){
             const auto pixels=checkedMultiply(snapshot.spec.pixelSize.width,snapshot.spec.pixelSize.height);

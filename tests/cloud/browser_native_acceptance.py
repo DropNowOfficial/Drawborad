@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 import zipfile
 import xml.etree.ElementTree as ET
 
-from PIL import Image
+from PIL import Image, ImageDraw
 from bucket_artifact_evidence import verify_bucket_artifacts
 from playwright.sync_api import expect, sync_playwright
 
@@ -179,6 +179,121 @@ def exercise_bucket(page, initial, original_draw, original_ora, output, url, tok
     return receipt
 
 
+def exercise_lineart(page, output, url, token):
+    """Technical closed-region fixture, not user artwork or a quality claim."""
+    output.mkdir(parents=True, exist_ok=True)
+    original = Image.new("RGBA", (512, 512), "white")
+    pen = ImageDraw.Draw(original)
+    for x0, x1 in ((40, 230), (280, 470)):
+        pen.rectangle((x0, 40, x1, 470), outline=(128, 128, 128, 255), width=6)
+        pen.rectangle((x0 + 2, 42, x1 - 2, 468), outline=(0, 0, 0, 255), width=2)
+    source = output / "technical-two-closed-regions.png"
+    original.save(source, dpi=(300, 300))
+    original_bytes = source.read_bytes()
+    click_post(page, page.locator("#nativeClose"), "/close")
+    page.locator("#nativeFile").set_input_files(source)
+    initial = click_post(page, page.locator("#nativeImport"), "/import-lineart", 201)
+    assert (int(initial["width"]), int(initial["height"])) == (512, 512)
+    lineart = [n for n in initial["nodes"] if n["stage"] == "drawborad.lineart.rgba.v1"]
+    assert len(lineart) == 1
+    lineart = lineart[0]
+    assert lineart["locked"] and lineart["visible"] and lineart["blend"] == 1
+    assert lineart["source_kind"] == 0
+    assert "ora" not in initial["capabilities"]
+    expect(page.locator("#nativeOra")).to_be_disabled()
+
+    def panel(name):
+        page.locator("#nativeEditor").scroll_into_view_if_needed()
+        page.locator("#nativeEditor").screenshot(path=output / (name + "-panel.png"),
+            mask=[page.locator("#token")], animations="disabled")
+
+    def exported(name):
+        path = download(page, "Export painting PNG", output, "painting.png")
+        with Image.open(path) as image:
+            pixels = image.convert("RGBA")
+            assert pixels.size == (512, 512)
+        (output / (name + "-native.png")).write_bytes(path.read_bytes())
+        return pixels
+
+    before = preview(page, output / "before-preview.png")
+    assert exported("before").tobytes() == original.tobytes()
+    old_nodes = {n["id"] for n in initial["nodes"]}
+    added = click_post(page, page.locator("#nativeAddFillLayer"), "/commands")
+    layers = [n for n in added["nodes"] if n["kind"] == 3 and n["id"] not in old_nodes]
+    assert len(layers) == 1
+    color = layers[0]
+    assert color["name"] == "Color fill" and color["visible"] and not color["locked"]
+    parent = next(n for n in added["nodes"] if n["id"] == lineart["parent_id"])
+    assert color["parent_id"] == parent["id"]
+    assert parent["children"].index(color["id"]) < parent["children"].index(lineart["id"])
+    assert preview(page) == before
+    expect(page.locator('[data-node-id="' + color["id"] + '"] .native-node-select')).to_have_attribute("aria-pressed", "true")
+    panel("before")
+    page.locator("#nativeColor").evaluate("""input => {
+        input.value = '#00ffff';
+        input.dispatchEvent(new Event('input', {bubbles:true}));
+        input.dispatchEvent(new Event('change', {bubbles:true}));
+    }""")
+    page.locator("#nativeTolerance").fill("0")
+    page.locator("#nativeBucket").check()
+    image = page.locator("#nativePreview")
+    image.scroll_into_view_if_needed()
+    bounds = image.bounding_box()
+    assert bounds is not None
+    with page.expect_response(endpoint("POST", "/commands")) as pending:
+        page.mouse.click(bounds["x"] + bounds["width"] * 100 / 512,
+                         bounds["y"] + bounds["height"] * 200 / 512)
+    response = pending.value
+    assert response.status == 200, f"lineart bucket returned {response.status}: {response.text()}"
+    filled = response.json()
+    expect(page.locator("#nativeNew")).to_be_enabled(timeout=90000)
+    assert filled["strokes"][-1]["tool"] == "bucket"
+    assert filled["strokes"][-1]["layer_id"] == color["id"]
+    assert int(filled["stroke_count"]) == int(added["stroke_count"]) + 1
+    after = preview(page, output / "after-preview.png")
+    panel("after")
+    painted = exported("after")
+    expected = original.copy()
+    ImageDraw.Draw(expected).rectangle((46, 46, 224, 464), fill=(0, 255, 255, 255))
+    assert painted.tobytes() == expected.tobytes(), "Only the left closed white region may change; black/grey boundaries, right region and exterior must remain exact"
+    assert painted.getpixel((100, 200)) == (0, 255, 255, 255)
+    assert painted.getpixel((350, 200)) == original.getpixel((350, 200))
+    assert after != before
+    click_post(page, page.locator("#nativeUndo"), "/undo")
+    assert preview(page) == before
+    assert exported("undo").tobytes() == original.tobytes()
+    panel("undo")
+    redone = click_post(page, page.locator("#nativeRedo"), "/redo")
+    assert preview(page) == after
+    copied = click_post(page, page.locator("#nativeSaveCopy"), "/save-copy", 201)
+    assert copied["id"] != initial["id"] and not copied["dirty"]
+    assert copied["revision"] == redone["revision"] and copied["strokes"] == redone["strokes"]
+    draw = download(page, "Download saved .draw", output, "painting.draw")
+    png = download(page, "Export painting PNG", output, "painting.png")
+    with Image.open(png) as saved_png:
+        assert saved_png.convert("RGBA").tobytes() == expected.tobytes()
+    click_post(page, page.locator("#nativeClose"), "/close")
+    page.locator("#nativeFile").set_input_files(draw)
+    reopened = click_post(page, page.locator("#nativeImport"), "/import", 201)
+    assert reopened["strokes"] == copied["strokes"]
+    assert preview(page) == after
+    assert exported("reopened").tobytes() == expected.tobytes()
+    panel("reopened")
+    assert source.read_bytes() == original_bytes
+    receipt = {"browser_workflow": "passed", "fixture": "technical synthetic two closed regions, not user artwork",
+        "size": [512, 512], "source_unchanged": True, "lineart_locked_multiply": True,
+        "fill_layer_below_lineart": True, "seed": [100, 200], "tolerance": 0,
+        "left_region_cyan_only": True, "right_exterior_black_grey_unchanged": True,
+        "undo_redo_pixels_equal": True, "download_reopen_pixels_equal": True,
+        "color_input": "DOM input/change; native OS picker not tested",
+        "ora": "unsupported for lineart in this increment; not exported or verified",
+        "project": copied["id"], "saved_revision": copied["revision"],
+        "exports": [draw.name, png.name],
+        "screenshots": [name + "-panel.png" for name in ("before", "after", "undo", "reopened")]}
+    (output / "lineart-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    return receipt
+
+
 def exercise(context, page, source, output, url, token, restart):
     authenticate(page, url, token)
     page.get_by_text("Photo segmentation & source-layer review", exact=True).click()
@@ -268,12 +383,12 @@ def exercise(context, page, source, output, url, token, restart):
     imported = click_post(page, page.locator("#nativeImport"), "/import", 201)
     assert imported["id"] != saved["id"] and imported["strokes"] == saved["strokes"]
     assert preview(page) == after
-    bucket = exercise_bucket(page, imported, draw, ora, output / "bucket", url, token)
+    lineart = exercise_lineart(page, output / "lineart", url, token)
     changed_pixels = sum(before[i:i+3] != after[i:i+3] for i in range(0, len(after), 3))
     return {"project": saved["id"], "strokes": saved["stroke_count"], "stroke": stroke["id"],
             "changed_browser_pixels": changed_pixels, "saved_revision": saved["revision"],
             "stale_status": 409, "locked_status": 423, "exports": [draw.name, png.name, ora.name],
-            "bucket": bucket}
+            "lineart": lineart}
 
 
 def verify_in_chromium(source, output, url, token, restart, environment):

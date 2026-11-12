@@ -9,6 +9,7 @@ fs::path suffix(fs::path p, const std::string& s) {
     return p;
 }
 unsigned formatGeneration(const DocumentSnapshot& s) {
+    if(std::any_of(s.nodes->begin(),s.nodes->end(),[](const auto& item){const auto& n=item.second;return n.sourceKind==SourceKind::ImportedRaster && n.stage=="drawborad.lineart.rgba.v1";}))return 9;
     return std::any_of(s.eventIndex->begin(),s.eventIndex->end(),
                        [](const auto& e){ return e.engineVersion==8; }) ? 8 : 2;
 }
@@ -38,7 +39,7 @@ Result<RecoveryResult> load(FileIO& io, const ProjectPath& p) {
         auto backup = one(suffix(p, ".bak"));
         if (!backup && backup.error().code == ErrorCode::UnsupportedFeature)
             return backup.error();
-        if ((!backup && formatGeneration(s.value())==8) ||
+        if ((!backup && formatGeneration(s.value())>=8) ||
             (backup && formatGeneration(backup.value())!=formatGeneration(s.value())))
             return error(ErrorCode::UnsupportedFeature, "project.mixed-format-backup");
     }
@@ -57,9 +58,9 @@ Result<RecoveryResult> load(FileIO& io, const ProjectPath& p) {
             try {
                 binary::Reader peek{r.value().data};
                 const auto format=peek.text(32);
-                if(format!="DRAW-DELTA-1" && format!="DRAW-DELTA-8")
+                if(format!="DRAW-DELTA-1" && format!="DRAW-DELTA-8" && format!="DRAW-DELTA-9")
                     return error(ErrorCode::UnsupportedFeature,"project.journal-version");
-                if((format=="DRAW-DELTA-8")!=(formatGeneration(s.value())==8))
+                if((format=="DRAW-DELTA-9"?9u:format=="DRAW-DELTA-8"?8u:2u)!=formatGeneration(s.value()))
                     return error(ErrorCode::UnsupportedFeature,"project.mixed-format-journal");
                 (void)peek.id();
                 (void)peek.u64();

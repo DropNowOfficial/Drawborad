@@ -3,7 +3,7 @@
 #include "ui/MergedDocument.h"
 #include <algorithm>
 namespace drawborad {
-Result<Command> addFillLayerCommand(const DocumentSnapshot& s, NodeId id, bool mergedPreview) {
+Result<Command> addFillLayerCommand(const DocumentSnapshot& s, NodeId id, bool mergedPreview, bool belowInk) {
     auto valid=validateSnapshot(s);if (!valid) return valid.error();
     const auto size=s.spec.pixelSize;
     // Match the current full-document preview budget before changing state.
@@ -16,7 +16,7 @@ Result<Command> addFillLayerCommand(const DocumentSnapshot& s, NodeId id, bool m
         return error(ErrorCode::Locked,"bucket.root-locked");
     LayerNode layer;layer.id=id;layer.parent=Document::rootId();layer.name="Color fill";
     layer.bounds={0,0,s.spec.pixelSize.width,s.spec.pixelSize.height};
-    Command command(AddNode{layer});
+    Command command(AddNode{layer,belowInk?0:SIZE_MAX});
     if(mergedPreview){
         auto candidate=Document::fromSnapshot(s);if(!candidate)return candidate.error();
         auto applied=candidate.value().apply(command,s.revision);if(!applied)return applied.error();

@@ -51,6 +51,7 @@ Result<MergedPlan> plan(const DocumentSnapshot& s,MergedBudget budget){
  for(const auto& [id,node]:*s.nodes)if(node.kind==NodeKind::Layer && layerVisible(s,id))
   if(!addWithin(work,pixels.value(),budget.maxRasterWork))return error(ErrorCode::BudgetExceeded,"merged.composite-work-limit");
  for(const auto& e:*s.eventIndex){
+  if(s.nodes->contains(e.layerId) && s.nodes->at(e.layerId).stage==LineartStage)return error(ErrorCode::UnsupportedFeature,"lineart.paint-events");
   auto b=strokeBounds(e);if(!b)return b.error();
   const auto& r=b.value();
   const auto nx=std::uint64_t(tileAt(r.x+std::int64_t(r.width)-1)-tileAt(r.x)+1);
@@ -104,14 +105,30 @@ Result<MergedDocument> renderMergedDocument(const DocumentSnapshot& s,EventLimit
    for(std::uint64_t y=0;y<size.height;y+=TileSide)for(std::uint64_t x=0;x<size.width;x+=TileSide){
     if(stop.stop_requested())return error(ErrorCode::Cancelled,"merged.cancelled");
     Rect rect{std::int64_t(x),std::int64_t(y),std::min<std::uint64_t>(TileSide,size.width-x),std::min<std::uint64_t>(TileSide,size.height-y)};
-    auto tile=renderer.renderRegion(s,id,rect,limit,stop);if(!tile)return tile.error();
+    const bool raster=s.nodes->at(id).stage==LineartStage;
+    Result<TileData> tile=error(ErrorCode::UnsupportedFeature,"lineart.tile");
+    if(raster){
+     auto raw=lineartRasterPixels(s,id);if(!raw)return raw.error();
+     TileData t;t.width=std::uint32_t(rect.width);t.height=std::uint32_t(rect.height);t.rowStride=rect.width*4;
+     t.format=s.spec.colorSpec.format;t.profileId=s.spec.colorSpec.profileId;t.bytes.resize(std::size_t(t.rowStride*t.height));
+     for(std::uint32_t row=0;row<t.height;row++)std::copy_n(raw.value().begin()+std::ptrdiff_t(((y+row)*size.width+x)*4),std::size_t(t.rowStride),t.bytes.begin()+std::ptrdiff_t(row*t.rowStride));
+     tile=std::move(t);
+    }else tile=renderer.renderRegion(s,id,rect,limit,stop);
+    if(!tile)return tile.error();
     auto masked=nativeMaskedTile(s,id,std::move(tile.value()),rect.x,rect.y);if(!masked)return masked.error();
     const auto& src=masked.value();
     for(std::uint32_t row=0;row<src.height;row++)for(std::uint32_t col=0;col<src.width;col++){
      const auto from=std::size_t(row*src.rowStride+col*4),to=std::size_t((y+row)*dest.rowStride+(x+col)*4);
      const auto sa=(unsigned(src.bytes[from+3])*opacity+127)/255;if(!sa)continue;
      const auto da=unsigned(dest.bytes[to+3]),den=sa*255+da*(255-sa);
-     for(unsigned c=0;c<3;c++)dest.bytes[to+c]=std::uint8_t((unsigned(src.bytes[from+c])*sa*255+unsigned(dest.bytes[to+c])*da*(255-sa)+den/2)/den);
+     for(unsigned c=0;c<3;c++){
+      if(raster){
+       const std::uint64_t cs=src.bytes[from+c],cb=dest.bytes[to+c];
+       const auto numerator=cs*sa*(255-da)*255+cb*da*(255-sa)*255+cs*cb*sa*da;
+       const auto divisor=std::uint64_t(den)*255;
+       dest.bytes[to+c]=std::uint8_t((numerator+divisor/2)/divisor);
+      }else dest.bytes[to+c]=std::uint8_t((unsigned(src.bytes[from+c])*sa*255+unsigned(dest.bytes[to+c])*da*(255-sa)+den/2)/den);
+     }
      dest.bytes[to+3]=std::uint8_t((den+127)/255);
     }
    }

@@ -5,6 +5,8 @@
 #include "codecs/RasterWriters.h"
 #include "color/ColorService.h"
 #include "brush/BucketFill.h"
+#include "core/LineartRaster.h"
+#include "codecs/ImageReader.h"
 #include <cmath>
 #include <random>
 #include <QColorSpace>
@@ -108,9 +110,11 @@ public:
     QJsonObject state() {
         const auto s=snapshot(); QJsonArray nodes,events;
         for(const auto& [id,node]:*s.nodes) {
+            QJsonArray children;for(const auto child:node.children)children.append(idText(child));
             nodes.append(QJsonObject{{"id",idText(id)},{"parent_id",idText(node.parent)},
                 {"object_id",idText(node.objectId)},{"name",QString::fromStdString(node.name)},
                 {"kind",int(node.kind)},{"stage",QString::fromStdString(node.stage)},
+                {"source_kind",int(node.sourceKind)},{"blend",int(node.blend)},{"children",children},
                 {"visible",node.visible},{"locked",node.locked},{"opacity",node.opacity}});
         }
         for(const auto& e:*s.eventIndex) {
@@ -121,14 +125,42 @@ public:
                 {"start_us",number(e.startUs)},{"end_us",number(e.endUs)},
                 {"geometry_count",number(e.geometry.size())}});
         }
+        QJsonArray capabilities{"recolor_stroke","set_properties","bucket_fill","add_fill_layer","undo","redo","save","save_copy","replay","png"};
+        const bool hasLineart=std::any_of(s.nodes->begin(),s.nodes->end(),[](const auto& pair){return pair.second.stage=="drawborad.lineart.rgba.v1";});
+        if(!hasLineart)capabilities.append("ora");
         return {{"document_id",idText(s.documentId)},{"revision",number(s.revision)},
             {"saved_revision",saved?QJsonValue(number(*saved)):QJsonValue(QJsonValue::Null)},
             {"dirty",controller->dirty()},{"nodes",nodes},{"strokes",events},
             {"stroke_count",number(s.eventIndex->size())},
             {"width",number(s.spec.pixelSize.width)},{"height",number(s.spec.pixelSize.height)},
-            {"capabilities",QJsonArray{"recolor_stroke","set_properties","bucket_fill","add_fill_layer","undo","redo","save","save_copy","replay","png","ora"}}};
+            {"capabilities",capabilities}};
     }
     QJsonObject request(const QString& method,const QJsonObject& p) {
+        if(method=="import_lineart") {
+            canReplace(p);
+            const auto source=pathValue(p.value("path"));
+            ResourceBudget budget;budget.scratchBytes=32*1024*1024;budget.ramReclaimBytes=64*1024*1024;
+            const auto info=checked(preflightInput(source,budget));
+            need(info.format==ImageFormat::Png,"lineart.png-required");
+            DecodeOptions options;options.limits.encodedBytes=32*1024*1024;options.limits.decodedBytes=64*1024*1024;
+            auto imported=checked(decodeImage(source,options));
+            need(imported.decodedPixels.has_value(),"lineart.decode");
+            auto pixels=std::move(*imported.decodedPixels);
+            need(pixels.format==PixelFormat{ColorMode::RGB,Depth::U8,true} && pixels.rowStride==std::uint64_t(pixels.width)*4,"lineart.rgba8-required");
+            need(pixels.width<=4096 && pixels.height<=4096,"lineart.size");
+            if(!imported.info.iccProfile.empty()) {
+                const auto& bytes=imported.info.iccProfile;
+                auto space=QColorSpace::fromIccProfile(QByteArray(reinterpret_cast<const char*>(bytes.data()),qsizetype(bytes.size())));
+                need(space.isValid() && space==QColorSpace(QColorSpace::SRgb),"lineart.non-srgb-profile-not-supported");
+            }
+            auto next=std::make_unique<ApplicationController>();
+            NewDocumentRequest r;r.dimensions={double(pixels.width),double(pixels.height),Unit::Px,300};
+            r.transparent=false;r.paperColor.channels={1,1,1,0};r.paperColor.alpha=1;
+            checked(next->newDocument(r));
+            checked(next->apply(checked(makeLineartRasterCommand(std::move(pixels.bytes),std::move(imported.encodedSource),pixels.width,pixels.height,newEventId()))));
+            checked(planMergedDocument(*next->snapshot()));
+            controller=std::move(next);path.clear();saved.reset();return state();
+        }
         if(method=="open" || method=="create") {
             canReplace(p);
             auto next=std::make_unique<ApplicationController>();
@@ -158,7 +190,7 @@ public:
                 auto color=browserColor(s,p.value("color"));color.alpha=found->color.alpha;
                 command.operations.emplace_back(RecolorStroke{id,color});
             } else if(type=="add_fill_layer") {
-                command=checked(addFillLayerCommand(snapshot(),newEventId(),true));
+                command=checked(addFillLayerCommand(snapshot(),newEventId(),true,true));
             } else if(type=="bucket_fill") {
                 const auto s=snapshot();
                 const auto x=pixelInteger(p.value("x")),y=pixelInteger(p.value("y"));

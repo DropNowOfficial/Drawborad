@@ -138,3 +138,32 @@ unsupported. It was run against 85f3383d and failed at session.size (RED), as ex
 The new bridge is not locally built; await new CI for GREEN. ORA/PSD streaming,
 external-editor layer validation, and art quality remain unfinished. Do not infer
 large layered export support from a large PNG or from the native .draw event file.
+
+## PNG lineart construction increment (pending new CI)
+
+User correction: the target is an original lineart above an independent color
+layer, sampling across layers and filling one closed area. A whole colored-picture
+overlay is not acceptance of that goal. Run 43185600900 for 7e836803 passed every
+native/browser/cloud-session/install job, but its older colored-picture bucket
+scenario does not satisfy this corrected workflow.
+
+Implemented now: Open project accepts PNG lineart, bounded native PNG decoding,
+original encoded PNG and decoded RGBA retained byte-for-byte as resources, a locked
+Multiply lineart layer, and a new color layer inserted below ink. Normal/Multi-
+alpha rendering keeps the original resource unchanged; no thresholding, tracing,
+thinning or image-generation model is used. Non-sRGB embedded profiles are rejected
+rather than silently changing color. Pixel dimensions are retained; document PPI
+is initially 300. Other raster import types are not implicitly enabled.
+
+Native 512x512 technical two-region test fills only the left area, with the other
+region/outside and original ink layer unchanged, plus undo/save-copy/reopen. This
+is NOT the user's artwork. No antialias expansion/halo removal or gap closing is
+claimed. The historical bat lineart is being used as a separate real-input sample;
+it is not called the fox and not represented as the current assignment.
+
+The new raster feature requires DRAW-DELTA-9. Legacy/v8/v9 crossing, mixed backup
+or journal, unknown headers and mislabeled feature headers fail closed; save new
+copies instead. v9 can contain bucket-v8 events; no stroke engine 9 was invented.
+Small native resource/alpha and storage tests pass. The new actual PNG entry and
+new closed-region Chromium exercise still require the next CI. Layered ORA with
+imported raster is explicitly disabled, pending the separate streaming export step.

@@ -187,6 +187,19 @@ def install_projects(app,config,authorized):
                 tmp.write(data);tmp.flush()
                 return projects.import_file(tmp.name)
 
+    @router.post('/import-lineart',status_code=201)
+    def import_lineart(lineart:UploadFile=File(...)):
+        with projects.transaction():
+            params=projects.prepare_switch()
+            data=lineart.file.read(32*1024*1024+1)
+            if not data or len(data)>32*1024*1024:fail(413,'invalid_input','Choose a PNG lineart file up to 32 MiB')
+            if not data.startswith(b'\x89PNG\r\n\x1a\n'):fail(422,'invalid_input','PNG lineart required')
+            with tempfile.NamedTemporaryFile(dir=projects.root,suffix='.png') as tmp:
+                tmp.write(data);tmp.flush()
+                state=projects.rpc('import_lineart',path=tmp.name,**params)
+            projects.active=str(uuid4());projects.project_path(projects.active).parent.mkdir()
+            return projects.state(state)
+
     @router.get('/{pid}')
     def state(pid:str):
         with projects.transaction():return projects.select(pid)

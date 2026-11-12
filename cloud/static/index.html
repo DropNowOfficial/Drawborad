@@ -35,7 +35,7 @@ footer{color:#98a1ac;font-size:11px;margin-top:25px;line-height:1.7}.errors{colo
 </details>
 </div>
 <div class="panelbody nativebar">
-<label class="fieldlabel" for="nativeFile">Open .draw <input id="nativeFile" type="file" accept=".draw"></label>
+<label class="fieldlabel" for="nativeFile">Open .draw / PNG lineart <input id="nativeFile" type="file" accept=".draw,.png,image/png"></label>
 <button id="nativeImport" class="secondary" type="button">Open project</button>
 <button id="nativeNew" class="secondary" type="button">New canvas</button>
 <button id="nativeUndo" class="secondary" type="button" disabled>Undo</button>
@@ -62,7 +62,7 @@ footer{color:#98a1ac;font-size:11px;margin-top:25px;line-height:1.7}.errors{colo
 <label class="fieldlabel" for="nativeColor">New color · sRGB</label><input id="nativeColor" type="color" value="#00ff00" disabled>
 <button id="nativeRecolor" class="primary" type="button" disabled>Apply color</button>
 <div class="divider"></div>
-<button id="nativeAddFillLayer" class="secondary" type="button" disabled>New color layer</button>
+<button id="nativeAddFillLayer" class="secondary" type="button" disabled>New color layer below ink</button>
 <label class="fieldlabel"><input id="nativeBucket" type="checkbox" disabled> Bucket fill on selected layer</label>
 <label class="fieldlabel" for="nativeTolerance">Tolerance (0–255)</label>
 <input id="nativeTolerance" class="field" type="number" min="0" max="255" step="1" value="0" disabled>
@@ -171,6 +171,7 @@ function nativeFillReady(){
 function nativeError(message){by('nativeError').textContent=message||'';by('nativeError').style.display=message?'block':'none'}
 function nativeControls(){
  for(const id of nativeActionIds) by(id).disabled=nativeBusy||(!nativeState&&!['nativeImport','nativeNew'].includes(id));
+ by('nativeOra').disabled=nativeBusy||!nativeState||(nativeState.capabilities&&!nativeState.capabilities.includes('ora'));
  const hasSelection=nativeScopedStrokes().length>0;
  by('nativeRecolor').disabled=nativeBusy||!hasSelection;
  by('nativeDownload').disabled=nativeBusy||!nativeState||nativeState.dirty;
@@ -270,7 +271,7 @@ async function nativeRun(action){
  if(nativeBusy)return;nativeBusy=true;nativeError('');nativeControls();
  try{await action()}catch(e){const message=e.message;if(nativeState){try{await nativeShow(await api('/projects/'+nativeState.id))}catch(refreshError){by('nativeStatus').textContent='Disconnected · last displayed state may be stale'}}nativeError(message)}finally{nativeBusy=false;nativeControls()}
 }
-by('nativeImport').onclick=()=>nativeRun(async()=>{const f=by('nativeFile').files[0];if(!f)throw new Error('Choose a .draw file first.');const form=new FormData();form.append('project',f);await nativeShow(await api('/projects/import',{method:'POST',body:form}))});
+by('nativeImport').onclick=()=>nativeRun(async()=>{const f=by('nativeFile').files[0];if(!f)throw new Error('Choose a .draw project or PNG lineart first.');const isPng=/\.png$/i.test(f.name)||f.type==='image/png';const form=new FormData();form.append(isPng?'lineart':'project',f);await nativeShow(await api(isPng?'/projects/import-lineart':'/projects/import',{method:'POST',body:form}))});
 by('nativeNew').onclick=()=>nativeRun(async()=>nativeShow(await nativePost('',{width:'512',height:'512'})));
 by('nativeStrokes').onchange=nativeSelection;
 by('nativeAllStrokes').onclick=()=>nativeSelectNode(null);
