@@ -1,3 +1,4 @@
+// Periodic callbacks are controlled by dedicated recovery tests, not wall-clock timers here.
 /* Socket-free state/DOM contract test. Not a browser/layout or native-engine test. */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -56,7 +57,7 @@ const context = vm.createContext({
   document: {getElementById: get, createElement: tag => new Element(tag), createTextNode: text => Object.assign(new Element('#text'), {textContent: text})},
   window: {addEventListener() {}}, localStorage: {setItem: (k, v) => storage.set(k, v), getItem: k => storage.get(k) || null, removeItem: k => storage.delete(k)},
   URL: {createObjectURL: () => 'blob:fixture/' + ++blobId, revokeObjectURL() {}},
-  setInterval, clearInterval, FormData, console,
+  setInterval: () => 1, clearInterval() {}, FormData, console,
   fetch: async (url, options = {}) => {
     requests.push({url, options});
     if (url.endsWith('/capabilities')) return {ok: false, status: 401, headers: {get: () => 'application/json'}, json: async () => ({detail: 'Bearer token required'})};

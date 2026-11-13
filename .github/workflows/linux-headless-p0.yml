@@ -314,6 +314,7 @@ jobs:
           out/browser-venv/bin/pip install 'playwright>=1.50,<2' pillow
           out/browser-venv/bin/python -m playwright install --with-deps chromium
       - name: Native layer selection UI regressions
+        timeout-minutes: 5
         run: |
           node tests/cloud/test_mypaint_ui.cjs
           node tests/cloud/native_layer_selection_unit.cjs

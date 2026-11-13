@@ -1,3 +1,4 @@
+// Periodic callbacks are controlled by dedicated recovery tests, not wall-clock timers here.
 /* Synthetic credentials only. Socket-free DOM contract tests, not browser QA. */
 const assert = require('node:assert/strict');
 // node:buffer File supports Node 18.13+ without relying on global File (Node 20+).
@@ -18,7 +19,7 @@ const context = vm.createContext({
   document:{getElementById:get}, window:{addEventListener(){}}, Event,
   localStorage:{getItem(){return null},setItem(...args){storage.push(args)}},
   fetch:async (url,opts)=>{requests.push({url,opts});return {ok:false,status:401,headers:{get:()=> 'application/json'},json:async()=>({detail:'Bearer token required'})}},
-  setInterval,clearInterval,console,
+  setInterval:()=>1,clearInterval(){},console,
 });
 vm.runInContext(html.match(/<script>([\s\S]*?)<\/script>/)[1],context);
 const tick = () => new Promise(resolve=>setImmediate(resolve));

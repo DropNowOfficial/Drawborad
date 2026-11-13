@@ -1,3 +1,4 @@
+// Periodic callbacks are controlled by dedicated recovery tests, not wall-clock timers here.
 /* Socket-free characterization of existing change handlers. Synthetic tokens only. */
 const assert = require('node:assert/strict');
 // node:buffer File supports Node 18.13+ without relying on global File (Node 20+).
@@ -33,7 +34,7 @@ function setup(){
  const harness={get,requests,writes,storage,respond:()=>unauthorized()};
  const context=vm.createContext({document:{getElementById:get},window:{addEventListener(){}},Event,
   localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>{writes.push([key,value]);storage.set(key,value)},removeItem:key=>storage.delete(key)},
-  URL:{createObjectURL:()=> 'blob:synthetic-preview',revokeObjectURL(){}},setInterval,clearInterval,console,
+  URL:{createObjectURL:()=> 'blob:synthetic-preview',revokeObjectURL(){}},setInterval:()=>1,clearInterval(){},console,
   fetch:async(url,opts={})=>{requests.push({url,opts});return harness.respond(url,opts)},
  });
  vm.runInContext(html.match(/<script>([\s\S]*?)<\/script>/)[1],context);
