@@ -68,6 +68,7 @@ class QtBridge : public QObject {
     bool initializeCanvas(double width, double height, double ppi, bool whitePaper = false);
     void resetLayerSelection();
   public:
+    Q_INVOKABLE QVariantMap sampleOriginalReference(const QString& expectedUrl,double x,double y) const;
     Q_INVOKABLE bool attachOriginalReferenceUrl(const QUrl&);
     QUrl originalReferenceUrl() const;
     QString originalReferenceInfo() const;

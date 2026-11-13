@@ -1,4 +1,6 @@
 #include "core/OriginalReference.h"
+#include <QImageReader>
+#include <QColorSpace>
 #include "../../apps/studio/OriginalReferenceProvider.h"
 #include "brush/ClipPolygonSelection.h"
 #include "apps/studio/QtBridge.h"
@@ -32,9 +34,15 @@ void settle(CanvasItem& c){QElapsedTimer t;t.start();while(c.rendering()&&t.elap
 void settleFill(QtBridge& b){QElapsedTimer t;t.start();while(b.fillBusy()&&t.elapsed()<30000)QTest::qWait(5);assert(!b.fillBusy());}
 int main(int argc,char**argv){
  QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);QGuiApplication app(argc,argv);
+ const auto colorSource=qEnvironmentVariable("DRAWBORAD_ORIGINAL_COLOR_SOURCE");
+ if(!colorSource.isEmpty()){
+  QtBridge b;b.createDocument(64,64,300,true);const auto original=*b.canvasSnapshot();assert(b.attachOriginalReferenceUrl(QUrl::fromLocalFile(colorSource)));const auto attached=*b.canvasSnapshot();assert(*attached.nodes==*original.nodes&&*attached.eventIndex==*original.eventIndex&&attached.spec==original.spec);const auto url=b.originalReferenceUrl();assert(!url.isEmpty());QImageReader reader(colorSource);reader.setAutoTransform(true);auto expected=reader.read();assert(!expected.isNull());if(expected.colorSpace().isValid())expected.convertToColorSpace(QColorSpace::SRgb);
+  const auto coordinates=qEnvironmentVariable("DRAWBORAD_ORIGINAL_COLOR_POINTS").split(';');for(const auto& coordinate:coordinates){auto parts=coordinate.split(',');assert(parts.size()==2);const int x=parts[0].toInt(),y=parts[1].toInt();assert(expected.rect().contains(x,y));auto picked=b.sampleOriginalReference(url.toString(),x,y);assert(picked["valid"].toBool());auto target=expected.pixelColor(x,y);target.setAlpha(255);assert(picked["color"].value<QColor>()==target);std::cout<<"Original-only sample "<<x<<","<<y<<" "<<picked["hex"].toString().toStdString()<<" (no paint)\n";}
+  assert(b.canvasSnapshot()->sameContent(attached));std::cout<<"PASS private original reference native sampling; original attachment only, no generated output\n";return 0;
+ }
  {
  QTemporaryDir dir;assert(dir.isValid());const auto path=dir.filePath("reference.png"),project=dir.filePath("attached.draw");
- QImage image(13,9,QImage::Format_RGBA8888);image.fill(QColor("#c43819"));image.setPixelColor(3,4,QColor("#249b73"));assert(image.save(path));
+ QImage image(13,9,QImage::Format_RGBA8888);image.fill(QColor("#c43819"));image.setPixelColor(3,4,QColor("#249b73"));image.setPixelColor(5,6,QColor(10,20,30,80));image.setPixelColor(6,6,QColor(0,0,0,0));assert(image.save(path));
  QtBridge b;b.createDocument(64,48,300,true);const auto original=*b.canvasSnapshot();auto before=renderCanvasFrame(original,UINT64_MAX);assert(before);
  assert(b.attachOriginalReferenceUrl(QUrl::fromLocalFile(path)));const auto attached=*b.canvasSnapshot();assert(*attached.nodes==*original.nodes&&*attached.eventIndex==*original.eventIndex&&attached.spec==original.spec);
  auto ref=originalReference(attached);assert(ref&&ref.value()&&ref.value()->width==13&&ref.value()->height==9);
@@ -44,6 +52,9 @@ int main(int argc,char**argv){
  image.fill(Qt::blue);const auto other=dir.filePath("other.png");assert(image.save(other));assert(!b.attachOriginalReferenceUrl(QUrl::fromLocalFile(other))&&b.canvasSnapshot()->sameContent(attached));
  b.saveUrl(QUrl::fromLocalFile(project));assert(QFile::exists(project));assert(b.undoDrawing()&&b.canvasSnapshot()->sameContent(original)&&b.originalReferenceUrl().isEmpty());assert(b.redoDrawing()&&!b.originalReferenceUrl().isEmpty());
  assert(QFile::remove(path));b.createDocument(32,32,300,true);assert(b.originalReferenceUrl().isEmpty());b.openUrl(QUrl::fromLocalFile(project));assert(b.canvasSnapshot()->sameContent(attached)&&b.originalReferenceUrl()==url&&!b.originalReferenceImage(url.path().mid(1)).isNull());
+ const auto pixel=b.sampleOriginalReference(url.toString(),3.9,4.1);assert(pixel["valid"].toBool()&&pixel["x"].toInt()==3&&pixel["y"].toInt()==4&&pixel["color"].value<QColor>()==QColor("#249b73"));
+ assert(!b.sampleOriginalReference("stale",3,4)["valid"].toBool());for(const auto point:{QPointF(-.1,0),QPointF(13,0),QPointF(0,9),QPointF(NAN,0)})assert(!b.sampleOriginalReference(url.toString(),point.x(),point.y())["valid"].toBool());
+ const auto translucent=b.sampleOriginalReference(url.toString(),5,6);assert(translucent["color"].value<QColor>()==QColor(10,20,30)&&std::abs(translucent["alpha"].toDouble()-80.0/255)<.001);assert(b.sampleOriginalReference(url.toString(),6,6)["alpha"].toDouble()==0);assert(b.canvasSnapshot()->sameContent(attached));
  const auto cacheKey=b.originalReferenceImage(url.path().mid(1)).cacheKey();assert(b.addLayer());assert(b.originalReferenceImage(url.path().mid(1)).cacheKey()==cacheKey);assert(b.undoDrawing()&&b.canvasSnapshot()->sameContent(attached));
  assert(b.originalReferenceImage("stale-key").isNull());
  auto malformed=attached;auto resources=std::make_shared<ResourceMap>(*attached.resources);resources->erase(ref.value()->encoded);malformed.resources=resources;assert(!originalReference(malformed));
@@ -137,8 +148,12 @@ int main(int argc,char**argv){
  QtBridge uiBridge;QQmlApplicationEngine engine;engine.addImageProvider("original-reference",new OriginalReferenceProvider(uiBridge));engine.rootContext()->setContextProperty("studio",&uiBridge);
  engine.load(QUrl::fromLocalFile(QStringLiteral(DRAWBORAD_SOURCE_DIR "/ui/Main.qml")));assert(!engine.rootObjects().isEmpty());
  {
- QTemporaryDir sourceDir;QImage refImage(17,11,QImage::Format_RGB32);refImage.fill(Qt::red);const auto refPath=sourceDir.filePath("original.png");assert(refImage.save(refPath));uiBridge.createDocument(128,128,300,true);assert(uiBridge.attachOriginalReferenceUrl(QUrl::fromLocalFile(refPath)));
- auto refWindow=engine.rootObjects().front()->findChild<QQuickWindow*>("originalReferenceWindow");assert(refWindow);refWindow->show();QTest::qWait(100);auto refItem=refWindow->findChild<QObject*>("originalReferenceImage");assert(refItem&&refItem->property("status").toInt()==1);refWindow->hide();
+ QTemporaryDir sourceDir;QImage refImage(17,11,QImage::Format_RGB32);refImage.fill(Qt::red);refImage.setPixelColor(8,5,QColor("#249b73"));const auto refPath=sourceDir.filePath("original.png");assert(refImage.save(refPath));uiBridge.createDocument(128,128,300,true);assert(uiBridge.attachOriginalReferenceUrl(QUrl::fromLocalFile(refPath)));
+ auto refWindow=engine.rootObjects().front()->findChild<QQuickWindow*>("originalReferenceWindow");assert(refWindow);refWindow->show();QTest::qWait(100);auto refItem=refWindow->findChild<QObject*>("originalReferenceImage");assert(refItem&&refItem->property("status").toInt()==1);
+ auto item=qobject_cast<QQuickItem*>(refItem);auto canvas=engine.rootObjects().front()->findChild<CanvasItem*>("nativeCanvas");assert(item&&canvas);assert(canvas->configureBrush(9,Qt::black,.4,.7,.1));const auto unchanged=*uiBridge.canvasSnapshot();
+ const auto choose=[&](){const auto pw=item->property("paintedWidth").toDouble(),ph=item->property("paintedHeight").toDouble();QPointF at((item->width()-pw)/2+pw*8.5/17,(item->height()-ph)/2+ph*5.5/11);QTest::mouseClick(refWindow,Qt::LeftButton,{},item->mapToScene(at).toPoint());};choose();assert(refWindow->property("picked").toMap()["hex"].toString()=="#249b73");assert(canvas->brushColor()==QColor(Qt::black)&&uiBridge.canvasSnapshot()->sameContent(unchanged));
+ auto apply=refWindow->findChild<QObject*>("applyReferenceColor");assert(apply&&apply->property("enabled").toBool());assert(QMetaObject::invokeMethod(apply,"clicked"));assert(canvas->brushColor()==QColor("#249b73")&&canvas->brushOpacity()==.4&&uiBridge.canvasSnapshot()->sameContent(unchanged));
+ refWindow->resize(400,700);QTest::qWait(100);choose();assert(refWindow->property("picked").toMap()["hex"].toString()=="#249b73");QTest::mouseClick(refWindow,Qt::LeftButton,{},item->mapToScene(QPointF(1,1)).toPoint());assert(!refWindow->property("picked").toMap()["valid"].toBool());choose();assert(uiBridge.undoDrawing());assert(!refWindow->property("picked").toMap()["valid"].toBool()&&!apply->property("enabled").toBool());refWindow->hide();
  }
  auto uiWindow=qobject_cast<QQuickWindow*>(engine.rootObjects().front());assert(uiWindow);QTest::qWait(200);
  auto uiCanvas=uiWindow->findChild<CanvasItem*>("nativeCanvas");auto errorLabel=uiWindow->findChild<QObject*>("canvasRenderError");assert(uiCanvas&&errorLabel);auto widthControl=uiWindow->findChild<QObject*>("brushWidthSlider");assert(widthControl);assert(widthControl->setProperty("value",9));assert(QMetaObject::invokeMethod(widthControl,"moved"));assert(uiCanvas->brushWidth()==9);assert(uiCanvas->configureBrush(12,QColor::fromRgbF(.08,.08,.08),1,.8,0));

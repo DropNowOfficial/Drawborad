@@ -19,9 +19,28 @@ ApplicationWindow {
     Window {
         id: originalReferenceWindow; objectName: "originalReferenceWindow"; title: qsTr("原彩参考 · 只读对照，不是作品输出")
         width: 600; height: 800; visible: false; color: "#29292c"
+        property var picked: ({ valid: false })
+        Connections { target: studio; function onChanged() { originalReferenceWindow.picked = { valid: false } } }
+        function pickAt(x, y) {
+            const pw = originalReferenceImage.paintedWidth, ph = originalReferenceImage.paintedHeight
+            const left = (originalReferenceImage.width - pw) / 2, top = (originalReferenceImage.height - ph) / 2
+            if (originalReferenceImage.status !== Image.Ready || pw <= 0 || ph <= 0 || x < left || y < top || x >= left + pw || y >= top + ph) { picked = { valid: false }; return }
+            picked = studio.sampleOriginalReference(studio.originalReferenceUrl.toString(), (x-left)*originalReferenceImage.sourceSize.width/pw, (y-top)*originalReferenceImage.sourceSize.height/ph)
+        }
         ColumnLayout { anchors.fill: parent; anchors.margins: 12
             Label { text: studio.originalReferenceInfo; color: "white"; wrapMode: Text.Wrap; Layout.fillWidth: true }
-            Image { objectName: "originalReferenceImage"; source: studio.originalReferenceUrl; asynchronous: false; cache: false; fillMode: Image.PreserveAspectFit; Layout.fillWidth: true; Layout.fillHeight: true }
+            Image { id: originalReferenceImage; objectName: "originalReferenceImage"; source: studio.originalReferenceUrl; asynchronous: false; cache: false; fillMode: Image.PreserveAspectFit; Layout.fillWidth: true; Layout.fillHeight: true
+                MouseArea { anchors.fill: parent; onClicked: function(mouse) { originalReferenceWindow.pickAt(mouse.x,mouse.y) } }
+            }
+            RowLayout {
+                Rectangle { width: 28; height: 28; color: originalReferenceWindow.picked.valid ? originalReferenceWindow.picked.color : "transparent"; border.color: "#aaaaaa" }
+                Label { Layout.fillWidth: true; wrapMode: Text.Wrap; color: "white"; text: originalReferenceWindow.picked.valid ? qsTr("原像素 (%1,%2) · %3 · 源 alpha %4%").arg(originalReferenceWindow.picked.x).arg(originalReferenceWindow.picked.y).arg(originalReferenceWindow.picked.hex).arg(Math.round(originalReferenceWindow.picked.alpha*100)) : qsTr("点击原彩预选单像素颜色；不自动填色") }
+            }
+            Button { objectName: "applyReferenceColor"; text: qsTr("应用 RGB 到画笔/填色（保留工具不透明度）"); Layout.fillWidth: true
+                enabled: originalReferenceWindow.picked.valid && originalReferenceWindow.picked.alpha > 0 && originalReferenceWindow.picked.source === studio.originalReferenceUrl.toString() && !studio.busy
+                onClicked: nativeCanvas.configureBrush(nativeCanvas.brushWidth,originalReferenceWindow.picked.color,nativeCanvas.brushOpacity,nativeCanvas.brushHardness,nativeCanvas.mouseTaper)
+            }
+            Label { text: qsTr("取解码原像素 RGB，不取屏幕插值色；源 alpha 仅展示，不复制。当前工具不透明度 %1%，叠色后不保证相同观感；无色彩配置时未校准。").arg(Math.round(nativeCanvas.brushOpacity*100)); color: "#e0c1a0"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Label { text: qsTr("将此只读窗放在当前分层作品旁对照。仅适配窗口显示，不重采样保存，不自动对齐。") ; color: "#e0c1a0"; wrapMode: Text.Wrap; Layout.fillWidth: true }
         }
     }

@@ -261,6 +261,11 @@ void QtBridge::refreshOriginalReference() const try {
 QUrl QtBridge::originalReferenceUrl() const {refreshOriginalReference();return referenceCacheKey_.isEmpty()?QUrl{}:QUrl("image://original-reference/"+referenceCacheKey_);}
 QString QtBridge::originalReferenceInfo() const {refreshOriginalReference();return referenceCacheInfo_;}
 QImage QtBridge::originalReferenceImage(const QString& key) const {refreshOriginalReference();return key==referenceCacheKey_?referenceCacheImage_:QImage{};}
+QVariantMap QtBridge::sampleOriginalReference(const QString& expectedUrl,double x,double y) const {
+ const auto url=originalReferenceUrl();if(url.isEmpty()||expectedUrl!=url.toString()||!std::isfinite(x)||!std::isfinite(y)||x<0||y<0||x>=referenceCacheImage_.width()||y>=referenceCacheImage_.height())return {{"valid",false}};
+ const int px=int(std::floor(x)),py=int(std::floor(y));auto color=referenceCacheImage_.pixelColor(px,py);const double alpha=color.alphaF();color.setAlpha(255);
+ return {{"valid",true},{"color",color},{"hex",color.name()},{"alpha",alpha},{"x",px},{"y",py},{"source",url.toString()}};
+}
 bool QtBridge::attachOriginalReferenceUrl(const QUrl& url) try {
  const auto fail=[&](const QString& message){originalReferenceNotice_=message;emit changed();return false;};
  if(busy()||workflow_->pending()||replaying()||!app_.snapshot())return fail(tr("请先结束预览/回放并打开工程；原图未改变。"));
