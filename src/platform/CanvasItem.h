@@ -60,6 +60,10 @@ class CanvasItem : public QQuickItem {
     QImage displayFrame_;
     QImage committedFrame_;
     bool previewing_{false};
+    // Input is pending as soon as it is accepted, including the timer window
+    // before any worker request exists. Only a completion for that input clears it.
+    bool previewInputPending_{false};
+    std::uint64_t previewInputSequence_{0};
     std::uint64_t previewRequestSequence_{0},completedPreviewSequence_{0};
     QTimer previewTimer_;
     QImage completedFrame_;

@@ -19,12 +19,14 @@
 #include <QQuickWindow>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QSignalSpy>
 #include <QSGRendererInterface>
 #include <cassert>
 #include <iostream>
 using namespace drawborad;
-void settlePreview(CanvasItem& c){QTest::qWait(50);QElapsedTimer t;t.start();while(c.previewing()&&t.elapsed()<15000)QTest::qWait(5);assert(!c.previewing());QTest::qWait(20);}
-void settle(CanvasItem& c){QElapsedTimer t;t.start();while(c.rendering()&&t.elapsed()<15000)QTest::qWait(5);assert(!c.rendering());QTest::qWait(20);}
+void present(CanvasItem& c){if(auto* w=c.window()){QSignalSpy frames(w,&QQuickWindow::frameSwapped);w->update();assert(frames.wait(5000)||frames.count()>0);}}
+void settlePreview(CanvasItem& c){QElapsedTimer t;t.start();while(c.previewing()&&t.elapsed()<15000)QTest::qWait(5);assert(!c.previewing());present(c);}
+void settle(CanvasItem& c){QElapsedTimer t;t.start();while(c.rendering()&&t.elapsed()<15000)QTest::qWait(5);assert(!c.rendering());present(c);}
 void settleFill(QtBridge& b){QElapsedTimer t;t.start();while(b.fillBusy()&&t.elapsed()<30000)QTest::qWait(5);assert(!b.fillBusy());}
 int main(int argc,char**argv){
  QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);QGuiApplication app(argc,argv);
@@ -82,6 +84,10 @@ int main(int argc,char**argv){
  QTest::mousePress(&w,Qt::LeftButton,{},QPoint(60,25));QTest::mouseMove(&w,QPoint(250,25));settlePreview(canvas);assert(canvas.strokePreviewActive());assert(bridge.canvasSnapshot()->sameContent(beforePreview));auto provisional=w.grabWindow();assert(provisional.pixelColor(150,25)!=cleanShot.pixelColor(150,25));
  QTest::mouseRelease(&w,Qt::LeftButton,{},QPoint(250,25));settle(canvas);assert(!canvas.strokePreviewActive());auto committed=w.grabWindow();assert(provisional.copy(20,0,280,45)==committed.copy(20,0,280,45));assert(bridge.undoDrawing());settle(canvas);assert(bridge.canvasSnapshot()->sameContent(beforePreview));
  QTest::mousePress(&w,Qt::LeftButton,{},QPoint(60,25));QTest::mouseMove(&w,QPoint(250,25));settlePreview(canvas);QKeyEvent escape(QEvent::KeyPress,Qt::Key_Escape,Qt::NoModifier);QCoreApplication::sendEvent(&canvas,&escape);QTest::qWait(80);assert(!canvas.strokePreviewActive());assert(bridge.canvasSnapshot()->sameContent(beforePreview));assert(w.grabWindow().copy(20,0,280,45)==cleanShot.copy(20,0,280,45));
+ // Receiving a newer sample is pending immediately, even before its 33ms timer runs.
+ auto pendingMouse=[&](QEvent::Type kind,QPointF at,ulong timestamp){QMouseEvent e(kind,at,at,kind==QEvent::MouseMove?Qt::NoButton:Qt::LeftButton,kind==QEvent::MouseButtonRelease?Qt::NoButton:Qt::LeftButton,Qt::NoModifier);e.setTimestamp(timestamp);QCoreApplication::sendEvent(&canvas,&e);};
+ pendingMouse(QEvent::MouseButtonPress,{60,25},1000);assert(canvas.previewing());pendingMouse(QEvent::MouseMove,{130,25},1100);settlePreview(canvas);assert(!canvas.previewing());pendingMouse(QEvent::MouseMove,{250,25},1200);assert(canvas.previewing());assert(bridge.canvasSnapshot()->sameContent(beforePreview));settlePreview(canvas);auto latestPreview=w.grabWindow();pendingMouse(QEvent::MouseButtonRelease,{250,25},1200);settle(canvas);assert(latestPreview.copy(20,0,280,45)==w.grabWindow().copy(20,0,280,45));assert(bridge.undoDrawing());settle(canvas);assert(bridge.canvasSnapshot()->sameContent(beforePreview));
+ pendingMouse(QEvent::MouseButtonPress,{60,25},2000);pendingMouse(QEvent::MouseMove,{250,25},2100);assert(canvas.previewing());QCoreApplication::sendEvent(&canvas,&escape);assert(!canvas.previewing()&&!canvas.strokePreviewActive());QTest::qWait(80);assert(bridge.canvasSnapshot()->sameContent(beforePreview));
  canvas.fitDocument();assert(canvas.configureBrush(4,QColor("#0000ff"),.6,1,.2));
  assert(!canvas.configureBrush(-1,QColor("#0000ff"),.6,1,.2));assert(canvas.brushWidth()==4);
  QTest::mousePress(&w,Qt::LeftButton,{},QPoint(50,35));QTest::mouseMove(&w,QPoint(150,35));assert(canvas.configureBrush(40,QColor("#ff0000"),1,.2,0));QTest::mouseRelease(&w,Qt::LeftButton,{},QPoint(250,35));settle(canvas);

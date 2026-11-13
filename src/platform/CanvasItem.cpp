@@ -34,7 +34,7 @@ CanvasItem::CanvasItem(QQuickItem* parent) : QQuickItem(parent) {
     setClip(true);
 }
 CanvasItem::~CanvasItem(){renderStop_.request_stop();renderPool_.clear();renderPool_.waitForDone();}
-bool CanvasItem::previewing() const {std::lock_guard lock(snapshotMutex_);return previewing_;}
+bool CanvasItem::previewing() const {std::lock_guard lock(snapshotMutex_);return previewing_||previewInputPending_;}
 bool CanvasItem::rendering() const {std::lock_guard lock(snapshotMutex_);return rendering_;}
 bool CanvasItem::configureBrush(double width,QColor color,double opacity,double hardness,double taper){
     if(!std::isfinite(width)||width<.5||width>512||!color.isValid()||!std::isfinite(opacity)||opacity<.01||opacity>1||!std::isfinite(hardness)||hardness<0||hardness>1||!std::isfinite(taper)||taper<0||taper>.5)return false;
@@ -74,7 +74,7 @@ void CanvasItem::refreshSnapshot() {
         std::lock_guard lock(snapshotMutex_);
         if(!snapshot_ || !next || snapshot_->documentId!=next->documentId || snapshot_->spec.pixelSize!=next->spec.pixelSize){zoom_=1;pan_={};panGesture_.reset();}
         generation=++renderGeneration_;completedFrame_={};completedError_={};
-        snapshot_=next;replayCount_=nextCount;previewing_=false;committedFrame_={};displayFrame_={};renderError_={};legacyDisplay_=false;rendering_=bool(next);
+        snapshot_=next;replayCount_=nextCount;previewing_=false;previewInputPending_=false;committedFrame_={};displayFrame_={};renderError_={};legacyDisplay_=false;rendering_=bool(next);
     }
     emit renderErrorChanged();update();emit viewChanged();
     if(!next)return;
@@ -196,30 +196,36 @@ void CanvasItem::beginSample(InputSample sample, bool tablet, bool eraser) {
     brushNotice_.clear();emit brushSettingsChanged();
     renderStop_=std::stop_source{};
     gestureBrush_=brushSettings_;gestureBrush_.seed=sample.timestampUs;gestureColor_=brushColor_;gestureTaper_=mouseTaper_;
-    stroke_.push_back(sample);setFocus(true,Qt::MouseFocusReason);previewTimer_.start();emit renderErrorChanged();
+    stroke_.push_back(sample);{std::lock_guard lock(snapshotMutex_);++previewInputSequence_;previewInputPending_=true;}setFocus(true,Qt::MouseFocusReason);previewTimer_.start();emit renderErrorChanged();
 }
-void CanvasItem::appendSample(InputSample s){if(!stroke_.empty()){stroke_.push_back(s);if(!previewTimer_.isActive())previewTimer_.start();}}
+void CanvasItem::appendSample(InputSample s){
+ if(stroke_.empty())return;
+ stroke_.push_back(s);
+ {std::lock_guard lock(snapshotMutex_);++previewInputSequence_;previewInputPending_=true;}
+ if(!previewTimer_.isActive())previewTimer_.start();
+ emit renderErrorChanged();
+}
 BrushSettings CanvasItem::currentGestureSettings(const DocumentSnapshot& snapshot)const{
     BrushSettings b=gestureBrush_;b.objectId=strokeTarget_->object;b.layerId=strokeTarget_->layer;b.parentRevision=snapshot.revision;
     b.color.profileId=snapshot.spec.colorSpec.profileId;b.color.activeChannels=3;b.color.channels={gestureColor_.redF(),gestureColor_.greenF(),gestureColor_.blueF(),0};b.color.alpha=gestureColor_.alphaF();return b;
 }
 void CanvasItem::clearPreview(){
     previewTimer_.stop();renderStop_.request_stop();renderPool_.clear();
-    {std::lock_guard lock(snapshotMutex_);++renderGeneration_;completedFrame_={};displayFrame_=committedFrame_;previewing_=false;}
+    {std::lock_guard lock(snapshotMutex_);++renderGeneration_;completedFrame_={};displayFrame_=committedFrame_;previewing_=false;previewInputPending_=false;}
     emit renderErrorChanged();update();
 }
 void CanvasItem::cancelStroke(){cancelHollowDrag();if(stroke_.empty()&&!previewing()&&!previewTimer_.isActive())return;stroke_.clear();strokeTarget_.reset();tabletStroke_=false;clearPreview();}
 void CanvasItem::mouseUngrabEvent(){cancelStroke();}
 void CanvasItem::requestPreview() try{
-    if(!bridge_||bridge_->busy()||bridge_->replaying()||stroke_.empty()||!strokeTarget_||rendering())return;
-    const auto source=bridge_->canvasSnapshot();if(!source)return;
+    if(!bridge_||bridge_->busy()||bridge_->replaying()||stroke_.empty()||!strokeTarget_||rendering()){clearPreview();renderStop_=std::stop_source{};return;}
+    const auto source=bridge_->canvasSnapshot();if(!source){clearPreview();renderStop_=std::stop_source{};return;}
     const auto settings=currentGestureSettings(*source);const auto samples=stroke_;const auto taper=tabletStroke_?0:gestureTaper_;const auto eraser=eraser_;
     // Do not starve a running preview during continuous input. Replace only queued
     // work, then display completed snapshots in order until the newest catches up.
-    renderPool_.clear();const auto token=renderStop_.get_token();std::uint64_t generation,sequence;
-    {std::lock_guard lock(snapshotMutex_);generation=renderGeneration_;sequence=++previewRequestSequence_;previewing_=true;}
+    renderPool_.clear();const auto token=renderStop_.get_token();std::uint64_t generation,sequence,inputSequence;
+    {std::lock_guard lock(snapshotMutex_);generation=renderGeneration_;sequence=++previewRequestSequence_;inputSequence=previewInputSequence_;previewing_=true;}
     emit renderErrorChanged();
-    renderPool_.start([this,source,settings,samples,taper,eraser,token,generation,sequence]{
+    renderPool_.start([this,source,settings,samples,taper,eraser,token,generation,sequence,inputSequence]{
         if(token.stop_requested())return;
         QImage frame;QString failure;
         try{
@@ -236,8 +242,8 @@ void CanvasItem::requestPreview() try{
         if(token.stop_requested())return;
         if(frame.isNull()&&failure.isEmpty())failure=QStringLiteral("Preview unavailable; committed document unchanged.");
         {std::lock_guard lock(snapshotMutex_);if(generation!=renderGeneration_)return;completedFrame_=std::move(frame);completedError_=failure;completedPreviewSequence_=sequence;}
-        QMetaObject::invokeMethod(this,[this,generation,sequence]{
-            {std::lock_guard lock(snapshotMutex_);if(generation!=renderGeneration_||sequence!=completedPreviewSequence_)return;if(!completedFrame_.isNull())displayFrame_=std::move(completedFrame_);previewing_=sequence<previewRequestSequence_;brushNotice_=completedError_;}
+        QMetaObject::invokeMethod(this,[this,generation,sequence,inputSequence]{
+            {std::lock_guard lock(snapshotMutex_);if(generation!=renderGeneration_||sequence!=completedPreviewSequence_)return;if(!completedFrame_.isNull())displayFrame_=std::move(completedFrame_);previewing_=sequence<previewRequestSequence_;if(inputSequence==previewInputSequence_)previewInputPending_=false;brushNotice_=completedError_;}
             emit renderErrorChanged();emit brushSettingsChanged();update();
         },Qt::QueuedConnection);
     });
