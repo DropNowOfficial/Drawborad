@@ -4,6 +4,7 @@
 #include <QDir>
 #include "platform/CanvasItem.h"
 #include "platform/CanvasFrame.h"
+#include "brush/HollowInkCommand.h"
 #include "core/LineartRaster.h"
 #include "storage/ProjectStore.h"
 #include <QGuiApplication>
@@ -26,6 +27,19 @@ void settle(CanvasItem& c){QElapsedTimer t;t.start();while(c.rendering()&&t.elap
 void settleFill(QtBridge& b){QElapsedTimer t;t.start();while(b.fillBusy()&&t.elapsed()<30000)QTest::qWait(5);assert(!b.fillBusy());}
 int main(int argc,char**argv){
  QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);QGuiApplication app(argc,argv);
+ const auto hollowSource=qEnvironmentVariable("DRAWBORAD_HOLLOW_SOURCE");
+ if(!hollowSource.isEmpty()){
+  QImage source(hollowSource);assert(!source.isNull());source=source.convertToFormat(QImage::Format_RGBA8888);const auto w=source.width(),h=source.height();Bytes raw(std::size_t(w)*h*4);std::vector<Rgba8> pixels(std::size_t(w)*h);
+  for(int y=0;y<h;y++)for(int x=0;x<w;x++){const auto c=source.pixelColor(x,y);assert(c.alpha()==255&&c.red()==c.green()&&c.green()==c.blue()&&(c.red()==0||c.red()==255));const auto i=std::size_t(y)*w+x;pixels[i]={std::uint8_t(c.red()),std::uint8_t(c.green()),std::uint8_t(c.blue()),255};for(unsigned ch=0;ch<4;ch++)raw[i*4+ch]=source.constScanLine(y)[x*4+ch];}
+  QFile encoded(hollowSource);assert(encoded.open(QIODevice::ReadOnly));auto bytes=encoded.readAll();NewDocumentRequest request;request.dimensions={double(w),double(h),Unit::Px,300};request.transparent=false;request.paperColor.channels={1,1,1,0};request.paperColor.alpha=1;auto spec=validateDocument(request,{});assert(spec);auto made=Document::create(spec.value(),Id::fromNumber(1));assert(made);auto& doc=made.value();
+  auto ink=Id::fromNumber(2),overlay=Id::fromNumber(3);auto add=makeLineartRasterCommand(raw,Bytes(bytes.begin(),bytes.end()),w,h,ink);assert(add&&doc.apply(add.value(),0));const auto original=doc.snapshot();
+  const auto sx=qEnvironmentVariableIntValue("DRAWBORAD_HOLLOW_X"),sy=qEnvironmentVariableIntValue("DRAWBORAD_HOLLOW_Y");assert(sx>=0&&sx<w&&sy>=0&&sy<h&&pixels[std::size_t(sy)*w+sx].r==0);auto selected=floodFill(pixels,w,h,sx,sy,0);assert(selected);
+  auto hollow=hollowInkOverlayCommand(original,ink,overlay,Id::fromNumber(4),selected.value(),1);assert(hollow&&doc.apply(hollow.value(),original.revision));const auto changed=doc.snapshot();
+  const auto destination=qEnvironmentVariable("DRAWBORAD_HOLLOW_OUTPUT");assert(!destination.isEmpty()&&QDir().mkpath(destination));const auto file=destination+"/selected-hollow.png";assert(!QFile::exists(file));auto frame=renderCanvasFrame(changed,UINT64_MAX);assert(frame&&frame.value().save(file));
+  assert(doc.undo());assert(doc.snapshot().sameContent(original));assert(doc.redo());assert(doc.snapshot().sameContent(changed));ProjectStore store;const auto project=(destination+"/selected-hollow.draw").toStdString();assert(store.save(project,changed));auto reopened=store.recover(project);assert(reopened&&reopened.value().snapshot.sameContent(changed));for(const auto&[id,res]:*original.resources)assert(changed.resources->at(id).bytes==res.bytes);
+  std::uint64_t cleared=0;for(const auto& op:hollow.value().operations)if(const auto* paint=std::get_if<Paint>(&op))for(std::size_t i=0;i<paint->event.geometry.size();i+=2)cleared+=paint->event.geometry[i+1].x-paint->event.geometry[i].x;
+  std::cout<<"selected="<<selected.value().pixelCount<<" cleared="<<cleared<<" preserved="<<selected.value().pixelCount-cleared<<" size="<<w<<"x"<<h<<" undo-redo-reopen=exact source-resources=unchanged\n";return 0;
+ }
  const auto privateSource=qEnvironmentVariable("DRAWBORAD_REGION_REVIEW_SOURCE");
  if(!privateSource.isEmpty()){
   QImage source(privateSource);assert(!source.isNull());QtBridge inspected;inspected.createDocument(source.width(),source.height(),300);
