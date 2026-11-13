@@ -444,6 +444,7 @@ ApplicationWindow {
             CheckBox { objectName: "lineartBucketTool"; text: qsTr("原线稿填色桶（鼠标点击）"); checked: nativeCanvas.bucketTool; onToggled: nativeCanvas.bucketTool = checked }
             Button { objectName: "useActiveBoundaryButton"; text: qsTr("用所选手绘细节层作为填色边界"); enabled: studio.hasDocument && !studio.busy; Layout.fillWidth: true; onClicked: studio.useActiveBoundary() }
             Label { objectName:"fillProvenanceNotice"; text:studio.fillProvenanceNotice; wrapMode:Text.Wrap; Layout.fillWidth:true; color:"#edc79a" }
+            Button { objectName:"withdrawClosedInkFillButton"; text:qsTr("撤回最近已记录闭合填色组 · 先预览"); Layout.fillWidth:true; enabled:studio.hasDocument && !studio.busy && !studio.workflow.pending; onClicked:studio.previewWithdrawClosedInkFill() }
             Button { objectName:"closedInkFillButton"; text:qsTr("所选单笔闭合墨块 · 内区填充预览"); Layout.fillWidth:true; enabled:studio.hasDocument && !studio.busy && !studio.workflow.pending; onClicked:studio.previewClosedInkFill() }
             Label { text:qsTr("仅全白原稿、当前层一条不透明闭合实墨（最多256不同点，有效线宽至少1px），同墨色填几何内区。不会自动合拢开口；复杂/自交/过细线、已有底色重叠均拒绝。这不是任意线稿的自动白缝修复。");wrapMode:Text.Wrap;Layout.fillWidth:true;color:"#edc79a" }
             Button { objectName: "clearBoundaryButton"; text: qsTr("停止采样手绘边界"); visible: studio.selectedBoundaryName.length > 0; enabled: !studio.busy; Layout.fillWidth: true; onClicked: studio.clearSelectedBoundary() }

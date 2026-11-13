@@ -1,3 +1,4 @@
+#include "brush/WithdrawClosedInkFill.h"
 #include "Commands.h"
 #include "view/LayerTree.h"
 #include "EditableStroke.h"
@@ -303,6 +304,13 @@ Result<ChangeSet> Document::apply(const Command& cmd, Revision expected) {
                         mark(old.layerId);
                         // Cover both old and new footprint, even when a legacy
                         // layer's declared bounds do not enclose its strokes.
+                        change.dirtyRegions.push_back({0,0,next.spec.pixelSize.width,next.spec.pixelSize.height});
+                    } else if constexpr (std::is_same_v<O, WithdrawClosedInkFill>) {
+                        require(cmd.operations.size()==1,ErrorCode::InvalidInput,"fill-withdraw.single-operation");
+                        auto candidate=closedInkWithdrawalCandidate(state_,o.operationId);if(!candidate)throw Failure{candidate.error()};
+                        const auto record=std::find_if(state_.fillOperations.begin(),state_.fillOperations.end(),[&](const auto&entry){return entry.id==o.operationId;});
+                        require(record!=state_.fillOperations.end(),ErrorCode::InvalidInput,"fill-withdraw.record-required");mark(record->target);
+                        next.eventIndex=candidate.value().eventIndex;next.fillOperations=candidate.value().fillOperations;
                         change.dirtyRegions.push_back({0,0,next.spec.pixelSize.width,next.spec.pixelSize.height});
                     } else if constexpr (std::is_same_v<O, RecordClosedInkFill>) {
                         require(!cmd.operations.empty() && std::holds_alternative<RecordClosedInkFill>(cmd.operations.back()),ErrorCode::InvalidInput,"fill-source.record-last");
