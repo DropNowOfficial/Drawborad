@@ -317,6 +317,7 @@ jobs:
         timeout-minutes: 5
         run: |
           node tests/cloud/test_mypaint_ui.cjs
+          node tests/cloud/test_mypaint_taper_ui.cjs
           node tests/cloud/native_layer_selection_unit.cjs
           node tests/cloud/token_file_import_unit.cjs
           node tests/cloud/token_file_reconnect_unit.cjs

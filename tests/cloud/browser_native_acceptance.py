@@ -446,6 +446,8 @@ def exercise_mypaint(page, output, width=512, height=512):
     expect(page.locator('#nativeColor')).to_be_disabled()
     before=preview(page,output/'before.png');state=initial
     for index,curve in enumerate([[(.20,.38),(.36,.31),(.57,.31),(.77,.39)],[(.20,.40),(.37,.51),(.58,.57),(.75,.57)]]):
+        taper_on=width==512 and index==0
+        page.locator('#nativeMyPaintTaper').select_option('0.2' if taper_on else '0')
         tint='#000000' if index==0 else '#cc2244'
         page.locator('#nativeMyPaintColor').evaluate('(e,color)=>{e.value=color;e.dispatchEvent(new Event("input",{bubbles:true}))}',tint)
         image=page.locator('#nativePreview');image.scroll_into_view_if_needed();box=image.bounding_box();assert box
@@ -466,6 +468,10 @@ def exercise_mypaint(page, output, width=512, height=512):
         for point in points[1:]:page.mouse.move(*point)
         with page.expect_response(endpoint('POST','/commands')) as response:page.mouse.up()
         assert response.value.status==200,response.value.text();state=response.value.json()
+        sent=response.value.request.post_data_json['points'];pressures=[p['pressure'] for p in sent]
+        if taper_on:
+            assert pressures[0]<max(pressures)/4 and pressures[-1]<max(pressures)/4
+        else:assert max(pressures)==min(pressures), 'default mouse input stays fixed pressure'
         expect(page.locator('#nativeNew')).to_be_enabled(timeout=90000)
         assert len(state['nodes'])==len(initial['nodes'])+index+1
         assert state['strokes']==initial['strokes'],'raster strokes must not impersonate native events'
@@ -495,7 +501,7 @@ def exercise_mypaint(page, output, width=512, height=512):
     assert preview(page,output/'reopened.png')==after
     added=[n for n in reopened['nodes'] if n['name']=='MyPaint ink (experimental raster)']
     assert len(added)==2 and all(n['locked'] and n['blend']==1 for n in added)
-    receipt={'actual_chromium_mouse':True,'real_mypaint_worker':True,'independent_locked_layers':2,'neutral_folder_ui_verified':bool(folder),'ink_colors':['#000000','#CC2244'],'actual_colored_png':True,'undo_redo':True,'download_reopen_pixel_equal':True,'manifest_in_draw':True,'canvas':[width,height],'scope':'actual native canvas with local technical eyelid strokes; not finished artwork'}
+    receipt={'actual_chromium_mouse':True,'real_mypaint_worker':True,'independent_locked_layers':2,'neutral_folder_ui_verified':bool(folder),'mouse_pressure_taper_verified':width==512,'ink_colors':['#000000','#CC2244'],'actual_colored_png':True,'undo_redo':True,'download_reopen_pixel_equal':True,'manifest_in_draw':True,'canvas':[width,height],'scope':'actual native canvas with local technical eyelid strokes; not finished artwork'}
     (output/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n');return receipt
 
 
