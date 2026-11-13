@@ -25,6 +25,7 @@ inline Result<Command> adjustCubicPathControlCommand(const DocumentSnapshot&s,Id
  if(index>=s.eventIndex->at(selected.value()).geometry.size()||!cubicControlInDocumentRange(s.spec,x,y))return error(ErrorCode::InvalidInput,"cubic-path-edit.control-bounds");
  auto events=std::make_shared<EventList>(*s.eventIndex);events->at(selected.value()).geometry[index].x=x;events->at(selected.value()).geometry[index].y=y;
  auto valid=validateCubicDocumentBudget(*events,stop);if(!valid)return valid.error();
+ auto barrier=validateDisjointBucketEdit(s,selected.value(),events->at(selected.value()),stop);if(!barrier)return barrier.error();
  return Command(AdjustCubicPathControl{id,index,x,y});
 }catch(const std::bad_alloc&){return error(ErrorCode::BudgetExceeded,"cubic-path-edit.allocation");}
 }

@@ -3,6 +3,7 @@
 #include "core/ChiselInkEvent.h"
 #pragma once
 #include "Document.h"
+#include "DisjointBucketEdit.h"
 #include "FreehandEvent.h"
 #include "DryInkEvent.h"
 #include "view/LayerTree.h"
@@ -50,8 +51,9 @@ inline Result<std::size_t> editableStrokeIndex(const DocumentSnapshot& s,Id id,s
  for(std::size_t i=index+1;i<s.eventIndex->size();++i){
   if(stop.stop_requested())return error(ErrorCode::Cancelled,"stroke-edit.cancelled");
   const auto& e=(*s.eventIndex)[i];
-  auto hand=independentNativeStroke(s,e,stop);if(!hand)return hand.error();
+  if(e.engineVersion!=8){auto hand=independentNativeStroke(s,e,stop);if(!hand)return hand.error();}
  }
+ auto barrier=validateDisjointBucketEdit(s,index,selected,stop);if(!barrier)return barrier.error();
  return index;
 }catch(const std::bad_alloc&){return error(ErrorCode::BudgetExceeded,"stroke-edit.allocation");}
 }

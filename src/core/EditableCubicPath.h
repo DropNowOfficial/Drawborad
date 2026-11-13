@@ -11,7 +11,8 @@ inline Result<std::size_t> editableCubicPathIndex(const DocumentSnapshot&s,Id id
  if(!nativeLayerPaintable(s,found->layerId)||!s.nodes->at(found->layerId).sourceResource.empty())return error(ErrorCode::Locked,"cubic-path-edit.layer");
  for(const auto&o:s.fillOperations)if(o.source==found->layerId||o.target==found->layerId||o.boundaryLayer==found->layerId)return error(ErrorCode::UnsupportedFeature,"cubic-path-edit.recorded-dependency");
  const auto index=std::size_t(found-s.eventIndex->begin());
- for(std::size_t i=index+1;i<s.eventIndex->size();++i){auto hand=independentNativeStroke(s,s.eventIndex->at(i),stop);if(!hand)return hand.error();}
+ for(std::size_t i=index+1;i<s.eventIndex->size();++i){if(s.eventIndex->at(i).engineVersion!=8){auto hand=independentNativeStroke(s,s.eventIndex->at(i),stop);if(!hand)return hand.error();}}
+ auto barrier=validateDisjointBucketEdit(s,index,*found,stop);if(!barrier)return barrier.error();
  return index;
 }catch(const std::bad_alloc&){return error(ErrorCode::BudgetExceeded,"cubic-path-edit.allocation");}
 }

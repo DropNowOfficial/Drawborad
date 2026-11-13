@@ -29,6 +29,7 @@ inline Result<Command> localStrokeEditCommand(const DocumentSnapshot& s,Id id,
  for(std::size_t i=centerIndex;i>0;--i){distance+=std::hypot(e.geometry[i].x-e.geometry[i-1].x,e.geometry[i].y-e.geometry[i-1].y);if(distance>=radiusPixels)break;done=adjust(i-1,distance);if(!done)return done.error();}
  distance=0;for(std::size_t i=centerIndex+1;i<geometry.size();++i){distance+=std::hypot(e.geometry[i].x-e.geometry[i-1].x,e.geometry[i].y-e.geometry[i-1].y);if(distance>=radiusPixels)break;done=adjust(i,distance);if(!done)return done.error();}
  if(geometry==e.geometry)return error(ErrorCode::InvalidInput,"stroke-edit.no-change");
+ auto proposed=e;proposed.geometry=geometry;auto barrier=validateDisjointBucketEdit(s,eligible.value(),proposed,stop);if(!barrier)return barrier.error();
  return Command{AdjustStrokeSamples{id,std::move(geometry)}};
 }catch(const std::bad_alloc&){return error(ErrorCode::BudgetExceeded,"stroke-edit.allocation");}
 }

@@ -23,6 +23,7 @@ Result<Command> adjustCubicControlsCommand(const DocumentSnapshot&s,Id id,const 
  auto events=std::make_shared<EventList>(*s.eventIndex);
  for(std::size_t i=0;i<4;++i){const auto&p=controls[i];if(!cubicControlInDocumentRange(s.spec,p[0],p[1]))return error(ErrorCode::InvalidInput,"cubic-edit.control-bounds");events->at(selected.value()).geometry[i].x=p[0];events->at(selected.value()).geometry[i].y=p[1];}
  auto valid=validateCubicDocumentBudget(*events,stop);if(!valid)return valid.error();
+ auto barrier=validateDisjointBucketEdit(s,selected.value(),events->at(selected.value()),stop);if(!barrier)return barrier.error();
  return Command(AdjustCubicControls{id,controls});
 }catch(const std::bad_alloc&){return error(ErrorCode::BudgetExceeded,"cubic-edit.allocation");}
 }

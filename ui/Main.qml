@@ -582,7 +582,7 @@ ApplicationWindow {
                     currentIndex: { const list=studio.editableStrokes, id=studio.selectedEditStroke;for(let i=0;i<list.length;i++)if(list[i].id===id)return i;return -1 }
                     onActivated: { studio.selectEditStroke(currentValue);currentIndex=Qt.binding(function(){return indexOfValue(studio.selectedEditStroke)}) }
                 }
-                Label { text:qsTr("列出当前层最近128条安全实墨。后续若有填色、挖空或未知事件，之前的笔迹不开放修整，避免边界与色块失配。");wrapMode:Text.Wrap;Layout.fillWidth:true;color:"#bcbcc4" }
+                Label { text:qsTr("列出当前层近期安全实墨；有后续填色时最多检查128条候选。后续填色仅在与整条笔迹明确分离时允许修整；接触色块、挖空及未知依赖仍受保护，不会自动重填。");wrapMode:Text.Wrap;Layout.fillWidth:true;color:"#bcbcc4" }
                 Label { text: qsTr("蓝点为已有采样点。点击或拖动一点，再预览；范围按原笔迹弧长计算。只改选中笔迹，稀疏笔迹不会插点。"); wrapMode: Text.Wrap; Layout.fillWidth: true; color: "#bcbcc4" }
                 Label { text: strokeEditOverlay.selectedIndex<0 ? qsTr("未选中采样点") : qsTr("采样点 ")+(strokeEditOverlay.selectedIndex+1); color: "#5dd6ff" }
                 GridLayout { columns: 2; enabled: !studio.busy; Layout.fillWidth: true

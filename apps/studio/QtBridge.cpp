@@ -327,9 +327,12 @@ void QtBridge::refreshEditCache() const {
     QVariantList out;
     if(activeLayer_&&s->eventIndex->size()<=8192&&nativeLayerPaintable(*s,*activeLayer_)){
         std::uint64_t points=0;bool bounded=true;for(const auto& e:*s->eventIndex){if(e.geometry.size()>1000000-points){bounded=false;break;}points+=e.geometry.size();}
+        bool laterBucket=false;unsigned bucketCandidates=0;
         if(bounded)for(std::size_t i=s->eventIndex->size();i>0&&out.size()<128;--i){const auto& e=(*s->eventIndex)[i-1];
+            if(e.engineVersion==8){if(!validateBucketEvent(e))break;laterBucket=true;continue;}
             if(!independentNativeStroke(*s,e))break;
-            if(e.layerId==*activeLayer_&&e.engineVersion==19&&e.geometry.size()<=4096)out.push_back(QVariantMap{{"id",layerText(e.id)},{"label",tr("笔迹 %1 · %2 个采样点").arg(qulonglong(i)).arg(qulonglong(e.geometry.size()))}});
+            if(laterBucket&&e.layerId==*activeLayer_&&e.engineVersion==19&&++bucketCandidates>128)break;
+            if(e.layerId==*activeLayer_&&e.engineVersion==19&&e.geometry.size()<=4096&&(!laterBucket||editableStrokeIndex(*s,e.id)))out.push_back(QVariantMap{{"id",layerText(e.id)},{"label",tr("笔迹 %1 · %2 个采样点").arg(qulonglong(i)).arg(qulonglong(e.geometry.size()))}});
         }
     }
     editCacheMenu_=std::move(out);editCacheSource_=s;editCacheLayer_=activeLayer_;editCachePointId_.reset();editCachePoints_.clear();
@@ -365,7 +368,7 @@ bool QtBridge::previewLocalStrokeEdit(int sampleIndex,double radius,double dx,do
     const auto fail=[&](const QString& reason){fillNotice_=reason;emit changed();return false;};
     const auto s=app_.snapshot();
     if(!s||busy()||workflow_->pending()||replaying()||sampleIndex<0||s->eventIndex->empty())return fail(tr("请先结束当前任务，并选择连续实墨的有效样本。"));
-    const auto id=editStrokeId();if(!id)return fail(tr("请选择当前层可安全修整的实墨笔迹；其后若有填色或挖空则不可修整。"));
+    const auto id=editStrokeId();if(!id)return fail(tr("请选择当前层可安全修整的实墨笔迹；后续填色仅在与笔迹明确分离时允许修整，挖空等依赖仍受保护。"));
     const auto index=editableStrokeIndex(*s,*id);if(!index)return fail(QString::fromStdString(index.error().messageKey));
     const auto& last=(*s->eventIndex)[index.value()];
     if(last.engineVersion!=19||last.toolId!="smooth-ink-aa"||std::size_t(sampleIndex)>=last.geometry.size()||last.geometry.size()>4096||!nativeLayerPaintable(*s,last.layerId))return fail(tr("本次只允许修整当前层可安全修整的连续实墨；工程未改。"));

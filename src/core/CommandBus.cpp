@@ -330,7 +330,7 @@ Result<ChangeSet> Document::apply(const Command& cmd, Revision expected) {
                                     ErrorCode::InvalidInput,"stroke-edit.sample-bounds");
                         }
                         ev=std::make_shared<EventList>(*next.eventIndex);
-                        (*ev)[index].geometry=o.geometry;next.eventIndex=ev;
+                        (*ev)[index].geometry=o.geometry;auto barrier=validateDisjointBucketEdit(next,index,(*ev)[index]);if(!barrier)throw Failure{barrier.error()};next.eventIndex=ev;
                         mark(old.layerId);
                         // Cover both old and new footprint, even when a legacy
                         // layer's declared bounds do not enclose its strokes.
@@ -342,14 +342,14 @@ Result<ChangeSet> Document::apply(const Command& cmd, Revision expected) {
                         require(o.index<original.geometry.size()&&cubicControlInDocumentRange(next.spec,o.x,o.y),ErrorCode::InvalidInput,"cubic-path-edit.control-bounds");
                         const auto layer=original.layerId;
                         ev=std::make_shared<EventList>(*next.eventIndex);(*ev)[index].geometry[o.index].x=o.x;(*ev)[index].geometry[o.index].y=o.y;
-                        next.eventIndex=ev;mark(layer);change.dirtyRegions.push_back({0,0,next.spec.pixelSize.width,next.spec.pixelSize.height});
+                        auto barrier=validateDisjointBucketEdit(next,index,(*ev)[index]);if(!barrier)throw Failure{barrier.error()};next.eventIndex=ev;mark(layer);change.dirtyRegions.push_back({0,0,next.spec.pixelSize.width,next.spec.pixelSize.height});
                     } else if constexpr (std::is_same_v<O, AdjustCubicControls>) {
                         require(cmd.operations.size()==1,ErrorCode::InvalidInput,"cubic-edit.single-operation");
                         auto eligible=editableCubicIndex(next,o.id);if(!eligible)throw Failure{eligible.error()};
                         const auto index=eligible.value();const auto layer=next.eventIndex->at(index).layerId;
                         ev=std::make_shared<EventList>(*next.eventIndex);
                         for(std::size_t i=0;i<4;++i){const auto& p=o.controls[i];require(cubicControlInDocumentRange(next.spec,p[0],p[1]),ErrorCode::InvalidInput,"cubic-edit.control-bounds");(*ev)[index].geometry[i].x=p[0];(*ev)[index].geometry[i].y=p[1];}
-                        next.eventIndex=ev;mark(layer);change.dirtyRegions.push_back({0,0,next.spec.pixelSize.width,next.spec.pixelSize.height});
+                        auto barrier=validateDisjointBucketEdit(next,index,(*ev)[index]);if(!barrier)throw Failure{barrier.error()};next.eventIndex=ev;mark(layer);change.dirtyRegions.push_back({0,0,next.spec.pixelSize.width,next.spec.pixelSize.height});
                     } else if constexpr (std::is_same_v<O, CloseStrokeGap>) {
                         require(cmd.operations.size()==1,ErrorCode::InvalidInput,"stroke-close.single-operation");
                         auto geometry=closedStrokeGapGeometry(state_,o.eventId);if(!geometry)throw Failure{geometry.error()};
