@@ -11,6 +11,7 @@
 #include "color/ColorService.h"
 #include "brush/BucketFill.h"
 #include "brush/FreehandStroke.h"
+#include "brush/PressureTaper.h"
 #include "brush/DryInkStroke.h"
 #include "core/LineartRaster.h"
 #include "core/MyPaintCroppedRaster.h"
@@ -141,7 +142,7 @@ public:
                 {"start_us",number(e.startUs)},{"end_us",number(e.endUs)},
                 {"geometry_count",number(e.geometry.size())}});
         }
-        QJsonArray capabilities{"duplicate_paint_layer","recolor_layer","recolor_stroke","set_properties","bucket_fill","add_fill_layer","draw_stroke","update_layer","undo","redo","save","save_copy","replay","png"};
+        QJsonArray capabilities{"mouse_pressure_taper","duplicate_paint_layer","recolor_layer","recolor_stroke","set_properties","bucket_fill","add_fill_layer","draw_stroke","update_layer","undo","redo","save","save_copy","replay","png"};
         capabilities.append("smooth_ink");capabilities.append("ora");capabilities.append("append_brush_layer");capabilities.append("append_brush_crop");capabilities.append("append_brush_normal");capabilities.append("cropped_stroke_mask");capabilities.append("hidden_fill_boundary");
         return {{"document_id",idText(s.documentId)},{"revision",number(s.revision)},
             {"saved_revision",saved?QJsonValue(number(*saved)):QJsonValue(QJsonValue::Null)},
@@ -395,6 +396,10 @@ public:
                         need(std::isfinite(sample.pressure) && sample.pressure>=0 && sample.pressure<=1,"session.pen-pressure");
                     }
                     sample.timestampUs=samples.size();samples.push_back(sample);
+                }
+                if(p.contains("pressure_taper")) {
+                    need(p.value("pressure_taper").isDouble(),"session.pressure-taper");
+                    samples=checked(taperMousePressure(samples,p.value("pressure_taper").toDouble()));
                 }
                 const auto brush=p.value("brush").toString("fine");
                 need(!p.contains("brush") || p.value("brush").isString(),"session.brush");

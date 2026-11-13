@@ -19,6 +19,10 @@ get('nativeBrush').value='dry_ink';get('nativePenWidth').value='24';get('nativeP
 get('nativeBrush').value='smooth_ink';get('nativePenWidth').value='32';vm.runInContext("nativeState.capabilities=['draw_stroke','smooth_ink']",c);
 get('nativePreview').onpointerdown(event(110,120));get('nativePreview').onpointerup(event(130,120));assert.equal(calls.at(-1).brush,'smooth_ink');assert.equal(calls.at(-1).width,32);calls.pop();
 vm.runInContext('nativeState.capabilities=[]',c);get('nativePreview').onpointerdown(event(110,120));assert.equal(calls.length,1);get('nativeBrush').value='fine';
+get('nativePenWidth').value='4';get('nativeMouseTaper').value='0.2';vm.runInContext("nativeState.capabilities=['draw_stroke','mouse_pressure_taper']",c);
+get('nativePreview').onpointerdown(event(110,120,{pointerType:'mouse'}));get('nativeMouseTaper').value='0.35';get('nativePreview').onpointerup(event(130,120,{pointerType:'mouse'}));assert.equal(calls.at(-1).pressure_taper,.2,'taper fixed at pointerdown');calls.pop();
+get('nativePreview').onpointerdown(event(110,120,{pointerType:'pen',pressure:.35}));get('nativePreview').onpointerup(event(130,120,{pointerType:'pen',pressure:0}));assert.equal(calls.at(-1).pressure_taper,undefined,'real pen pressure untouched');calls.pop();
+vm.runInContext('nativeState.capabilities=[]',c);get('nativePreview').onpointerdown(event(110,120,{pointerType:'mouse'}));assert.equal(calls.length,1,'old engine cannot silently ignore taper');get('nativeMouseTaper').value='0';
 get('nativePenWidth').value='0';get('nativePreview').onpointerdown(event(110,120));assert.equal(calls.length,1);assert.ok(errors.some(x=>x.includes('width')));
 console.log('fine-pen pointer sampling, fractional coordinates, one-command release and cancellation guards passed');
 // Dimensions are sent as native pixel counts rather than CSS upscaling.

@@ -320,7 +320,7 @@ def install_projects(app,config,authorized):
                     'set_properties':{'node_id','visible','locked'},
                     'add_fill_layer':set(),
                     'bucket_fill':{'layer_id','x','y','tolerance','color','under_ink'},
-                    'draw_stroke':{'layer_id','points','width','color','brush'},
+                    'draw_stroke':{'layer_id','points','width','color','brush','pressure_taper'},
                     'update_layer':{'node_id','name','opacity'}}
             kind=body.get('type')
             if not isinstance(kind,str) or kind not in fields:fail(422,'invalid_input','Unknown command type')
