@@ -64,6 +64,7 @@ void CanvasItem::refreshSnapshot() {
             snapshot_->revision == next->revision && snapshot_->nodes == next->nodes &&
             snapshot_->eventIndex == next->eventIndex && replayCount_==nextCount) return;
     }
+    cancelHollowDrag();
     // A changed document/replay invalidates an in-progress input gesture.
     previewTimer_.stop();stroke_.clear();strokeTarget_.reset();tabletStroke_=false;
     renderStop_.request_stop();renderPool_.clear();renderStop_=std::stop_source{};
@@ -150,6 +151,7 @@ void CanvasItem::fitDocument(){
     update();emit viewChanged();
 }
 void CanvasItem::geometryChange(const QRectF& next,const QRectF& previous){
+    if(next!=previous)cancelHollowDrag();
     QQuickItem::geometryChange(next,previous);
     {std::lock_guard lock(snapshotMutex_);if(snapshot_)pan_=boundedPan(*snapshot_,zoom_,pan_);}
     update();emit viewChanged();
@@ -161,7 +163,7 @@ std::optional<DocumentPoint> CanvasItem::itemToDocument(const QPointF& p,const D
     if(!invertible)return std::nullopt;
     const auto point=inverse.map(p);
     DocumentPoint docPoint{point.x(),point.y()};
-    if(docPoint.x<0||docPoint.y<0||docPoint.x>=double(s.spec.pixelSize.width)||docPoint.y>=double(s.spec.pixelSize.height))return std::nullopt;
+    if(!std::isfinite(docPoint.x)||!std::isfinite(docPoint.y)||docPoint.x<0||docPoint.y<0||docPoint.x>=double(s.spec.pixelSize.width)||docPoint.y>=double(s.spec.pixelSize.height))return std::nullopt;
     return docPoint;
 }
 InputSample CanvasItem::mouseSample(QMouseEvent* e) const {
@@ -205,7 +207,7 @@ void CanvasItem::clearPreview(){
     {std::lock_guard lock(snapshotMutex_);++renderGeneration_;completedFrame_={};displayFrame_=committedFrame_;previewing_=false;}
     emit renderErrorChanged();update();
 }
-void CanvasItem::cancelStroke(){if(stroke_.empty()&&!previewing()&&!previewTimer_.isActive())return;stroke_.clear();strokeTarget_.reset();tabletStroke_=false;clearPreview();}
+void CanvasItem::cancelStroke(){cancelHollowDrag();if(stroke_.empty()&&!previewing()&&!previewTimer_.isActive())return;stroke_.clear();strokeTarget_.reset();tabletStroke_=false;clearPreview();}
 void CanvasItem::mouseUngrabEvent(){cancelStroke();}
 void CanvasItem::requestPreview() try{
     if(!bridge_||bridge_->busy()||bridge_->replaying()||stroke_.empty()||!strokeTarget_||rendering())return;
@@ -262,14 +264,48 @@ void CanvasItem::finishStroke(){
         if(!committed){brushNotice_=tr("笔迹未提交，工程未修改：")+QString::fromStdString(committed.error().messageKey);emit brushSettingsChanged();}
     }else{brushNotice_=tr("笔迹未提交，工程未修改：")+QString::fromStdString(event.error().messageKey);emit brushSettingsChanged();}
 }
+void CanvasItem::setHollowDragTool(bool value){
+ cancelStroke();hollowDragTool_=value;
+ if(value){hollowTool_=true;bucketTool_=false;}
+ emit brushSettingsChanged();emit viewChanged();
+}
+void CanvasItem::cancelHollowDrag(){
+ if(!hollowDrag_)return;
+ hollowDrag_.reset();emit brushSettingsChanged();emit viewChanged();
+}
+QRectF CanvasItem::hollowDragRect() const {
+ if(!hollowDrag_)return {};
+ const auto a=hollowDrag_->start,b=hollowDrag_->current;
+ if(a.x()==b.x()||a.y()==b.y())return {};
+ const auto left=std::floor(std::min(a.x(),b.x())),top=std::floor(std::min(a.y(),b.y()));
+ return {left,top,std::ceil(std::max(a.x(),b.x()))-left,std::ceil(std::max(a.y(),b.y()))-top};
+}
+bool CanvasItem::updateHollowDrag(QPointF point){
+ if(!hollowDrag_)return false;
+ const auto snap=bridge_?bridge_->canvasSnapshot():std::nullopt;
+ if(!snap||bridge_->busy()||bridge_->replaying()||rendering()||!renderError().isEmpty()||
+    snap->documentId!=hollowDrag_->document||snap->revision!=hollowDrag_->revision||bridge_->canvasGeneration()!=hollowDrag_->generation){cancelHollowDrag();return false;}
+ const auto p=itemToDocument(point,*snap);
+ if(!p){cancelHollowDrag();return false;}
+ hollowDrag_->current={p->x,p->y};emit viewChanged();return true;
+}
 QRectF CanvasItem::hollowItemRect() const {
  const auto snap=bridge_?bridge_->canvasSnapshot():std::nullopt;if(!snap)return {};
- const auto r=hollowBounds_;const double values[]={r.x(),r.y(),r.width(),r.height()};for(auto v:values)if(!std::isfinite(v)||v<0||std::floor(v)!=v)return {};
+ const auto r=hollowDrag_?hollowDragRect():hollowBounds_;const double values[]={r.x(),r.y(),r.width(),r.height()};for(auto v:values)if(!std::isfinite(v)||v<0||std::floor(v)!=v)return {};
  const auto w=double(snap->spec.pixelSize.width),h=double(snap->spec.pixelSize.height);if(w<=0||h<=0||r.width()<1||r.height()<1||r.right()>w||r.bottom()>h)return {};
  const auto d=documentRect();return {d.x()+r.x()*d.width()/w,d.y()+r.y()*d.height()/h,r.width()*d.width()/w,r.height()*d.height()/h};
 }
 void CanvasItem::mousePressEvent(QMouseEvent* e){
-    if(e->button()==Qt::MiddleButton){panGesture_=e->position();e->accept();return;}
+    if(e->button()==Qt::MiddleButton){cancelHollowDrag();panGesture_=e->position();e->accept();return;}
+    if(hollowDragTool_){
+        cancelStroke();const auto snap=bridge_?bridge_->canvasSnapshot():std::nullopt;
+        if(e->button()==Qt::LeftButton&&snap&&!bridge_->busy()&&!bridge_->replaying()&&!rendering()&&renderError().isEmpty())
+            if(const auto p=itemToDocument(e->position(),*snap)){
+                forceActiveFocus();hollowDrag_=HollowDrag{{p->x,p->y},{p->x,p->y},snap->documentId,snap->revision,bridge_->canvasGeneration()};
+                emit brushSettingsChanged();emit viewChanged();
+            }
+        e->accept();return;
+    }
     if(bucketTool_ || hollowTool_){
         cancelStroke();const auto snap=bridge_?bridge_->canvasSnapshot():std::nullopt;
         if(e->button()==Qt::LeftButton && snap && !rendering() && renderError().isEmpty())if(auto point=itemToDocument(e->position(),*snap)){auto color=brushColor_;color.setAlphaF(color.alphaF()*brushOpacity());bridge_->fillLineartAt(point->x,point->y,color,hollowTool_,hollowTool_&&hollowBounded_?std::optional<QRectF>(hollowBounds_):std::nullopt);}
@@ -278,11 +314,28 @@ void CanvasItem::mousePressEvent(QMouseEvent* e){
     const auto s=bridge_?bridge_->canvasSnapshot():std::nullopt;if(tabletStroke_||!s||!itemToDocument(e->position(),*s)){e->ignore();return;}beginSample(mouseSample(e),false,false);e->accept();
 }
 void CanvasItem::mouseMoveEvent(QMouseEvent* e){
+    if(hollowDragTool_&&!panGesture_){
+        if(!(e->buttons()&Qt::LeftButton))cancelHollowDrag();else updateHollowDrag(e->position());
+        e->accept();return;
+    }
     if(panGesture_){const auto delta=e->position()-*panGesture_;panGesture_=e->position();(void)panBy(delta.x(),delta.y());e->accept();return;}
     const auto s=bridge_?bridge_->canvasSnapshot():std::nullopt;if(!tabletStroke_&&!stroke_.empty()&&s&&itemToDocument(e->position(),*s))appendSample(mouseSample(e));e->accept();
 }
 void CanvasItem::mouseReleaseEvent(QMouseEvent* e){
     if(e->button()==Qt::MiddleButton){panGesture_.reset();e->accept();return;}
+    if(hollowDragTool_){
+        if(e->button()==Qt::LeftButton&&updateHollowDrag(e->position())){
+            const auto bounds=hollowDragRect();
+            if(bounds.width()>0&&bounds.height()>0){
+                hollowBounds_=bounds;hollowBounded_=true;hollowDrag_.reset();
+                // Keep tool true while QML synchronizes text fields; restoring
+                // its numeric Binding earlier would overwrite this selection.
+                emit hollowSelectionFinished();hollowDragTool_=false;
+                emit brushSettingsChanged();emit viewChanged();
+            }else cancelHollowDrag();
+        }
+        e->accept();return;
+    }
     if(!tabletStroke_&&!stroke_.empty()){const auto s=bridge_?bridge_->canvasSnapshot():std::nullopt;if(s&&itemToDocument(e->position(),*s))appendSample(mouseSample(e));finishStroke();}e->accept();
 }
 void CanvasItem::wheelEvent(QWheelEvent* event){

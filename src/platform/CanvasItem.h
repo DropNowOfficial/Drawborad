@@ -18,6 +18,8 @@ class QtBridge;
 class CanvasItem : public QQuickItem {
     Q_OBJECT
     Q_PROPERTY(QObject* bridge READ studio WRITE setStudio NOTIFY studioChanged)
+    Q_PROPERTY(bool hollowDragTool READ hollowDragTool WRITE setHollowDragTool NOTIFY brushSettingsChanged)
+    Q_PROPERTY(bool hollowDragActive READ hollowDragActive NOTIFY brushSettingsChanged)
     Q_PROPERTY(bool hollowBounded READ hollowBounded WRITE setHollowBounded NOTIFY brushSettingsChanged)
     Q_PROPERTY(QRectF hollowBounds READ hollowBounds WRITE setHollowBounds NOTIFY brushSettingsChanged)
     Q_PROPERTY(QRectF hollowItemRect READ hollowItemRect NOTIFY viewChanged)
@@ -39,6 +41,12 @@ class CanvasItem : public QQuickItem {
     QColor brushColor_{QColor::fromRgbF(.08,.08,.08)},gestureColor_;
     bool bucketTool_{false},hollowTool_{false},hollowBounded_{false};
     QRectF hollowBounds_{0,0,64,64};
+    bool hollowDragTool_{false};
+    struct HollowDrag { QPointF start,current; DocumentId document; std::uint64_t revision{},generation{}; };
+    std::optional<HollowDrag> hollowDrag_;
+    void cancelHollowDrag();
+    bool updateHollowDrag(QPointF);
+    QRectF hollowDragRect() const;
     double mouseTaper_{0},gestureTaper_{0};
     QString brushNotice_;
     QPointer<QtBridge> bridge_;
@@ -98,20 +106,24 @@ class CanvasItem : public QQuickItem {
     void geometryChange(const QRectF&,const QRectF&) override;
     bool event(QEvent*) override;
   signals:
+    void hollowSelectionFinished();
     void brushSettingsChanged();
     void studioChanged();
     void viewChanged();
     void renderErrorChanged();
   public:
+    bool hollowDragTool() const { return hollowDragTool_; }
+    bool hollowDragActive() const { return hollowDrag_.has_value(); }
+    void setHollowDragTool(bool);
     bool hollowBounded() const { return hollowBounded_; }
     void setHollowBounded(bool value) { hollowBounded_=value;emit brushSettingsChanged();emit viewChanged(); }
     QRectF hollowBounds() const { return hollowBounds_; }
     void setHollowBounds(QRectF value) { hollowBounds_=value;emit brushSettingsChanged();emit viewChanged(); }
     QRectF hollowItemRect() const;
     bool hollowTool() const { return hollowTool_; }
-    void setHollowTool(bool value) { cancelStroke();hollowTool_=value;if(value)bucketTool_=false;emit brushSettingsChanged(); }
+    void setHollowTool(bool value) { cancelStroke();hollowTool_=value;if(value)bucketTool_=false;else hollowDragTool_=false;emit brushSettingsChanged(); }
     bool bucketTool() const { return bucketTool_; }
-    void setBucketTool(bool value) { cancelStroke();bucketTool_=value;if(value)hollowTool_=false;emit brushSettingsChanged(); }
+    void setBucketTool(bool value) { cancelStroke();bucketTool_=value;if(value){hollowTool_=false;hollowDragTool_=false;}emit brushSettingsChanged(); }
     explicit CanvasItem(QQuickItem* parent = nullptr);
     ~CanvasItem() override;
     bool rendering() const;
