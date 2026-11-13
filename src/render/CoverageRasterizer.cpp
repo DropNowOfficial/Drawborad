@@ -1,3 +1,4 @@
+#include "core/CubicInkEvent.h"
 #include "ContinuousEraserCoverage.h"
 #include "ChiselInkCoverage.h"
 #include "CoverageRasterizer.h"
@@ -42,6 +43,10 @@ Result<std::vector<std::uint16_t>> strokeCoverage(const StrokeEvent& e, Rect rec
         return error(ErrorCode::BudgetExceeded, "render.coverage-region");
     auto pixels=checkedMultiply(rect.width,rect.height); if(!pixels) return pixels.error();
     if (stop.stop_requested()) return error(ErrorCode::Cancelled,"render.cancelled");
+    if(e.engineVersion==23){
+        auto expanded=prepareCubicInkGeometry(e,stop);if(!expanded)return expanded.error();
+        try{auto surrogate=e;surrogate.engineVersion=19;surrogate.toolId="smooth-ink-aa";surrogate.geometry=std::move(expanded.value().samples);return fineLineCoverage(surrogate,rect,time,stop);}catch(const std::bad_alloc&){return error(ErrorCode::BudgetExceeded,"cubic.coverage-allocation");}
+    }
     if(e.engineVersion==22)return continuousEraserCoverage(e,rect,time,stop);
     if(e.engineVersion==21)return chiselInkCoverage(e,rect,time,stop);
     if(e.engineVersion==10 || e.engineVersion==19)return fineLineCoverage(e,rect,time,stop);

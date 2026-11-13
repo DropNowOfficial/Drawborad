@@ -275,6 +275,7 @@ if(DRAWBORAD_QT_CANVAS_TESTS)
   set_tests_properties(Desktop.QtSoftwareCanvas PROPERTIES TIMEOUT 180 ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 endif()
 
+# Register all native features before labeling the test inventory.
 
 lineart_repair_test(B42.ChiselInk test_chisel_ink.cpp)
 
@@ -286,11 +287,22 @@ set_tests_properties(B43.ContinuousEraser PROPERTIES LABELS "CorePortable")
 add_test(NAME Build.NativeCoverageLists COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/build/test_native_coverage_lists.py)
 set_tests_properties(Build.NativeCoverageLists PROPERTIES LABELS "CorePortable")
 
+lineart_repair_test(B44.CubicPreparation test_cubic_preparation.cpp)
+set_tests_properties(B44.CubicPreparation PROPERTIES LABELS "CorePortable")
+
+lineart_repair_test(B45.CubicStorage test_cubic_storage.cpp)
+set_tests_properties(B45.CubicStorage PROPERTIES LABELS "CorePortable")
+
+lineart_repair_test(B46.CubicAuthoring test_cubic_authoring.cpp)
+set_tests_properties(B46.CubicAuthoring PROPERTIES LABELS "CorePortable")
+
+lineart_repair_test(B47.CubicAdmission test_cubic_admission.cpp)
+set_tests_properties(B47.CubicAdmission PROPERTIES LABELS "CorePortable")
+
 add_test(NAME Build.InventoryMatchesCTest COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/build/test_inventory_matches_ctest.py
   --build ${CMAKE_BINARY_DIR} --ctest ${CMAKE_CTEST_COMMAND} --config "$<CONFIG>")
 set_tests_properties(Build.InventoryMatchesCTest PROPERTIES TIMEOUT 60)
 
-# TestTargets finalizes labels and writes TEST_INVENTORY.json. Keep this after
-# every feature/guard registration, including the inventory regression itself.
+# Finalize only after every test, including this inventory regression.
 include(${PROJECT_SOURCE_DIR}/cmake/TestTargets.cmake)

@@ -1,5 +1,6 @@
 #pragma once
 #include "Document.h"
+#include <array>
 namespace drawborad {
 struct AddNode {
     LayerNode node;
@@ -47,6 +48,7 @@ struct AdjustStrokeSamples {
     Id id;
     std::vector<InputSample> geometry;
 };
+struct AdjustCubicControls { Id id; std::array<std::array<double,2>,4> controls; };
 struct CloseStrokeGap { Id eventId; };
 struct WithdrawClosedInkFill { Id operationId; };
 struct RecordClosedInkFill { FillOperation operation; };
@@ -70,7 +72,7 @@ struct ConvertColor {
 };
 using Operation =
     std::variant<AddNode, RemoveNode, RenameNode, MoveNode, DuplicateNode, SetProperties, SetMask,
-                 InstallResource, SetDependencies, Paint, RecordClosedInkFill, WithdrawClosedInkFill, CloseStrokeGap, RecolorStroke, AdjustStrokeSamples, MergeNodes, SplitNode, ConvertColor>;
+                 InstallResource, SetDependencies, Paint, RecordClosedInkFill, WithdrawClosedInkFill, CloseStrokeGap, RecolorStroke, AdjustStrokeSamples, AdjustCubicControls, MergeNodes, SplitNode, ConvertColor>;
 struct Command {
     std::uint32_t version = 1;
     std::vector<Operation> operations;
