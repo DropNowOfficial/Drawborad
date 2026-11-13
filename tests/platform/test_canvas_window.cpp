@@ -38,6 +38,13 @@ void settle(CanvasItem& c){QElapsedTimer t;t.start();while(c.rendering()&&t.elap
 void settleFill(QtBridge& b){QElapsedTimer t;t.start();while(b.fillBusy()&&t.elapsed()<30000)QTest::qWait(5);assert(!b.fillBusy());}
 int main(int argc,char**argv){
  QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);QGuiApplication app(argc,argv);
+ const auto selectionPerf=qEnvironmentVariable("DRAWBORAD_SELECTION_PERF");
+ if(!selectionPerf.isEmpty()){
+  QtBridge b;b.openUrl(QUrl::fromLocalFile(selectionPerf));assert(b.hasDocument());const auto before=*b.canvasSnapshot();auto menu=b.editableStrokes();assert(menu.size()==128);auto points=b.localStrokePoints();assert(points.size()==4096);QElapsedTimer t;t.start();
+  for(int i=0;i<1000;i++){assert(b.editableStrokes()==menu);assert(b.localStrokePoints()==points);}
+  std::cout<<"READ-ONLY cached selection getters 1000 pairs ms="<<t.elapsed()<<"; no rendering or frame-rate claim\n";
+  assert(b.selectEditStroke(menu.back().toMap()["id"].toString()));assert(b.localStrokePoints().size()==4096);assert(b.canvasSnapshot()->sameContent(before));return 0;
+ }
  const auto colorSource=qEnvironmentVariable("DRAWBORAD_ORIGINAL_COLOR_SOURCE");
  if(!colorSource.isEmpty()){
   QtBridge b;b.createDocument(64,64,300,true);const auto original=*b.canvasSnapshot();assert(b.attachOriginalReferenceUrl(QUrl::fromLocalFile(colorSource)));const auto attached=*b.canvasSnapshot();assert(*attached.nodes==*original.nodes&&*attached.eventIndex==*original.eventIndex&&attached.spec==original.spec);const auto url=b.originalReferenceUrl();assert(!url.isEmpty());QImageReader reader(colorSource);reader.setAutoTransform(true);auto expected=reader.read();assert(!expected.isNull());if(expected.colorSpace().isValid())expected.convertToColorSpace(QColorSpace::SRgb);
@@ -341,7 +348,7 @@ int main(int argc,char**argv){
  const auto proposed=*uiBridge.displaySnapshot();const auto& old=outline.eventIndex->back();const auto& edited=proposed.eventIndex->back();assert(edited.geometry[1].y==old.geometry[1].y+3&&edited.geometry[1].pressure==old.geometry[1].pressure-.2&&edited.geometry[0]==old.geometry[0]);assert(proposed.eventIndex->size()==outline.eventIndex->size()&&proposed.resources->size()==outline.resources->size());
  for(const auto&[id,res]:*outline.resources)assert(*proposed.resources->at(id).bytes==*res.bytes);
  auto expected=renderCanvasFrame(proposed,UINT64_MAX);auto oldFrame=renderCanvasFrame(outline,UINT64_MAX);assert(expected&&oldFrame&&expected.value()!=oldFrame.value());uiBridge.cancelFill();settle(*hollowCanvas);assert(uiBridge.canvasSnapshot()->sameContent(outline)&&!uiBridge.fillPending());
- assert(uiBridge.previewLocalStrokeEdit(1,12,0,3,-.2));settleFill(uiBridge);assert(uiBridge.fillPending()&&uiBridge.acceptFill());settle(*hollowCanvas);const auto corrected=*uiBridge.canvasSnapshot();assert(corrected.sameContent(proposed)&&uiBridge.fillNotice().contains(QStringLiteral("修整")));
+ assert(uiBridge.previewLocalStrokeEdit(1,12,0,3,-.2));settleFill(uiBridge);assert(uiBridge.fillPending()&&uiBridge.acceptFill());settle(*hollowCanvas);const auto corrected=*uiBridge.canvasSnapshot();assert(uiBridge.localStrokePoints()[1].toMap()["y"].toDouble()==old.geometry[1].y+3);assert(corrected.sameContent(proposed)&&uiBridge.fillNotice().contains(QStringLiteral("修整")));
  const auto correctedPath=dir.filePath("locally-corrected.draw");uiBridge.saveUrl(QUrl::fromLocalFile(correctedPath));assert(uiBridge.undoDrawing()&&uiBridge.canvasSnapshot()->sameContent(outline));assert(uiBridge.redoDrawing()&&uiBridge.canvasSnapshot()->sameContent(corrected));uiBridge.openUrl(QUrl::fromLocalFile(correctedPath));settle(*hollowCanvas);auto reopened=renderCanvasFrame(*uiBridge.canvasSnapshot(),UINT64_MAX);assert(reopened&&reopened.value()==expected.value()&&uiBridge.canvasSnapshot()->sameContent(corrected));
  // Bad index, excess radius/pressure and immediate cancellation must not mutate.
  for(auto v:{std::array<double,5>{99,12,0,3,-.2},{1,129,0,3,-.2},{1,12,0,0,1}}){uiBridge.previewLocalStrokeEdit(int(v[0]),v[1],v[2],v[3],v[4]);settleFill(uiBridge);assert(!uiBridge.fillPending()&&uiBridge.canvasSnapshot()->sameContent(corrected));}

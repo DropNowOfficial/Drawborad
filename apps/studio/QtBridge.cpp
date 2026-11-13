@@ -84,15 +84,23 @@ bool QtBridge::acceptFill(){
     const bool localEdit=command.operations.size()==1&&std::holds_alternative<AdjustStrokeSamples>(command.operations.front());
     auto committed=app_.apply(command);if(committed&&paintedLayer&&!keepDetail)activeLayer_=paintedLayer;fillNotice_=committed?(localEdit?tr("已接受原笔迹的局部修整；未新增笔迹或图层，颜色和时间不变，可撤销和保存。"):tr("已接受区域操作，独立图层已更新；原线稿未改，可撤销和保存。")):QString::fromStdString(committed.error().messageKey);emit changed();return bool(committed);
 }
-QVariantList QtBridge::editableStrokes() const try {
-    QVariantList out;const auto s=app_.snapshot();
-    if(!s||!activeLayer_||busy()||workflow_->pending()||replaying()||s->eventIndex->size()>8192||!nativeLayerPaintable(*s,*activeLayer_))return out;
-    std::uint64_t points=0;for(const auto& e:*s->eventIndex){if(e.geometry.size()>1000000-points)return {};points+=e.geometry.size();}
-    for(std::size_t i=s->eventIndex->size();i>0&&out.size()<128;--i){const auto& e=(*s->eventIndex)[i-1];
-        if(!independentNativeStroke(*s,e))break;
-        if(e.layerId==*activeLayer_&&e.engineVersion==19&&e.geometry.size()<=4096)out.push_back(QVariantMap{{"id",layerText(e.id)},{"label",tr("笔迹 %1 · %2 个采样点").arg(qulonglong(i)).arg(qulonglong(e.geometry.size()))}});
+void QtBridge::refreshEditCache() const {
+    const auto s=app_.snapshot();
+    if(!s)return;
+    if(editCacheSource_&&editCacheSource_->documentId==s->documentId&&editCacheSource_->revision==s->revision&&editCacheSource_->nodes==s->nodes&&editCacheSource_->resources==s->resources&&editCacheSource_->eventIndex==s->eventIndex&&editCacheSource_->spec==s->spec&&editCacheLayer_==activeLayer_)return;
+    QVariantList out;
+    if(activeLayer_&&s->eventIndex->size()<=8192&&nativeLayerPaintable(*s,*activeLayer_)){
+        std::uint64_t points=0;bool bounded=true;for(const auto& e:*s->eventIndex){if(e.geometry.size()>1000000-points){bounded=false;break;}points+=e.geometry.size();}
+        if(bounded)for(std::size_t i=s->eventIndex->size();i>0&&out.size()<128;--i){const auto& e=(*s->eventIndex)[i-1];
+            if(!independentNativeStroke(*s,e))break;
+            if(e.layerId==*activeLayer_&&e.engineVersion==19&&e.geometry.size()<=4096)out.push_back(QVariantMap{{"id",layerText(e.id)},{"label",tr("笔迹 %1 · %2 个采样点").arg(qulonglong(i)).arg(qulonglong(e.geometry.size()))}});
+        }
     }
-    return out;
+    editCacheMenu_=std::move(out);editCacheSource_=s;editCacheLayer_=activeLayer_;editCachePointId_.reset();editCachePoints_.clear();
+}
+QVariantList QtBridge::editableStrokes() const try {
+    if(!app_.snapshot()||busy()||workflow_->pending()||replaying())return {};
+    refreshEditCache();return editCacheMenu_;
 }catch(const std::bad_alloc&){return {};}
 std::optional<Id> QtBridge::editStrokeId() const {
     const auto list=editableStrokes();if(list.isEmpty())return std::nullopt;
@@ -107,10 +115,15 @@ bool QtBridge::selectEditStroke(const QString& text) {
     fillNotice_=tr("该笔迹不在当前层可安全修整范围；有后续区域操作的旧笔迹不会被自动改写。");emit changed();return false;
 }
 QVariantList QtBridge::localStrokePoints() const try {
-    QVariantList out;const auto s=app_.snapshot();
-    if(!s||busy()||workflow_->pending()||replaying()||s->eventIndex->empty()||s->eventIndex->size()>8192)return out;
-    const auto id=editStrokeId();if(!id)return out;const auto index=editableStrokeIndex(*s,*id);if(!index)return out;const auto& e=(*s->eventIndex)[index.value()];
-    out.reserve(qsizetype(e.geometry.size()));for(const auto& p:e.geometry)out.push_back(QVariantMap{{"x",p.x},{"y",p.y},{"pressure",p.pressure}});return out;
+    const auto s=app_.snapshot();if(!s||busy()||workflow_->pending()||replaying())return {};
+    const auto id=editStrokeId();if(!id)return {};
+    // This is read-only display data from the immutable cached eligibility menu.
+    // The worker and command boundary still independently validate the full snapshot.
+    if(editCachePointId_==id)return editCachePoints_;
+    const auto found=std::find_if(s->eventIndex->begin(),s->eventIndex->end(),[&](const auto& e){return e.id==*id;});
+    if(found==s->eventIndex->end())return {};
+    QVariantList out;out.reserve(qsizetype(found->geometry.size()));for(const auto& p:found->geometry)out.push_back(QVariantMap{{"x",p.x},{"y",p.y},{"pressure",p.pressure}});
+    editCachePoints_=std::move(out);editCachePointId_=id;return editCachePoints_;
 }catch(const std::bad_alloc&){return {};}
 bool QtBridge::previewLocalStrokeEdit(int sampleIndex,double radius,double dx,double dy,double pressureDelta) try {
     const auto fail=[&](const QString& reason){fillNotice_=reason;emit changed();return false;};
@@ -197,7 +210,7 @@ QVariantList QtBridge::layers() const {
 }
 QString QtBridge::activeLayerId() const { return activeLayer_ ? layerText(*activeLayer_) : QString{}; }
 void QtBridge::resetLayerSelection() {
-    selectedEditStroke_.reset();
+    selectedEditStroke_.reset();editCacheSource_.reset();editCacheLayer_.reset();editCacheMenu_.clear();editCachePointId_.reset();editCachePoints_.clear();
     activeLayer_.reset();
     const auto snapshot = app_.snapshot();
     if (!snapshot) return;

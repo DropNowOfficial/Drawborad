@@ -81,6 +81,11 @@ class QtBridge : public QObject {
     std::uint64_t pendingFillGeneration_{};
     std::optional<NodeId> activeLayer_;
     std::optional<Id> selectedEditStroke_;
+    mutable std::optional<DocumentSnapshot> editCacheSource_;
+    mutable std::optional<NodeId> editCacheLayer_;
+    mutable QVariantList editCacheMenu_,editCachePoints_;
+    mutable std::optional<Id> editCachePointId_;
+    void refreshEditCache() const;
     std::optional<Id> editStrokeId() const;
     std::optional<NodeId> selectedBoundary_;
     std::uint64_t canvasGeneration_{};
