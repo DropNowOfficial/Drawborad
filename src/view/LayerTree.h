@@ -1,5 +1,10 @@
+#include "core/PersistentRasterPaint.h"
+#include "core/HiddenBoundary.h"
+#include "core/CroppedStrokeMask.h"
 #pragma once
 #include "core/Document.h"
+#include "core/LineartRaster.h"
+#include "core/MyPaintCroppedRaster.h"
 #include <algorithm>
 namespace drawborad {
 // Document child order is the painting order, from bottom to top.
@@ -42,19 +47,25 @@ inline bool layerLocked(const DocumentSnapshot& snapshot, NodeId id) {
     }
     return false;
 }
-inline bool nativeCompositingSupported(const DocumentSnapshot& snapshot, NodeId id) {
+inline bool nativeCompositingSupported(const DocumentSnapshot& snapshot, NodeId id,const croppedRaster::PreparedViews* prepared=nullptr) {
     bool masked=false,transformed=false;
     while (!id.empty()) {
         const auto found = snapshot.nodes->find(id);
         if (found == snapshot.nodes->end()) return false;
         const auto& node = found->second;
-        if (!node.content.empty() || node.sourceKind != SourceKind::Reconstructed ||
+        if(node.stage==hiddenBoundary::Stage){if(!hiddenBoundary::parse(snapshot,node))return false;id=node.parent;continue;}
+        const bool lineart=(node.stage==persistentRaster::Stage && node.kind==NodeKind::Layer && node.sourceKind==SourceKind::ImportedRaster && node.content.empty() && node.children.empty() && node.blend==BlendMode::Normal && node.maskId.empty()) || (node.stage==LineartStage && bool(lineartRasterPixels(snapshot,id))) || (croppedRaster::isStage(node.stage) && (prepared?prepared->find(snapshot,id)!=nullptr:bool(croppedRaster::parse(snapshot,id))));
+        if (!lineart && (!node.content.empty() || node.sourceKind != SourceKind::Reconstructed ||
             !node.sourceResource.empty() || node.blend != BlendMode::Normal ||
-            (node.kind != NodeKind::Layer && node.opacity != 1)) return false;
+            (node.kind != NodeKind::Layer && node.opacity != 1))) return false;
         transformed=transformed || node.transform!=LayerTransform{};
         if(!node.maskId.empty()){
             const auto pixels=checkedMultiply(snapshot.spec.pixelSize.width,snapshot.spec.pixelSize.height);
             const auto mask=snapshot.resources->find(node.maskId);
+            if(mask!=snapshot.resources->end() && cropMask::tagged(mask->second)){
+                if(!croppedRaster::isStage(node.stage)||!cropMask::parse(snapshot,mask->second))return false;
+                masked=true;id=node.parent;continue;
+            }
             if(!pixels || mask==snapshot.resources->end() || mask->second.kind!=ResourceKind::Mask ||
                mask->second.bytes->size()!=pixels.value())return false;
             // Binary ancestor masks commute with per-layer compositing. Soft
@@ -71,22 +82,23 @@ inline bool nativeCompositingSupported(const DocumentSnapshot& snapshot, NodeId 
 // Apply masks to a display/export copy, leaving raw stroke tiles and replay
 // checkpoints untouched. Reapplying a soft mask to a checkpoint would darken it.
 inline Result<TileData> nativeMaskedTile(const DocumentSnapshot& snapshot,NodeId id,
-                                        TileData tile,std::int64_t originX,std::int64_t originY){
-    if(!nativeCompositingSupported(snapshot,id) || tile.format!=PixelFormat{ColorMode::RGB,Depth::U8,true} ||
+                                        TileData tile,std::int64_t originX,std::int64_t originY,const croppedRaster::PreparedViews* prepared=nullptr){
+    if(!nativeCompositingSupported(snapshot,id,prepared) || tile.format!=PixelFormat{ColorMode::RGB,Depth::U8,true} ||
        tile.rowStride<std::uint64_t(tile.width)*4 || tile.bytes.size()<tile.rowStride*tile.height)
         return error(ErrorCode::UnsupportedFeature,"display.mask-layout");
-    std::vector<const Bytes*> masks;
+    std::vector<const Bytes*> masks;std::vector<cropMask::View> cropMasks;
     while(!id.empty()){
         const auto& node=snapshot.nodes->at(id);
-        if(!node.maskId.empty())masks.push_back(snapshot.resources->at(node.maskId).bytes.get());
+        if(!node.maskId.empty()){const auto& resource=snapshot.resources->at(node.maskId);if(cropMask::tagged(resource)){auto v=cropMask::parse(snapshot,resource);if(!v)return v.error();cropMasks.push_back(v.value());}else masks.push_back(resource.bytes.get());}
         id=node.parent;
     }
-    if(masks.empty())return tile;
+    if(masks.empty()&&cropMasks.empty())return tile;
     for(std::uint32_t y=0;y<tile.height;++y)for(std::uint32_t x=0;x<tile.width;++x){
         const auto dx=originX+std::int64_t(x),dy=originY+std::int64_t(y);
         auto& alpha=tile.bytes[std::size_t(y*tile.rowStride+x*4+3)];
         if(dx<0 || dy<0 || std::uint64_t(dx)>=snapshot.spec.pixelSize.width || std::uint64_t(dy)>=snapshot.spec.pixelSize.height){alpha=0;continue;}
         const auto pixel=std::size_t(std::uint64_t(dy)*snapshot.spec.pixelSize.width+std::uint64_t(dx));
+        for(const auto& mask:cropMasks)alpha=std::uint8_t(unsigned(alpha)*cropMask::coverage(mask,dx,dy)/255);
         for(const auto mask:masks)alpha=std::uint8_t((unsigned(alpha)*(*mask)[pixel]+127)/255);
     }
     return tile;

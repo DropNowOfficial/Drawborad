@@ -4,7 +4,10 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 option(DRAWBORAD_DESKTOP "Build Qt native desktop shell" OFF)
+option(DRAWBORAD_QT_CANVAS_TESTS "Build Linux Qt software canvas smoke (not Windows qualification)" OFF)
 option(DRAWBORAD_HEADLESS_WORKFLOW "Build Linux headless C++ workflow and CLI" OFF)
+option(DRAWBORAD_QT_SOLID_MASK_CACHE "Build experimental Qt-only bounded mask backend (no persisted shape events)" OFF)
+option(DRAWBORAD_MYPAINT_DESKTOP "Build experimental pinned Linux MyPaint desktop adapter (no runtime install)" OFF)
 option(DRAWBORAD_QUALIFY "Require qualified Windows dependency manifest" OFF)
 option(DRAWBORAD_WINDOWS_VALIDATION "Allow local Windows validation before release dependency qualification" OFF)
 option(DRAWBORAD_SANITIZE "Enable address/undefined sanitizers" OFF)
@@ -28,7 +31,7 @@ else()
     add_link_options(-fsanitize=address,undefined)
   endif()
 endif()
-add_library(drawborad_core STATIC src/core/DocumentSpec.cpp src/core/Document.cpp src/core/CommandBus.cpp src/core/Digest.cpp src/storage/FileIO.cpp src/storage/TileStore.cpp src/storage/ProjectCodec.cpp src/storage/ProjectStore.cpp src/storage/Journal.cpp src/jobs/Protocol.cpp src/jobs/ResourceGovernor.cpp src/jobs/JobBroker.cpp src/jobs/WinWorkerHost.cpp src/platform/WinDiagnostics.cpp apps/studio/ApplicationController.cpp apps/studio/AlphaImportPolicy.cpp)
+add_library(drawborad_core STATIC src/core/DocumentSpec.cpp src/core/Document.cpp src/core/LineartRaster.cpp src/core/CommandBus.cpp src/core/Digest.cpp src/storage/FileIO.cpp src/storage/TileStore.cpp src/storage/ProjectCodec.cpp src/storage/ProjectStore.cpp src/storage/Journal.cpp src/jobs/Protocol.cpp src/jobs/ResourceGovernor.cpp src/jobs/JobBroker.cpp src/jobs/WinWorkerHost.cpp src/platform/WinDiagnostics.cpp apps/studio/ApplicationController.cpp apps/studio/AlphaImportPolicy.cpp)
 target_include_directories(drawborad_core PUBLIC ${PROJECT_SOURCE_DIR}/src)
 add_library(drawborad_color STATIC
   src/color/ProfileStore.cpp src/color/ColorService.cpp src/color/BlendPolicy.cpp src/color/ProofTransform.cpp)
@@ -51,6 +54,8 @@ add_library(drawborad_codecs STATIC
   src/codecs/psd/PsdWriter.cpp
   src/codecs/ExportService.cpp
   src/codecs/RasterWriters.cpp
+  src/codecs/ZipStream.cpp
+  src/codecs/OraStream.cpp
   src/codecs/LayerArchive.cpp
   src/codecs/AtomicExport.cpp)
 target_include_directories(drawborad_codecs PUBLIC ${PROJECT_SOURCE_DIR}/src)
@@ -150,9 +155,10 @@ target_include_directories(drawborad_reconstruct PUBLIC ${PROJECT_SOURCE_DIR}/sr
 target_link_libraries(drawborad_reconstruct PUBLIC drawborad_models drawborad_color drawborad_core)
 
 add_library(drawborad_render STATIC
-  src/render/ReferenceRenderer.cpp src/render/CoverageRasterizer.cpp src/render/PixelBlend.cpp
+  src/render/ReferenceRenderer.cpp src/render/CoverageRasterizer.cpp src/render/FineLineCoverage.cpp src/render/DryInkCoverage.cpp src/render/PixelBlend.cpp
   src/render/TileCache.cpp src/render/DisplayCache.cpp src/render/CacheEvictor.cpp
-  src/brush/BrushEngine.cpp src/brush/SampleResampler.cpp src/platform/TabletInput.cpp
+  src/brush/CubicInkStroke.cpp src/brush/CubicInkPreparation.cpp src/render/ContinuousEraserCoverage.cpp src/brush/ContinuousEraser.cpp src/render/ChiselInkCoverage.cpp src/brush/ChiselInkStroke.cpp src/brush/BrushEngine.cpp src/brush/SampleResampler.cpp src/brush/FloodFill.cpp src/brush/BucketFill.cpp src/brush/FreehandStroke.cpp src/brush/DryInkStroke.cpp src/platform/TabletInput.cpp
+  src/ui/MergedDocument.cpp src/ui/LayerStream.cpp
   src/history/EventIndex.cpp src/history/ReplayEngine.cpp
   src/view/Viewport.cpp src/view/HitTest.cpp src/platform/DeviceRecovery.cpp)
 target_include_directories(drawborad_render PUBLIC ${PROJECT_SOURCE_DIR}/src)
@@ -189,7 +195,7 @@ if(DRAWBORAD_DESKTOP)
   qt_standard_project_setup(REQUIRES 6.12)
 endif()
 if(DRAWBORAD_DESKTOP OR DRAWBORAD_HEADLESS_WORKFLOW)
-  add_library(drawborad_workflow STATIC src/ui/ReviewJob.cpp src/ui/ReconstructionJob.cpp src/ui/PaintedDocument.cpp src/ui/SemanticManifest.cpp)
+  add_library(drawborad_workflow STATIC src/platform/CanvasFrame.cpp src/ui/ReviewJob.cpp src/ui/ReconstructionJob.cpp src/ui/PaintedDocument.cpp src/ui/SemanticManifest.cpp)
   target_include_directories(drawborad_workflow PUBLIC ${PROJECT_SOURCE_DIR}/src)
   target_link_libraries(drawborad_workflow PUBLIC drawborad_codecs drawborad_models drawborad_reconstruct Qt6::Core Qt6::Gui)
   execute_process(COMMAND git rev-parse HEAD WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}" OUTPUT_VARIABLE DRAWBORAD_GIT_SHA OUTPUT_STRIP_TRAILING_WHITESPACE)
@@ -229,6 +235,38 @@ if(DRAWBORAD_DESKTOP)
 else()
   add_executable(DrawboradDiagnostics apps/studio/Main.cpp)
   target_link_libraries(DrawboradDiagnostics PRIVATE drawborad_core)
+endif()
+# Optional development backend, not linked into portable core/render or apps.
+# Keep Qt-free tools unchanged; no new project event is accepted by this target.
+if(DRAWBORAD_QT_SOLID_MASK_CACHE)
+  if(NOT TARGET Qt6::Gui)
+    find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui)
+  endif()
+  add_library(drawborad_qt_solid_masks STATIC src/platform/QtSolidMaskCache.cpp src/platform/QtSolidDraftPreview.cpp src/platform/QtSolidRasterCommand.cpp)
+  target_include_directories(drawborad_qt_solid_masks PUBLIC ${PROJECT_SOURCE_DIR}/src)
+  target_link_libraries(drawborad_qt_solid_masks PRIVATE drawborad_render drawborad_codecs Qt6::Core Qt6::Gui)
+  if(TARGET drawborad_workflow)
+    target_link_libraries(drawborad_workflow PUBLIC drawborad_qt_solid_masks)
+    target_compile_definitions(drawborad_workflow PUBLIC DRAWBORAD_HAS_QT_SOLID_BAKE)
+  endif()
+endif()
+# Separate opt-in: portable targets do not acquire Qt or Python dependencies.
+if(DRAWBORAD_MYPAINT_DESKTOP)
+  set(DRAWBORAD_MYPAINT_PYTHON "/usr/bin/python3" CACHE FILEPATH "Operator-owned existing Python for Linux MyPaint; never installed automatically")
+  set(DRAWBORAD_MYPAINT_SOURCE_DIR "${PROJECT_SOURCE_DIR}" CACHE PATH "Operator-owned source root containing cloud/mypaint_worker.py")
+  if(NOT TARGET Qt6::Gui)
+    find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui)
+  endif()
+  add_library(drawborad_mypaint_raster STATIC src/platform/MyPaintRasterCommand.cpp)
+  target_include_directories(drawborad_mypaint_raster PUBLIC ${PROJECT_SOURCE_DIR}/src)
+  target_link_libraries(drawborad_mypaint_raster PRIVATE drawborad_render drawborad_codecs Qt6::Core Qt6::Gui)
+  if(TARGET drawborad_workflow)
+    target_link_libraries(drawborad_workflow PUBLIC drawborad_mypaint_raster)
+    target_compile_definitions(drawborad_workflow PUBLIC DRAWBORAD_HAS_MYPAINT_DESKTOP)
+    target_compile_definitions(drawborad_workflow PUBLIC
+      DRAWBORAD_MYPAINT_SOURCE_DIR="${DRAWBORAD_MYPAINT_SOURCE_DIR}"
+      DRAWBORAD_MYPAINT_PYTHON="${DRAWBORAD_MYPAINT_PYTHON}")
+  endif()
 endif()
 enable_testing()
 add_subdirectory(tests)

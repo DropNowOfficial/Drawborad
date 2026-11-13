@@ -8,7 +8,7 @@ cd "$root"
   -fno-fast-math -ffp-contract=off -Isrc \
   tools/experimental/automatic_stages/NativePlan.cpp \
   src/core/DocumentSpec.cpp src/core/Document.cpp src/core/CommandBus.cpp src/core/Digest.cpp \
-  src/render/ReferenceRenderer.cpp src/render/CoverageRasterizer.cpp src/render/PixelBlend.cpp \
+  src/render/ReferenceRenderer.cpp src/render/CoverageRasterizer.cpp src/render/FineLineCoverage.cpp src/render/DryInkCoverage.cpp src/render/ChiselInkCoverage.cpp src/render/ContinuousEraserCoverage.cpp src/render/PixelBlend.cpp \
   src/reconstruct/ReconstructionService.cpp src/reconstruct/EventWriter.cpp \
   src/storage/ProjectStore.cpp src/storage/ProjectCodec.cpp src/storage/TileStore.cpp \
   src/storage/Journal.cpp src/storage/FileIO.cpp -o "$output"

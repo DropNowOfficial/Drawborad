@@ -4,20 +4,108 @@
 #include "render/ReferenceRenderer.h"
 #include "view/Viewport.h"
 #include <QQuickItem>
+#include <QImage>
+#include <QColor>
+#include <QTimer>
 #include <QPointF>
+#include <QHoverEvent>
 #include <QPointer>
 #include <QTransform>
 #include <mutex>
+#include <cmath>
+#include <QThreadPool>
+#include <stop_token>
 namespace drawborad {
 class QtBridge;
 class CanvasItem : public QQuickItem {
     Q_OBJECT
+    Q_PROPERTY(QVariantList brushFootprint READ brushFootprint NOTIFY footprintChanged)
+    Q_PROPERTY(QVariantList cubicHandles READ cubicHandles NOTIFY viewChanged)
+    Q_PROPERTY(QVariantList localStrokeHandles READ localStrokeHandles NOTIFY viewChanged)
     Q_PROPERTY(QObject* bridge READ studio WRITE setStudio NOTIFY studioChanged)
+    Q_PROPERTY(bool closeGapTool READ closeGapTool WRITE setCloseGapTool NOTIFY brushSettingsChanged)
+    Q_PROPERTY(QVariantList closeGapGuide READ closeGapGuide NOTIFY viewChanged)
+    Q_PROPERTY(bool hollowLassoTool READ hollowLassoTool WRITE setHollowLassoTool NOTIFY brushSettingsChanged)
+    Q_PROPERTY(QVariantList hollowLassoPoints READ hollowLassoPoints NOTIFY viewChanged)
+    Q_PROPERTY(bool hollowDragTool READ hollowDragTool WRITE setHollowDragTool NOTIFY brushSettingsChanged)
+    Q_PROPERTY(bool hollowDragActive READ hollowDragActive NOTIFY brushSettingsChanged)
+    Q_PROPERTY(bool hollowBounded READ hollowBounded WRITE setHollowBounded NOTIFY brushSettingsChanged)
+    Q_PROPERTY(QRectF hollowBounds READ hollowBounds WRITE setHollowBounds NOTIFY hollowBoundsChanged)
+    Q_PROPERTY(QRectF hollowItemRect READ hollowItemRect NOTIFY viewChanged)
+    Q_PROPERTY(bool hollowTool READ hollowTool WRITE setHollowTool NOTIFY brushSettingsChanged)
+    Q_PROPERTY(bool bucketTool READ bucketTool WRITE setBucketTool NOTIFY brushSettingsChanged)
     Q_PROPERTY(double zoom READ zoom NOTIFY viewChanged)
+    Q_PROPERTY(bool strokePreviewActive READ strokePreviewActive NOTIFY renderErrorChanged)
+    Q_PROPERTY(bool previewing READ previewing NOTIFY renderErrorChanged)
+    Q_PROPERTY(bool rendering READ rendering NOTIFY renderErrorChanged)
+    Q_PROPERTY(QString renderError READ renderError NOTIFY renderErrorChanged)
     Q_PROPERTY(QRectF documentRect READ documentRect NOTIFY viewChanged)
+    Q_PROPERTY(double brushWidth READ brushWidth NOTIFY brushSettingsChanged)
+    Q_PROPERTY(double brushOpacity READ brushOpacity NOTIFY brushSettingsChanged)
+    Q_PROPERTY(double brushHardness READ brushHardness NOTIFY brushSettingsChanged)
+    Q_PROPERTY(bool myPaintTool READ myPaintTool NOTIFY brushSettingsChanged)
+    Q_PROPERTY(QString myPaintPreset READ myPaintPreset NOTIFY brushSettingsChanged)
+    Q_PROPERTY(double myPaintRadiusScale READ myPaintRadiusScale NOTIFY brushSettingsChanged)
+    Q_PROPERTY(double mouseTaper READ mouseTaper NOTIFY brushSettingsChanged)
+    Q_PROPERTY(bool dryInk READ dryInk NOTIFY brushSettingsChanged)
+    Q_PROPERTY(bool smoothInk READ smoothInk NOTIFY brushSettingsChanged)
+    Q_PROPERTY(bool controlledEraser READ controlledEraser NOTIFY brushSettingsChanged)
+    Q_PROPERTY(bool chiselInk READ chiselInk NOTIFY brushSettingsChanged)
+    Q_PROPERTY(int chiselAngle READ chiselAngle NOTIFY brushSettingsChanged)
+    Q_PROPERTY(QColor brushColor READ brushColor NOTIFY brushSettingsChanged)
+    Q_PROPERTY(QString brushNotice READ brushNotice NOTIFY brushSettingsChanged)
+    BrushSettings brushSettings_,gestureBrush_;
+    bool dryInk_{false},gestureDryInk_{false},smoothInk_{false},gestureSmoothInk_{false},dryCommitPending_{false};
+    std::optional<QPointF> brushPointer_;
+    bool controlledEraser_{false}, gestureControlledEraser_{false};
+    bool chiselInk_{false},gestureChiselInk_{false};
+    int chiselAngle_{0},gestureChiselAngle_{0};
+    void commitDryStrokeAsync(DocumentSnapshot,StrokeEvent);
+    void finishDryCommit();
+    QTimer dryCommitTimer_;
+    std::optional<StrokeEvent> completedDryEvent_;
+    QString completedDryError_;
+    bool completedDryReady_{false};
+    DocumentId dryCommitDocument_;
+    Revision dryCommitRevision_{};
+    std::uint64_t dryCommitGeneration_{};
+    Id gestureId_;
+    QColor brushColor_{QColor::fromRgbF(.08,.08,.08)},gestureColor_;
+    bool bucketTool_{false},hollowTool_{false},hollowBounded_{false};
+    QRectF hollowBounds_{0,0,64,64};
+    bool hollowDragTool_{false},hollowLassoTool_{false},closeGapTool_{false};
+    std::vector<DocumentPoint> hollowPolygon_;
+    struct HollowDrag { QPointF start,current; DocumentId document; std::uint64_t revision{},generation{}; std::vector<DocumentPoint> points; };
+    std::optional<HollowDrag> hollowDrag_;
+    void cancelHollowDrag();
+    bool updateHollowDrag(QPointF);
+    QRectF hollowDragRect() const;
+    bool myPaintTool_{false},gestureMyPaint_{false};
+    QString myPaintPreset_{"pointy_ink"},gestureMyPaintPreset_;
+    double myPaintScale_{1},gestureMyPaintScale_{1};
+    double mouseTaper_{0},gestureTaper_{0};
+    QString brushNotice_;
     QPointer<QtBridge> bridge_;
     mutable std::mutex snapshotMutex_;
     std::optional<DocumentSnapshot> snapshot_;
+    QImage displayFrame_;
+    QImage committedFrame_;
+    bool previewing_{false};
+    // Input is pending as soon as it is accepted, including the timer window
+    // before any worker request exists. Only a completion for that input clears it.
+    bool previewInputPending_{false};
+    std::uint64_t previewInputSequence_{0};
+    std::uint64_t previewRequestSequence_{0},completedPreviewSequence_{0};
+    QTimer previewTimer_;
+    QImage completedFrame_;
+    QString completedError_;
+    bool completedLegacy_{false};
+    QString renderError_;
+    bool legacyDisplay_{false};
+    bool rendering_{false};
+    QThreadPool renderPool_;
+    std::stop_source renderStop_;
+    std::uint64_t renderGeneration_{0};
     std::uint64_t replayCount_{UINT64_MAX};
     double zoom_{1};
     QPointF pan_;
@@ -36,6 +124,9 @@ class CanvasItem : public QQuickItem {
     QObject* studio() const;
     void setStudio(QObject*);
     void refreshSnapshot();
+    void requestPreview();
+    void clearPreview();
+    BrushSettings currentGestureSettings(const DocumentSnapshot&)const;
     std::optional<std::pair<NodeId, NodeId>> paintTarget(const DocumentSnapshot&) const;
     std::optional<DocumentPoint> itemToDocument(const QPointF&, const DocumentSnapshot&) const;
     QTransform documentTransform(const DocumentSnapshot&,double,QPointF) const;
@@ -47,6 +138,10 @@ class CanvasItem : public QQuickItem {
     InputSample tabletSample(class QTabletEvent*) const;
   protected:
     QSGNode* updatePaintNode(QSGNode*, UpdatePaintNodeData*) override;
+    void mouseUngrabEvent() override;
+    void hoverEnterEvent(QHoverEvent*) override;
+    void hoverMoveEvent(QHoverEvent*) override;
+    void hoverLeaveEvent(QHoverEvent*) override;
     void mousePressEvent(QMouseEvent*) override;
     void mouseMoveEvent(QMouseEvent*) override;
     void mouseReleaseEvent(QMouseEvent*) override;
@@ -54,11 +149,65 @@ class CanvasItem : public QQuickItem {
     void geometryChange(const QRectF&,const QRectF&) override;
     bool event(QEvent*) override;
   signals:
+    void footprintChanged();
+    void hollowBoundsChanged();
+    void hollowSelectionFinished();
+    void brushSettingsChanged();
     void studioChanged();
     void viewChanged();
+    void renderErrorChanged();
   public:
+    QVariantList cubicHandles() const;
+    Q_INVOKABLE bool moveCubicHandle(int index,double x,double y);
+    QVariantList localStrokeHandles() const;
+    bool closeGapTool() const { return closeGapTool_; }
+    void setCloseGapTool(bool);
+    QVariantList closeGapGuide() const;
+    bool hollowLassoTool() const { return hollowLassoTool_; }
+    void setHollowLassoTool(bool);
+    QVariantList hollowLassoPoints() const;
+    bool hollowDragTool() const { return hollowDragTool_; }
+    bool hollowDragActive() const { return hollowDrag_.has_value(); }
+    void setHollowDragTool(bool);
+    bool hollowBounded() const { return hollowBounded_; }
+    void setHollowBounded(bool value) { hollowBounded_=value;emit brushSettingsChanged();emit viewChanged(); }
+    QRectF hollowBounds() const { return hollowBounds_; }
+    void setHollowBounds(QRectF value) { const auto eq=[](double a,double b){return a==b||(std::isnan(a)&&std::isnan(b));};if(eq(value.x(),hollowBounds_.x())&&eq(value.y(),hollowBounds_.y())&&eq(value.width(),hollowBounds_.width())&&eq(value.height(),hollowBounds_.height()))return;hollowPolygon_.clear();hollowBounds_=value;emit hollowBoundsChanged();emit viewChanged(); }
+    QRectF hollowItemRect() const;
+    bool hollowTool() const { return hollowTool_; }
+    void setHollowTool(bool value) { cancelStroke();hollowTool_=value;if(value){myPaintTool_=false;controlledEraser_=false;bucketTool_=false;closeGapTool_=false;}else {hollowDragTool_=false;hollowLassoTool_=false;}emit brushSettingsChanged(); }
+    bool bucketTool() const { return bucketTool_; }
+    void setBucketTool(bool value) { cancelStroke();bucketTool_=value;if(value){myPaintTool_=false;controlledEraser_=false;closeGapTool_=false;hollowTool_=false;hollowDragTool_=false;hollowLassoTool_=false;}emit brushSettingsChanged(); }
     explicit CanvasItem(QQuickItem* parent = nullptr);
+    ~CanvasItem() override;
+    bool rendering() const;
+    bool previewing() const;
+    bool strokePreviewActive()const{return !stroke_.empty();}
+    Q_INVOKABLE void cancelStroke();
+    double brushWidth()const{return brushSettings_.width;}
+    double brushOpacity()const{return brushSettings_.opacity;}
+    double brushHardness()const{return brushSettings_.hardness;}
+    bool myPaintTool()const{return myPaintTool_;}
+    QString myPaintPreset()const{return myPaintPreset_;}
+    double myPaintRadiusScale()const{return myPaintScale_;}
+    Q_INVOKABLE bool configureMyPaint(bool,const QString&,double);
+    double mouseTaper()const{return mouseTaper_;}
+    bool dryInk()const{return dryInk_;}
+    Q_INVOKABLE bool configureDryInk(bool);
+    bool smoothInk()const{return smoothInk_;}
+    Q_INVOKABLE bool configureSmoothInk(bool);
+    QVariantList brushFootprint() const;
+    bool controlledEraser() const { return controlledEraser_; }
+    Q_INVOKABLE bool configureControlledEraser(bool);
+    bool chiselInk()const{return chiselInk_;}
+    int chiselAngle()const{return chiselAngle_;}
+    Q_INVOKABLE bool configureChiselInk(bool,int);
+    Q_INVOKABLE void cancelPendingStroke(){cancelStroke();}
+    QColor brushColor()const{return brushColor_;}
+    QString brushNotice()const{return brushNotice_;}
+    Q_INVOKABLE bool configureBrush(double width,QColor color,double opacity,double hardness,double taper);
     double zoom() const;
+    QString renderError() const;
     QRectF documentRect() const;
     Q_INVOKABLE bool zoomAt(double factor,double x,double y);
     Q_INVOKABLE bool panBy(double x,double y);
@@ -66,3 +215,4 @@ class CanvasItem : public QQuickItem {
 };
 }
 #endif
+

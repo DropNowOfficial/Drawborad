@@ -1,11 +1,16 @@
+#include "core/PersistentRasterPaint.h"
+#include "core/HiddenBoundary.h"
+#include "core/CroppedStrokeMask.h"
 #include "ProjectCodec.h"
 #include "Binary.h"
+#include "core/MyPaintCroppedRaster.h"
 #include <algorithm>
 #include <limits>
 namespace drawborad {
 namespace {
 using binary::Reader;
 using binary::Writer;
+struct UnsupportedEngine {};
 void put(Writer& w, const ColorValue& c) {
     w.hash(c.profileId);
     for (auto x : c.channels)
@@ -64,7 +69,7 @@ LayerNode node(Reader& r){
  n.bounds={std::bit_cast<std::int64_t>(r.u64()),std::bit_cast<std::int64_t>(r.u64()),r.u64(),r.u64()};n.children=ids(r);n.provenance=ids(r);n.composite=r.boolean();return n;
 }
 void put(Writer& w,const Resource& a){w.hash(a.id);w.u64(std::uint64_t(a.kind));putHashes(w,a.dependencies);w.hash(sha256(*a.bytes));w.blob(*a.bytes);}
-Resource resource(Reader& r){Resource a;a.id=r.hash();auto k=r.u64();if(k>4)throw binary::Invalid{};a.kind=ResourceKind(k);a.dependencies=hashes(r);auto digest=r.hash();a.bytes=std::make_shared<const Bytes>(r.blob());if(sha256(*a.bytes)!=digest)throw binary::Invalid{};return a;}
+Resource resource(Reader& r){Resource a;a.id=r.hash();auto k=r.u64();if(k>4)throw binary::Invalid{};a.kind=ResourceKind(k);a.dependencies=hashes(r);auto digest=r.hash();a.bytes=std::make_shared<const Bytes>(r.blob(MaxResourceBytes));if(sha256(*a.bytes)!=digest)throw binary::Invalid{};return a;}
 void put(Writer& w,const StrokeEvent& e){
  w.id(e.id);w.id(e.objectId);w.id(e.layerId);w.u64(e.startUs);w.u64(e.endUs);w.text(e.toolId);put(w,e.color);w.u64(e.geometry.size());
  for(auto& p:e.geometry){w.real(p.x);w.real(p.y);w.real(p.pressure);w.boolean(bool(p.tiltX));if(p.tiltX)w.real(*p.tiltX);w.boolean(bool(p.tiltY));if(p.tiltY)w.real(*p.tiltY);w.u64(p.timestampUs);w.u64(p.deviceKind);w.u64(p.capabilities);}
@@ -74,24 +79,45 @@ void put(Writer& w,const StrokeEvent& e){
 StrokeEvent event(Reader& r){
  StrokeEvent e;e.id=r.id();e.objectId=r.id();e.layerId=r.id();e.startUs=r.u64();e.endUs=r.u64();e.toolId=r.text(256);e.color=color(r);auto n=r.count();e.geometry.reserve(n);
  while(n--){InputSample p;p.x=r.real();p.y=r.real();p.pressure=r.real();if(r.boolean())p.tiltX=r.real();if(r.boolean())p.tiltY=r.real();p.timestampUs=r.u64();auto d=r.u64(),c=r.u64();if(d>UINT32_MAX||c>UINT32_MAX)throw binary::Invalid{};p.deviceKind=std::uint32_t(d);p.capabilities=std::uint32_t(c);e.geometry.push_back(p);}
- e.seed=r.u64();e.parentRevision=r.u64();auto v=r.u64();if(v!=1&&v!=2)throw binary::Invalid{};e.engineVersion=std::uint32_t(v);
+ e.seed=r.u64();e.parentRevision=r.u64();auto v=r.u64();if(v!=1&&v!=2&&v!=8&&v!=10&&v!=12&&v!=19&&v!=21&&v!=22&&v!=23&&v!=24)throw UnsupportedEngine{};e.engineVersion=std::uint32_t(v);
  if(v>=2){e.style.width=r.real();e.style.opacity=r.real();e.style.hardness=r.real();auto shape=r.u64(),angle=r.u64();if(shape>1||angle>7)throw binary::Invalid{};e.style.shape=NibShape(shape);e.style.angle=std::uint8_t(angle);e.style.grain=r.blob(64);}return e;
+}
+}
+namespace {
+const char* requiredFormatHeader(const DocumentSnapshot& s){
+ if(std::any_of(s.nodes->begin(),s.nodes->end(),[](const auto& item){return item.second.stage==persistentRaster::Stage;}))return "DRAW-DELTA-25";
+ if(std::any_of(s.eventIndex->begin(),s.eventIndex->end(),[](const auto&e){return e.engineVersion==24;}))return "DRAW-DELTA-24";
+ if(std::any_of(s.eventIndex->begin(),s.eventIndex->end(),[](const auto&e){return e.engineVersion==23;}))return "DRAW-DELTA-23";
+ if(std::any_of(s.eventIndex->begin(),s.eventIndex->end(),[](const auto&e){return e.engineVersion==22;}))return "DRAW-DELTA-22";
+ if(std::any_of(s.eventIndex->begin(),s.eventIndex->end(),[](const auto&e){return e.engineVersion==21;}))return "DRAW-DELTA-21";
+ if(!s.fillOperations.empty())return "DRAW-DELTA-20";
+ if(std::any_of(s.eventIndex->begin(),s.eventIndex->end(),[](const auto& e){return e.engineVersion==19;}))return "DRAW-DELTA-19";
+ if(std::any_of(s.resources->begin(),s.resources->end(),[](const auto& item){return hiddenBoundary::tagged(item.second);}))return "DRAW-DELTA-16";
+ if(std::any_of(s.resources->begin(),s.resources->end(),[](const auto& item){return cropMask::tagged(item.second);}))return "DRAW-DELTA-15";
+ if(std::any_of(s.nodes->begin(),s.nodes->end(),[](const auto& item){return item.second.stage==croppedRaster::NormalStage;}))return "DRAW-DELTA-14";
+ if(std::any_of(s.nodes->begin(),s.nodes->end(),[](const auto& item){return item.second.stage==croppedRaster::Stage;}))return "DRAW-DELTA-13";
+ if(std::any_of(s.eventIndex->begin(),s.eventIndex->end(),[](const auto& e){return e.engineVersion==12;}))return "DRAW-DELTA-12";
+ if(std::any_of(s.resources->begin(),s.resources->end(),[](const auto& item){return item.second.bytes->size()>LegacyMaxResourceBytes;}))return "DRAW-DELTA-11";
+ if(std::any_of(s.eventIndex->begin(),s.eventIndex->end(),[](const auto& e){return e.engineVersion==10;}))return "DRAW-DELTA-10";
+ if(std::any_of(s.nodes->begin(),s.nodes->end(),[](const auto& item){const auto& n=item.second;return n.sourceKind==SourceKind::ImportedRaster && n.stage=="drawborad.lineart.rgba.v1";}))return "DRAW-DELTA-9";
+ if(std::any_of(s.eventIndex->begin(),s.eventIndex->end(),[](const auto& e){return e.engineVersion==8;}))return "DRAW-DELTA-8";
+ return "DRAW-DELTA-1";
 }
 }
 Result<Bytes> encodeDelta(const DocumentSnapshot& before,const DocumentSnapshot& after){
  auto valid=validateSnapshot(after);if(!valid)return valid.error();if(!before.documentId.empty()&&(before.documentId!=after.documentId||after.revision<=before.revision))return error(ErrorCode::StaleRevision,"journal.order");
- Writer w;w.text("DRAW-DELTA-1");w.id(before.documentId);w.u64(before.revision);auto h=before.documentId.empty()?Result<Hash>{Hash{}}:stateHash(before);if(!h)return h.error();w.hash(h.value());w.id(after.documentId);w.u64(after.revision);put(w,after.spec);
+ Writer w;w.text(requiredFormatHeader(after));w.id(before.documentId);w.u64(before.revision);auto h=before.documentId.empty()?Result<Hash>{Hash{}}:stateHash(before);if(!h)return h.error();w.hash(h.value());w.id(after.documentId);w.u64(after.revision);put(w,after.spec);
  std::vector<Id> removed;std::vector<LayerNode> changed;for(auto&[id,n]:*before.nodes)if(!after.nodes->contains(id))removed.push_back(id);for(auto&[id,n]:*after.nodes){auto it=before.nodes->find(id);if(it==before.nodes->end()||it->second!=n)changed.push_back(n);}putIds(w,removed);w.u64(changed.size());for(auto& n:changed)put(w,n);
  std::vector<Hash> deleted;std::vector<Resource> resources;for(auto&[id,r]:*before.resources)if(!after.resources->contains(id))deleted.push_back(id);for(auto&[id,r]:*after.resources){auto it=before.resources->find(id);if(it==before.resources->end()||it->second!=r)resources.push_back(r);}putHashes(w,deleted);w.u64(resources.size());for(auto& r:resources)put(w,r);
- bool append=after.eventIndex->size()>=before.eventIndex->size()&&std::equal(before.eventIndex->begin(),before.eventIndex->end(),after.eventIndex->begin());auto start=append?before.eventIndex->size():0;w.boolean(append);w.u64(after.eventIndex->size()-start);for(auto i=start;i<after.eventIndex->size();i++)put(w,after.eventIndex->at(i));if(w.data.size()>MaxProjectBytes)return error(ErrorCode::BudgetExceeded,"project.record-limit");return w.data;
+ bool append=after.eventIndex->size()>=before.eventIndex->size()&&std::equal(before.eventIndex->begin(),before.eventIndex->end(),after.eventIndex->begin());auto start=append?before.eventIndex->size():0;w.boolean(append);w.u64(after.eventIndex->size()-start);for(auto i=start;i<after.eventIndex->size();i++)put(w,after.eventIndex->at(i));if(!after.fillOperations.empty()||(std::string_view(requiredFormatHeader(after))=="DRAW-DELTA-21"||std::string_view(requiredFormatHeader(after))=="DRAW-DELTA-22"||std::string_view(requiredFormatHeader(after))=="DRAW-DELTA-23"||std::string_view(requiredFormatHeader(after))=="DRAW-DELTA-24"||std::string_view(requiredFormatHeader(after))=="DRAW-DELTA-25")){w.u64(after.fillOperations.size());for(const auto&o:after.fillOperations){w.id(o.id);w.u64(o.recipeVersion);w.id(o.target);w.id(o.source);w.id(o.boundaryLayer);w.id(o.boundaryEvent);w.hash(o.boundaryDigest);w.hash(o.sourceResource);w.hash(o.sourceDigest);w.hash(o.contextDigest);w.u64(o.members.size());for(const auto&[id,h]:o.members){w.id(id);w.hash(h);}}}if(w.data.size()>MaxProjectBytes)return error(ErrorCode::BudgetExceeded,"project.record-limit");return w.data;
 }
 Result<DocumentSnapshot> decodeDelta(std::span<const std::uint8_t> bytes,const DocumentSnapshot& base){
  if(bytes.size()>MaxProjectBytes)return error(ErrorCode::BudgetExceeded,"project.record-limit");
- try{Reader r{bytes};if(r.text(32)!="DRAW-DELTA-1")throw binary::Invalid{};auto prevId=r.id();auto prevRev=r.u64();auto prevHash=r.hash();if(prevId!=base.documentId||prevRev!=base.revision)return error(ErrorCode::StaleRevision,"journal.base");if(!base.documentId.empty()){auto h=stateHash(base);if(!h)return h.error();if(h.value()!=prevHash)return error(ErrorCode::DigestMismatch,"journal.base-hash");}
+ try{Reader r{bytes};const auto format=r.text(32);if(format!="DRAW-DELTA-1"&&format!="DRAW-DELTA-8"&&format!="DRAW-DELTA-9"&&format!="DRAW-DELTA-10"&&format!="DRAW-DELTA-11"&&format!="DRAW-DELTA-12"&&format!="DRAW-DELTA-13" && format!="DRAW-DELTA-14" && format!="DRAW-DELTA-15" && format!="DRAW-DELTA-16" && format!="DRAW-DELTA-19"&&format!="DRAW-DELTA-20"&&format!="DRAW-DELTA-21"&&format!="DRAW-DELTA-22"&&format!="DRAW-DELTA-23"&&format!="DRAW-DELTA-24"&&format!="DRAW-DELTA-25"){if(format.starts_with("DRAW-DELTA-"))throw UnsupportedEngine{};throw binary::Invalid{};}auto prevId=r.id();auto prevRev=r.u64();auto prevHash=r.hash();if(prevId!=base.documentId||prevRev!=base.revision)return error(ErrorCode::StaleRevision,"journal.base");if(!base.documentId.empty()){auto h=stateHash(base);if(!h)return h.error();if(h.value()!=prevHash)return error(ErrorCode::DigestMismatch,"journal.base-hash");}
  DocumentSnapshot out;out.documentId=r.id();out.revision=r.u64();out.spec=spec(r);if(!base.documentId.empty()&&(out.documentId!=base.documentId||out.revision<=base.revision))throw binary::Invalid{};
  auto ns=std::make_shared<NodeMap>(*base.nodes);for(auto id:ids(r))ns->erase(id);auto count=r.count(65536);while(count--){auto n=node(r);(*ns)[n.id]=std::move(n);}out.nodes=ns;
- auto rs=std::make_shared<ResourceMap>(*base.resources);for(auto h:hashes(r))rs->erase(h);count=r.count();while(count--){auto a=resource(r);(*rs)[a.id]=std::move(a);}out.resources=rs;bool append=r.boolean();auto ev=append?std::make_shared<EventList>(*base.eventIndex):std::make_shared<EventList>();count=r.count(2000000);if(ev->size()+count>2000000)throw binary::Invalid{};while(count--)ev->push_back(event(r));out.eventIndex=ev;if(!r.done())throw binary::Invalid{};auto v=validateSnapshot(out);if(!v)return v.error();return out;
- }catch(const binary::Invalid&){return error(ErrorCode::CorruptData,"project.decode");}catch(const std::bad_alloc&){return error(ErrorCode::BudgetExceeded,"project.decode-allocation");}
+ auto rs=std::make_shared<ResourceMap>(*base.resources);for(auto h:hashes(r))rs->erase(h);count=r.count();while(count--){auto a=resource(r);(*rs)[a.id]=std::move(a);}out.resources=rs;bool append=r.boolean();auto ev=append?std::make_shared<EventList>(*base.eventIndex):std::make_shared<EventList>();count=r.count(2000000);if(ev->size()+count>2000000)throw binary::Invalid{};while(count--)ev->push_back(event(r));out.eventIndex=ev;if(format=="DRAW-DELTA-20"||format=="DRAW-DELTA-21"||format=="DRAW-DELTA-22"||format=="DRAW-DELTA-23"||format=="DRAW-DELTA-24"||format=="DRAW-DELTA-25"){auto n=r.count(256);while(n--){FillOperation o;o.id=r.id();const auto version=r.u64();if(version!=1)throw UnsupportedEngine{};o.recipeVersion=std::uint32_t(version);o.target=r.id();o.source=r.id();o.boundaryLayer=r.id();o.boundaryEvent=r.id();o.boundaryDigest=r.hash();o.sourceResource=r.hash();o.sourceDigest=r.hash();o.contextDigest=r.hash();auto m=r.count(4);while(m--){auto id=r.id();auto digest=r.hash();o.members.emplace_back(id,digest);}out.fillOperations.push_back(std::move(o));}}if(!r.done())throw binary::Invalid{};auto v=validateSnapshot(out);if(!v)return v.error();if(format!=requiredFormatHeader(out))return error(ErrorCode::UnsupportedFeature,"project.format-feature-mismatch");return out;
+ }catch(const UnsupportedEngine&){return error(ErrorCode::UnsupportedFeature,"project.engine-version");}catch(const binary::Invalid&){return error(ErrorCode::CorruptData,"project.decode");}catch(const std::bad_alloc&){return error(ErrorCode::BudgetExceeded,"project.decode-allocation");}
 }
 Result<Hash> stateHash(const DocumentSnapshot& s){auto canonical=s;canonical.revision=0;auto bytes=encodeDelta(DocumentSnapshot{},canonical);if(!bytes)return bytes.error();return sha256(bytes.value());}
 Result<Bytes> frameRecord(std::span<const std::uint8_t> payload){if(payload.size()>MaxProjectBytes)return error(ErrorCode::BudgetExceeded,"journal.record-size");Writer w;w.u64(payload.size());w.hash(sha256(payload));w.raw(payload);return w.data;}

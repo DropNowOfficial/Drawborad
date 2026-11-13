@@ -1,0 +1,28 @@
+{
+  "date": "2026-11-12",
+  "platform": "Debian 13 Linux amd64",
+  "baseline_remote": "6c75065c4665e6d9ab37e1aa8c7479aae1a6f7d3",
+  "source": "baseline plus retained local overlays and documented fixes",
+  "cmake": "3.31.6",
+  "ninja": "1.12.1",
+  "qt": "6.8.2",
+  "build": "passed",
+  "ctest": {
+    "passed": 85,
+    "failed": 0
+  },
+  "javascript_handler_files": {
+    "passed": 6,
+    "real_browser": false
+  },
+  "windows_desktop": "not run",
+  "art_quality": "not accepted",
+  "private_art_uploaded": false,
+  "cloud_pytest": {
+    "passed": 69,
+    "failed": 0,
+    "skipped": 0,
+    "subtests": 23,
+    "real_native_engine": true
+  }
+}

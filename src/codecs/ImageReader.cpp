@@ -73,7 +73,7 @@ Result<InputInfo> inspect(std::span<const std::uint8_t>b){
  auto pixels=checkedMultiply(i.originalSize.width,i.originalSize.height);if(!pixels)return pixels.error();auto est=checkedMultiply(pixels.value(),8);if(!est)return est.error();i.estimatedBytes=est.value();i.orientedSize=i.originalSize;return i;
 }
 }
-Result<InputInfo> preflightInput(const InputPath& p,const ResourceBudget& budget){NativeFileIO io;auto b=io.read(p,std::min<std::uint64_t>(budget.scratchBytes,64*1024*1024));if(!b)return b.error();auto i=inspect(b.value());if(!i)return i.error();if(i.value().estimatedBytes>budget.ramReclaimBytes)return error(ErrorCode::BudgetExceeded,"codec.preflight-budget");return i;}
+Result<InputInfo> preflightInput(const InputPath& p,const ResourceBudget& budget,std::uint64_t maxEncodedBytes){NativeFileIO io;auto b=io.read(p,std::min<std::uint64_t>(budget.scratchBytes,maxEncodedBytes));if(!b)return b.error();auto i=inspect(b.value());if(!i)return i.error();if(i.value().estimatedBytes>budget.ramReclaimBytes)return error(ErrorCode::BudgetExceeded,"codec.preflight-budget");return i;}
 Result<ImportedImage> decodeImage(const InputPath& p,const DecodeOptions& o,std::stop_token st){
  if(st.stop_requested())return error(ErrorCode::Cancelled,"codec.cancelled");
  NativeFileIO io;

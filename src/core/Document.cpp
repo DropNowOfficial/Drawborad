@@ -1,4 +1,15 @@
+#include "PersistentRasterPaint.h"
+#include "core/CubicInkEvent.h"
+#include "core/ContinuousEraserEvent.h"
+#include "core/ChiselInkEvent.h"
+#include "FillProvenance.h"
+#include "core/HiddenBoundary.h"
+#include "core/CroppedStrokeMask.h"
 #include "Commands.h"
+#include "MyPaintCroppedRaster.h"
+#include "BucketEvent.h"
+#include "FreehandEvent.h"
+#include "DryInkEvent.h"
 #include <algorithm>
 #include <cmath>
 #include <set>
@@ -40,6 +51,12 @@ Result<void> validateSnapshot(const DocumentSnapshot& s) {
         return error(ErrorCode::CorruptData, "document.spec");
     if (f.mode == ColorMode::CMYK && s.spec.colorSpec.profileId.empty())
         return error(ErrorCode::ProfileRequired, "color.cmyk-profile");
+    if(persistentRaster::present(s)){
+        if(f.mode!=ColorMode::RGB||f.depth!=Depth::U8||!f.alpha||!s.spec.colorSpec.profileId.empty())return error(ErrorCode::UnsupportedFeature,"paint-history.rgb8-unprofiled");
+        std::uint64_t bytes=0;for(const auto&[h,r]:*s.resources){(void)h;if(!r.bytes||r.bytes->size()>persistentRaster::MaxRetainedBytes-bytes)return error(ErrorCode::BudgetExceeded,"paint-history.resources");bytes+=r.bytes->size();}
+        auto h=persistentRaster::Prepared::prepare(s);if(!h)return h.error();
+    }
+    for(const auto& [hash,r]:*s.resources)if(cropMask::tagged(r)){auto mask=cropMask::parse(s,r);if(!mask)return mask.error();}
     std::set<NodeId> listed;
     for (auto& [id, n] : ns) {
         if (id.empty() || n.id != id || n.name.size() > 16384 || n.stage.size() > 256 ||
@@ -59,12 +76,14 @@ Result<void> validateSnapshot(const DocumentSnapshot& s) {
             return error(ErrorCode::InvalidInput, "node.object");
         if (n.sourceKind == SourceKind::Reconstructed && !n.sourceResource.empty())
             return error(ErrorCode::InvalidInput, "node.hidden-source");
+        if(n.stage!=hiddenBoundary::Stage){for(const auto hash:n.content)if(s.resources->contains(hash)&&hiddenBoundary::tagged(s.resources->at(hash)))return error(ErrorCode::UnsupportedFeature,"boundary.hidden-resource");if(s.resources->contains(n.sourceResource)&&hiddenBoundary::tagged(s.resources->at(n.sourceResource)))return error(ErrorCode::UnsupportedFeature,"boundary.hidden-resource");}
         for (auto h : n.content)
             if (!s.resources->contains(h))
                 return error(ErrorCode::CorruptData, "node.content-missing");
         if (!n.maskId.empty() && (!s.resources->contains(n.maskId) ||
                                   s.resources->at(n.maskId).kind != ResourceKind::Mask))
             return error(ErrorCode::CorruptData, "node.mask-missing");
+        if(!n.maskId.empty() && cropMask::tagged(s.resources->at(n.maskId)) && !croppedRaster::isStage(n.stage))return error(ErrorCode::UnsupportedFeature,"stroke-mask.target");
         if (!n.sourceResource.empty() && !s.resources->contains(n.sourceResource))
             return error(ErrorCode::CorruptData, "node.source-missing");
         for (auto c : n.children) {
@@ -86,10 +105,14 @@ Result<void> validateSnapshot(const DocumentSnapshot& s) {
     if (listed.size() + 1 != ns.size())
         return error(ErrorCode::CorruptData, "node.unreachable");
     std::map<Hash, int> colors;
+    std::uint64_t resourceBytes=0;bool hasLargeResource=false;
     for (auto& [id, r] : *s.resources) {
-        if (id.empty() || r.id != id || !r.bytes || r.bytes->size() > 64ull * 1024 * 1024 ||
+        if (id.empty() || r.id != id || !r.bytes || r.bytes->size() > MaxResourceBytes ||
             int(r.kind) < 0 || int(r.kind) > 4)
             return error(ErrorCode::CorruptData, "resource.invalid");
+        hasLargeResource=hasLargeResource || r.bytes->size()>LegacyMaxResourceBytes;
+        auto total=checkedAdd(resourceBytes,r.bytes->size());if(!total)return total.error();resourceBytes=total.value();
+        if(hasLargeResource && resourceBytes>MaxLargeDocumentResourceBytes)return error(ErrorCode::BudgetExceeded,"resource.large-document-budget");
         std::vector<std::pair<Hash, bool>> stack{{id, false}};
         while (!stack.empty()) {
             auto [h, exit] = stack.back();
@@ -113,10 +136,31 @@ Result<void> validateSnapshot(const DocumentSnapshot& s) {
     }
     std::set<Id> events;
     for (auto& e : *s.eventIndex) {
+        if((e.toolId=="cubic-path-open-aa"||e.toolId=="cubic-path-closed-aa")&&e.engineVersion!=24)return error(ErrorCode::UnsupportedFeature,"cubic-path.engine-tool");
+        if(e.toolId=="cubic-ink-aa" && e.engineVersion!=23)return error(ErrorCode::UnsupportedFeature,"cubic.engine-tool");
+        if(e.toolId=="chisel-ink-aa" && e.engineVersion!=21)return error(ErrorCode::UnsupportedFeature,"chisel-ink.engine-tool");
+        if(e.toolId=="smooth-ink-aa" && e.engineVersion!=19)return error(ErrorCode::UnsupportedFeature,"smooth-ink.engine-tool");
+        if(e.toolId=="dry-ink" && e.engineVersion!=12)return error(ErrorCode::UnsupportedFeature,"dry-ink.engine-tool");
+        if(e.toolId=="fineliner-aa" && e.engineVersion!=10)return error(ErrorCode::UnsupportedFeature,"freehand.engine-tool");
+        if (e.engineVersion!=1 && e.engineVersion!=2 && e.engineVersion!=8 && e.engineVersion!=10 && e.engineVersion!=12 && e.engineVersion!=19 && e.engineVersion!=21 && e.engineVersion!=22 && e.engineVersion!=23 && e.engineVersion!=24)
+            return error(ErrorCode::UnsupportedFeature,"event.engine-version");
+        if (isAuthoredCubic(e)) {auto valid=validateAuthoredCubic(e);if(!valid)return valid.error();for(const auto&p:e.geometry)if(p.x < -double(s.spec.pixelSize.width)||p.x>2.*double(s.spec.pixelSize.width)||p.y < -double(s.spec.pixelSize.height)||p.y>2.*double(s.spec.pixelSize.height))return error(ErrorCode::InvalidInput,"cubic.control-bounds");}
+        if (e.engineVersion==22) {auto valid=validateContinuousEraserEvent(e);if(!valid)return valid.error();}
+        if (e.engineVersion==21) {auto valid=validateChiselInkEvent(e);if(!valid)return valid.error();}
+        if (e.engineVersion==12) {auto valid=validateDryInkEvent(e);if(!valid)return valid.error();}
+        if (e.engineVersion==19) {auto valid=validateSmoothInkEvent(e);if(!valid)return valid.error();}
+        if (e.engineVersion==10) {auto valid=validateFreehandEvent(e);if(!valid)return valid.error();}
+        if (e.engineVersion==8) {
+            auto valid=validateBucketEvent(e); if (!valid) return valid.error();
+            for (std::size_t i=0;i<e.geometry.size();i+=2)
+                if (e.geometry[i+1].x>s.spec.pixelSize.width ||
+                    e.geometry[i].y>=s.spec.pixelSize.height)
+                    return error(ErrorCode::InvalidInput,"bucket.canvas");
+        }
         if (e.id.empty() || !events.insert(e.id).second || e.geometry.empty() ||
             e.geometry.size() > 1000000 || e.startUs > e.endUs || !validColor(e.color, f.mode) ||
             e.color.profileId != s.spec.colorSpec.profileId ||
-            (e.engineVersion != 1 && e.engineVersion != 2) || e.toolId.empty() ||
+            e.toolId.empty() ||
             e.toolId.size() > 256 || !std::isfinite(e.style.width) || e.style.width <= 0 ||
             e.style.width > 8192 || !std::isfinite(e.style.opacity) || e.style.opacity < 0 ||
             e.style.opacity > 1 || !std::isfinite(e.style.hardness) || e.style.hardness < 0 ||
@@ -135,7 +179,19 @@ Result<void> validateSnapshot(const DocumentSnapshot& s) {
             last = p.timestampUs;
         }
     }
-    return {};
+    std::size_t boundaryCount=0,boundaryPoints=0;
+    for(const auto&[id,node]:ns)if(node.stage==hiddenBoundary::Stage){auto v=hiddenBoundary::parse(s,node);if(!v)return v.error();boundaryPoints+=v.value().points.size();if(++boundaryCount>32||boundaryPoints>4096)return error(ErrorCode::BudgetExceeded,"boundary.document-limit");}
+    for(const auto&e:*s.eventIndex)if(ns.contains(e.layerId)&&ns.at(e.layerId).stage==hiddenBoundary::Stage)return error(ErrorCode::UnsupportedFeature,"boundary.paint-event");
+    bool hasCropped=false;
+    for(const auto& [id,node]:ns)if(croppedRaster::isStage(node.stage)){
+        hasCropped=true;auto parsed=croppedRaster::parse(s,id);if(!parsed)return parsed.error();
+    }
+    if(hasCropped && resourceBytes>MaxLargeDocumentResourceBytes)
+        return error(ErrorCode::BudgetExceeded,"crop.document-resources");
+    for(const auto& e:*s.eventIndex)if(ns.contains(e.layerId) && croppedRaster::isStage(ns.at(e.layerId).stage))
+        return error(ErrorCode::UnsupportedFeature,"crop.paint-events");
+    auto cubicBudget=validateCubicDocumentBudget(*s.eventIndex);if(!cubicBudget)return cubicBudget.error();
+    return fill_provenance::validate(s);
 }
 Result<Document> Document::create(const DocumentSpec& s, DocumentId id) {
     DocumentSnapshot snap;
@@ -193,12 +249,28 @@ Result<ChangeSet> Document::restore(std::vector<DocumentSnapshot>& from,
 }
 Result<ChangeSet> Document::undo() { return restore(undo_, redo_); }
 Result<ChangeSet> Document::redo() { return restore(redo_, undo_); }
+Result<void> Document::admitRasterHistoryMemory(std::uint64_t candidateBytes,std::uint64_t candidateEntries) const try {
+    if(undo_.size()+redo_.size()>=4096)return error(ErrorCode::BudgetExceeded,"paint-history.snapshot-limit");
+    if(candidateBytes>persistentRaster::MaxRetainedBytes)return error(ErrorCode::BudgetExceeded,"paint-history.candidate-peak");
+    std::uint64_t bytes=candidateBytes;std::set<const Bytes*> seen;std::set<const ResourceMap*> maps;std::set<const NodeMap*> nodeMaps;std::uint64_t entries=state_.resources->size()+state_.nodes->size()+candidateEntries;if(entries>262144)return error(ErrorCode::BudgetExceeded,"paint-history.map-entries");
+    auto scan=[&](const DocumentSnapshot&s)->bool{if(nodeMaps.insert(s.nodes.get()).second){if(s.nodes->size()>262144-entries)return false;entries+=s.nodes->size();}if(!maps.insert(s.resources.get()).second)return true;if(s.resources->size()>262144-entries)return false;entries+=s.resources->size();for(const auto&[h,r]:*s.resources){(void)h;if(!r.bytes)return false;if(seen.insert(r.bytes.get()).second){if(r.bytes->size()>persistentRaster::MaxRetainedBytes-bytes)return false;bytes+=r.bytes->size();}}return true;};
+    if(!scan(state_))return error(ErrorCode::BudgetExceeded,"paint-history.retained-memory");
+    for(const auto&s:undo_)if(!scan(s))return error(ErrorCode::BudgetExceeded,"paint-history.retained-memory");
+    for(const auto&s:redo_)if(!scan(s))return error(ErrorCode::BudgetExceeded,"paint-history.retained-memory");
+    return {};
+}catch(const std::bad_alloc&){return error(ErrorCode::BudgetExceeded,"paint-history.allocation");}
 Result<ChangeSet> Document::commitExternal(const DocumentSnapshot& next, Revision expected) {
     if (state_.revision != expected || expected == UINT64_MAX || next.revision != expected + 1 ||
         next.documentId != state_.documentId)
         return error(ErrorCode::StaleRevision, "worker.revision");
+    if (next.fillOperations != state_.fillOperations)
+        return error(ErrorCode::InvalidInput,"worker.fill-record-rewrite");
     if (next.spec != state_.spec)
         return error(ErrorCode::InvalidInput, "worker.cannot-change-document-spec");
+    // External workers cannot author, rewrite, remove, or strip this native history.
+    for(const auto&[id,n]:*state_.nodes)if(n.stage==persistentRaster::Stage){auto it=next.nodes->find(id);if(it==next.nodes->end()||it->second!=n)return error(ErrorCode::UnsupportedFeature,"worker.paint-history");}
+    for(const auto&[id,n]:*next.nodes)if(n.stage==persistentRaster::Stage){auto it=state_.nodes->find(id);if(it==state_.nodes->end()||it->second!=n)return error(ErrorCode::UnsupportedFeature,"worker.paint-history");}
+    if(persistentRaster::present(state_)||persistentRaster::present(next)){if(*state_.resources!=*next.resources)return error(ErrorCode::UnsupportedFeature,"worker.paint-history-resources");auto mem=admitRasterHistoryMemory(0);if(!mem)return mem.error();}
     auto valid = validateSnapshot(next);
     if (!valid)
         return valid.error();
@@ -207,6 +279,12 @@ Result<ChangeSet> Document::commitExternal(const DocumentSnapshot& next, Revisio
         return error(ErrorCode::InvalidInput, "worker.event-history-rewrite");
     for (std::size_t i = state_.eventIndex->size(); i < next.eventIndex->size(); ++i) {
         const auto& e = next.eventIndex->at(i);
+        // Worker snapshots have no trusted native eraser admission proof. Existing
+        // prefix events remain valid, but new erasure must use CommandBus.
+        if (e.engineVersion == 23 || e.engineVersion == 24)
+            return error(ErrorCode::UnsupportedFeature, "worker.cubic-not-supported");
+        if (e.engineVersion == 22)
+            return error(ErrorCode::UnsupportedFeature, "worker.continuous-eraser-not-supported");
         auto n = next.nodes->find(e.layerId);
         if (n == next.nodes->end() || n->second.kind != NodeKind::Layer ||
             n->second.objectId != e.objectId || e.parentRevision != expected)

@@ -1,4 +1,12 @@
+#include "core/CubicInkEvent.h"
+#include "ContinuousEraserCoverage.h"
+#include "ChiselInkCoverage.h"
 #include "CoverageRasterizer.h"
+#include "FineLineCoverage.h"
+#include "DryInkCoverage.h"
+#include "core/DryInkEvent.h"
+#include "core/BucketEvent.h"
+#include "core/FreehandEvent.h"
 #include <algorithm>
 #include <cmath>
 namespace drawborad {
@@ -20,28 +28,6 @@ constexpr std::array<std::array<std::int64_t, 2>, 8> Dir{{
     {32768,0},{23170,23170},{0,32768},{-23170,23170},
     {-32768,0},{-23170,-23170},{0,-32768},{23170,-23170}}};
 }
-Result<void> validateRasterEvent(const StrokeEvent& e) {
-    if (e.engineVersion != 1 && e.engineVersion != 2)
-        return error(ErrorCode::UnsupportedFeature, "render.engine-version");
-    if (e.toolId != "pencil" && e.toolId != "colored-pencil" && e.toolId != "fineliner" &&
-        e.toolId != "marker" && e.toolId != "highlight" && e.toolId != "guide" &&
-        e.toolId != "eraser")
-        return error(ErrorCode::UnsupportedFeature, "render.tool");
-    const auto& s = e.style;
-    if (!std::isfinite(s.width) || s.width <= 0 || s.width > 8192 ||
-        !std::isfinite(s.opacity) || s.opacity < 0 || s.opacity > 1 ||
-        !std::isfinite(s.hardness) || s.hardness < 0 || s.hardness > 1 || s.angle > 7 ||
-        (s.shape != NibShape::Round && s.shape != NibShape::Chisel) ||
-        (!s.grain.empty() && s.grain.size() != 64))
-        return error(ErrorCode::InvalidInput, "render.footprint");
-    if (e.geometry.empty() || e.geometry.size() > 1000000)
-        return error(ErrorCode::BudgetExceeded, "render.samples");
-    for (const auto& p : e.geometry)
-        if (!std::isfinite(p.x) || !std::isfinite(p.y) || std::abs(p.x) > 1e9 ||
-            std::abs(p.y) > 1e9 || !std::isfinite(p.pressure) || p.pressure < 0 || p.pressure > 1)
-            return error(ErrorCode::InvalidInput, "render.coordinate");
-    return {};
-}
 Result<Rect> strokeBounds(const StrokeEvent& e) {
     auto ok = validateRasterEvent(e); if (!ok) return ok.error();
     double x0=e.geometry[0].x,x1=x0,y0=e.geometry[0].y,y1=y0;
@@ -57,8 +43,29 @@ Result<std::vector<std::uint16_t>> strokeCoverage(const StrokeEvent& e, Rect rec
         return error(ErrorCode::BudgetExceeded, "render.coverage-region");
     auto pixels=checkedMultiply(rect.width,rect.height); if(!pixels) return pixels.error();
     if (stop.stop_requested()) return error(ErrorCode::Cancelled,"render.cancelled");
+    if(isAuthoredCubic(e)){
+        auto expanded=prepareAuthoredCubic(e,stop);if(!expanded)return expanded.error();
+        try{auto surrogate=e;surrogate.engineVersion=19;surrogate.toolId="smooth-ink-aa";surrogate.geometry=std::move(expanded.value().samples);return fineLineCoverage(surrogate,rect,time,stop);}catch(const std::bad_alloc&){return error(ErrorCode::BudgetExceeded,"cubic.coverage-allocation");}
+    }
+    if(e.engineVersion==22)return continuousEraserCoverage(e,rect,time,stop);
+    if(e.engineVersion==21)return chiselInkCoverage(e,rect,time,stop);
+    if(e.engineVersion==10 || e.engineVersion==19)return fineLineCoverage(e,rect,time,stop);
+    if(e.engineVersion==12)return dryInkCoverage(e,rect,time,stop);
     std::vector<std::uint16_t> cov(std::size_t(pixels.value()),0);
     if (time < e.startUs) return cov;
+    if (e.engineVersion==8) {
+        for (std::size_t i=0;i<e.geometry.size();i+=2) {
+            if (stop.stop_requested()) return error(ErrorCode::Cancelled,"render.cancelled");
+            const auto y=std::int64_t(e.geometry[i].y);
+            if (y<rect.y || y>=rect.y+std::int64_t(rect.height)) continue;
+            const auto x0=std::max(rect.x,std::int64_t(e.geometry[i].x));
+            const auto x1=std::min(rect.x+std::int64_t(rect.width),
+                                 std::int64_t(e.geometry[i+1].x));
+            if (x0<x1) std::fill_n(cov.begin()+std::size_t(y-rect.y)*rect.width+
+                                  std::size_t(x0-rect.x),std::size_t(x1-x0),65535);
+        }
+        return cov;
+    }
     const auto radius=std::max<std::int64_t>(1,fixed(e.style.width*.5));
     const auto hard=std::int64_t(std::llround(e.style.hardness*65535));
     const auto dir=Dir[e.style.angle];

@@ -3,6 +3,7 @@
 #include "codecs/HeicAdapter.h"
 #include "codecs/RasterWriters.h"
 #include "codecs/RasterReaders.h"
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 using namespace drawborad;
@@ -176,17 +177,19 @@ TEST("C03 JPEG import preserves embedded ICC bytes and reports GPS metadata") {
 
     Bytes icc(128,0);
     icc[36]='a';icc[37]='c';icc[38]='s';icc[39]='p';
-    Bytes app2{0xff,0xe2};
+    // Construct the known-size APP2 fixture without repeated vector growth.
+    // GCC 13 -O3 diagnoses the insert/push_back sequence as stringop-overflow.
+    Bytes app2(18+icc.size(),0);
+    app2[0]=0xff;app2[1]=0xe2;
     const std::uint16_t app2Length=std::uint16_t(16+icc.size());
-    app2.push_back(std::uint8_t(app2Length>>8));
-    app2.push_back(std::uint8_t(app2Length));
+    app2[2]=std::uint8_t(app2Length>>8);
+    app2[3]=std::uint8_t(app2Length);
     constexpr std::array<std::uint8_t,12> signature{
         'I','C','C','_','P','R','O','F','I','L','E',0
     };
-    app2.insert(app2.end(),signature.begin(),signature.end());
-    app2.push_back(1);
-    app2.push_back(1);
-    app2.insert(app2.end(),icc.begin(),icc.end());
+    std::copy(signature.begin(),signature.end(),app2.begin()+4);
+    app2[16]=1;app2[17]=1;
+    std::copy(icc.begin(),icc.end(),app2.begin()+18);
 
     Bytes exif{'E','x','i','f',0,0,'I','I',42,0,8,0,0,0,1,0};
     exif.insert(exif.end(),{0x25,0x88,4,0,1,0,0,0,26,0,0,0,0,0,0,0});

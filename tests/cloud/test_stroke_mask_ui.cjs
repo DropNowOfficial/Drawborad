@@ -1,0 +1,15 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
+const html=fs.readFileSync('cloud/static/index.html','utf8'),els=new Map(),calls=[],errors=[],pending=[];
+const by=id=>{if(!els.has(id))els.set(id,{value:'',disabled:false});return els.get(id)};
+const c=vm.createContext({by,nativePost:async(p,b)=>{calls.push(JSON.parse(JSON.stringify(b)));return{}},nativeShow:async()=>{},nativeRun:f=>{pending.push(f().catch(e=>errors.push(e.message)))}});
+vm.runInContext("let nativePreviewKey='p:7:0',nativeBusy=false,nativeSelectedNodeId='ink',nativeState={id:'p',revision:'7',document_id:'doc-a',stroke_count:0,width:'128',height:'64',nodes:[{id:'ink',mask_supported:true,stroke_mask:null}],capabilities:['cropped_stroke_mask']};",c);
+vm.runInContext(html.match(/\/\/ MASK_HELPERS_BEGIN([\s\S]*?)\/\/ MASK_HELPERS_END/)[1],c);vm.runInContext(html.match(/\/\/ MASK_INPUT_BEGIN([\s\S]*?)\/\/ MASK_INPUT_END/)[1],c);
+(async()=>{c.nativeMaskControls();assert.equal(by('nativeMaskApply').disabled,false);assert.equal(by('nativeMaskToggle').disabled,true);
+for(const [id,v]of [['nativeMaskX','2'],['nativeMaskY','3'],['nativeMaskWidth','20'],['nativeMaskHeight','10']])by(id).value=v;
+by('nativeMaskApply').onclick();await Promise.all(pending);assert.deepEqual(calls[0],{type:'set_stroke_mask',layer_id:'ink',expected_revision:'7',expected_document_id:'doc-a',rect:{x:2,y:3,width:20,height:10}});
+vm.runInContext("nativeState.nodes[0].stroke_mask={enabled:true,rect:{x:2,y:3,width:20,height:10}}",c);c.nativeMaskControls();assert.equal(by('nativeMaskToggle').textContent,'Restore original stroke');by('nativeMaskToggle').onclick();await Promise.all(pending);assert.equal(calls[1].enabled,false);
+by('nativeMaskX').value='';by('nativeMaskApply').onclick();await Promise.all(pending);assert.equal(calls.length,2);assert.ok(errors.includes('Enter all rectangle coordinates'));by('nativeMaskX').value='2';
+vm.runInContext('nativePreviewKey=null',c);c.nativeMaskControls();assert.equal(by('nativeMaskApply').disabled,true);by('nativeMaskApply').onclick();await Promise.all(pending);assert.equal(calls.length,2);vm.runInContext("nativePreviewKey='p:7:0'",c);
+vm.runInContext('nativeState.capabilities=[]',c);c.nativeMaskControls();assert.equal(by('nativeMaskApply').disabled,true);by('nativeMaskApply').onclick();await Promise.all(pending);assert.equal(calls.length,2);assert.ok(errors.length);
+vm.runInContext("nativeState.capabilities=['cropped_stroke_mask'];nativeBusy=true",c);c.nativeMaskControls();assert.equal(by('nativeMaskApply').disabled,true);
+console.log('PASS actual mask UI handler payload, toggle, unsupported capability and busy state');})();

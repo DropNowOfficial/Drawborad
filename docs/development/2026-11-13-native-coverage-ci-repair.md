@@ -1,0 +1,11 @@
+# Repair isolated native coverage link lists
+
+Full Linux workflow for d3f737 failed in both Ubuntu and Debian at the automatic-stage experiment, despite the main CMake/native tests passing. Its hand-written source list omitted ChiselInkCoverage.cpp. A second script contains two separately linked targets (libflowfeedback and native-flow); both also needed the new coverage implementation. Main CMake success was not complete workflow success.
+
+Repair adds the same existing implementation to all three targets without changing replay, rendering algorithms or artwork. Build.NativeCoverageLists is now part of CTest so future coverage-dispatch additions cannot silently bypass the local main suite. The test reads direct coverage includes, checks the automatic-stage compiler list, and independently checks flow's shared-library command and literal modules array. Unexpected script layout is rejected. This is deliberately a constrained source-list check, not a shell interpreter or a replacement for real compilation.
+
+The regression was observed red on both original scripts. Review caught that a whole-script occurrence check falsely let the first flow target hide the second target's missing source; the final check is per target and has a specific negative regression for that case. The second target's linker failure was also reproduced locally before its module list was repaired. Current standalone checks pass3/3; real target builds and suites are the publication gate.
+
+Pending descendants (controlled eraser and nominal mouse guide) must be reparented after this repair. In particular the eraser's new ContinuousEraserCoverage.cpp must be added to all three lists, not simply replaying its old commit. No private image or generated artwork is part of this repair.
+
+Verified repair checkpoint: all3 isolated targets built successfully; automatic-stage suite15/15 passed3.198s, flow suite15/15 passed1.890s. Fresh full Release CTest109/109 passed34.00s including actual Qt20.66s and the new per-target list check. Independent review found no remaining issue in the current script-layout check. This local result is not a claim that the new remote workflow has already passed; publication must start fresh remote CI and wait for its complete result.

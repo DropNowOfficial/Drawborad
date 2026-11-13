@@ -4,6 +4,9 @@
 #include <memory>
 #include <optional>
 namespace drawborad {
+inline constexpr std::uint64_t LegacyMaxResourceBytes=64ull*1024*1024;
+inline constexpr std::uint64_t MaxResourceBytes=128ull*1024*1024;
+inline constexpr std::uint64_t MaxLargeDocumentResourceBytes=256ull*1024*1024;
 enum class NodeKind { Root, Object, Group, Layer };
 enum class SourceKind { ImportedRaster, ReferenceOnly, Reconstructed };
 enum class BlendMode { Normal, Multiply, Screen, Darken, Lighten };
@@ -63,6 +66,14 @@ struct StrokeEvent {
     StrokeStyle style;
     bool operator==(const StrokeEvent&) const = default;
 };
+// Recorded only for newly created closed-ink operations; legacy events stay unrecorded.
+struct FillOperation {
+    Id id; std::uint32_t recipeVersion=1;
+    NodeId target,source,boundaryLayer; Id boundaryEvent;
+    Hash boundaryDigest,sourceResource,sourceDigest,contextDigest;
+    std::vector<std::pair<Id,Hash>> members;
+    bool operator==(const FillOperation&) const = default;
+};
 using NodeMap = std::map<NodeId, LayerNode>;
 using ResourceMap = std::map<Hash, Resource>;
 using EventList = std::vector<StrokeEvent>;
@@ -73,9 +84,10 @@ struct DocumentSnapshot {
     std::shared_ptr<const NodeMap> nodes = std::make_shared<const NodeMap>();
     std::shared_ptr<const ResourceMap> resources = std::make_shared<const ResourceMap>();
     std::shared_ptr<const EventList> eventIndex = std::make_shared<const EventList>();
+    std::vector<FillOperation> fillOperations;
     bool sameContent(const DocumentSnapshot& b) const {
         return documentId == b.documentId && spec == b.spec && *nodes == *b.nodes &&
-               *resources == *b.resources && *eventIndex == *b.eventIndex;
+               *resources == *b.resources && *eventIndex == *b.eventIndex && fillOperations == b.fillOperations;
     }
 };
 struct ChangeSet {
@@ -91,6 +103,7 @@ class Document {
     Result<ChangeSet> commitExternal(const DocumentSnapshot&, Revision);
     DocumentSnapshot state_;
     std::vector<DocumentSnapshot> undo_, redo_;
+    Result<void> admitRasterHistoryMemory(std::uint64_t candidateBytes,std::uint64_t candidateEntries=0) const;
     explicit Document(DocumentSnapshot s) : state_(std::move(s)) {}
     Result<ChangeSet> restore(std::vector<DocumentSnapshot>&, std::vector<DocumentSnapshot>&);
 

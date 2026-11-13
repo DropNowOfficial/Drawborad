@@ -1,6 +1,10 @@
 #pragma once
 #include "Document.h"
+#include "PersistentRasterPaint.h"
+#include <array>
 namespace drawborad {
+struct AppendRasterPatch {NodeId id;Hash expectedManifest;persistentRaster::Record record;};
+struct StepRasterHistory {NodeId id;Hash expectedManifest;int delta;};
 struct AddNode {
     LayerNode node;
     std::size_t index = SIZE_MAX;
@@ -42,6 +46,16 @@ struct RecolorStroke {
     Id id;
     ColorValue color;
 };
+// Only positions/pressure of an eligible smooth-ink event may change.
+struct AdjustStrokeSamples {
+    Id id;
+    std::vector<InputSample> geometry;
+};
+struct AdjustCubicPathControl { Id id; std::size_t index; double x,y; };
+struct AdjustCubicControls { Id id; std::array<std::array<double,2>,4> controls; };
+struct CloseStrokeGap { Id eventId; };
+struct WithdrawClosedInkFill { Id operationId; };
+struct RecordClosedInkFill { FillOperation operation; };
 struct Paint {
     StrokeEvent event;
     Rect dirty;
@@ -61,8 +75,8 @@ struct ConvertColor {
     std::optional<ColorValue> paperColor = {};
 };
 using Operation =
-    std::variant<AddNode, RemoveNode, RenameNode, MoveNode, DuplicateNode, SetProperties, SetMask,
-                 InstallResource, SetDependencies, Paint, RecolorStroke, MergeNodes, SplitNode, ConvertColor>;
+    std::variant<AppendRasterPatch, StepRasterHistory, AddNode, RemoveNode, RenameNode, MoveNode, DuplicateNode, SetProperties, SetMask,
+                 InstallResource, SetDependencies, Paint, RecordClosedInkFill, WithdrawClosedInkFill, CloseStrokeGap, RecolorStroke, AdjustStrokeSamples, AdjustCubicControls, AdjustCubicPathControl, MergeNodes, SplitNode, ConvertColor>;
 struct Command {
     std::uint32_t version = 1;
     std::vector<Operation> operations;

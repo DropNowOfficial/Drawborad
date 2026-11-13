@@ -2,17 +2,20 @@
 from contextlib import contextmanager, asynccontextmanager
 import fcntl
 import json
+import re
 import os
 from pathlib import Path
 import selectors
 import shutil
 import subprocess
 import tempfile
-from threading import Lock
+from threading import Lock, Event
+from . import mypaint_worker
 import time
 from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import Response, FileResponse
+from starlette.background import BackgroundTask
 
 
 def fail(status, code, message):
@@ -25,6 +28,7 @@ class Projects:
         self.engine=engine
         self.lock=Lock(); self.proc=None; self.active=None; self.sequence=0
         self.lease=None; self.log=None
+        self.mypaint_gate=Lock();self.mypaint_cancel=None
 
     @contextmanager
     def transaction(self):
@@ -92,7 +96,7 @@ class Projects:
             if response.get('request_id')!=request_id:raise ValueError('IPC response mismatch')
         except (OSError,ValueError,EOFError,TimeoutError):
             self.stop()
-            fail(503,'engine_unavailable','Engine disconnected or timed out. Unsaved state is lost; reopen last saved project.')
+            fail(503,'engine_unavailable','Engine disconnected or timed out. Uncheckpointed state may be lost; download the last recovery copy or reopen the saved project.')
         if 'error' in response:
             error=response['error'];code=error['code']
             status={'stale_revision':409,'locked':423,'io_error':500,'engine_error':503}.get(code,422)
@@ -106,8 +110,111 @@ class Projects:
         except ValueError:fail(404,'not_found','Project not found')
         return self.root/pid/'project.draw'
 
+    def recovery_records(self,pid):
+        folder=self.project_path(pid).parent
+        receipt=folder/'recovery.json'
+        if not receipt.is_file():return []
+        try:
+            data=json.loads(receipt.read_text())
+            if not isinstance(data,list) or len(data)>2:raise ValueError()
+            for item in data:
+                if not isinstance(item,dict) or set(item)!={'file','revision','document_id','saved_at'} or not re.fullmatch(r'recovery-[0-9a-f-]{36}\.draw',item['file']):raise ValueError()
+            return data
+        except (ValueError,TypeError,KeyError):fail(500,'recovery_invalid','Recovery metadata invalid; existing files were not removed')
+
+    def checkpoint(self,pid,body):
+        # Never select/restart: doing so could label an older on-disk project as current.
+        if set(body)!={'expected_revision','expected_document_id'}:fail(422,'invalid_input','Checkpoint requires exact document and revision')
+        if self.active!=pid or not self.proc or self.proc.poll() is not None:fail(409,'not_live','No live editing session; download the last recovery copy instead')
+        current=self.rpc('state')
+        if body['expected_revision']!=current['revision'] or body['expected_document_id']!=current['document_id']:fail(409,'stale_revision','Checkpoint identity changed')
+        if 'recovery_checkpoint' not in current.get('capabilities',[]):fail(422,'unsupported','Native checkpoint unavailable')
+        old=self.recovery_records(pid)
+        if old and (self.project_path(pid).parent/old[0]['file']).is_file() and old[0]['revision']==current['revision'] and old[0]['document_id']==current['document_id']:return {k:v for k,v in old[0].items() if k!='file'}
+        folder=self.project_path(pid).parent;name='recovery-'+str(uuid4())+'.draw'
+        result=self.rpc('recovery_checkpoint',path=str(folder/name),**body)
+        item=dict(file=name,revision=result['revision'],document_id=result['document_id'],saved_at=time.time())
+        kept=[item]+[record for record in old if (folder/record['file']).is_file()][:1]
+        # Publish only after native fsync-backed snapshot success. Older success stays until then.
+        temp=folder/('recovery-'+str(uuid4())+'.json.tmp')
+        with temp.open('x') as f:
+            json.dump(kept,f);f.flush();os.fsync(f.fileno())
+        os.replace(temp,folder/'recovery.json')
+        fd=os.open(folder,os.O_RDONLY)
+        try:os.fsync(fd)
+        finally:os.close(fd)
+        # Rotation is limited to older dedicated recovery copies, never project.draw.
+        for retired in [record for record in old if record['file'] not in {keep['file'] for keep in kept}]:
+            try:(folder/retired['file']).unlink()
+            except OSError:pass # A leftover backup is safer than losing the new receipt.
+        return {k:v for k,v in item.items() if k!='file'}
+
     def state(self, value):
-        return dict(value,id=self.active)
+        value=dict(value,id=self.active)
+        caps=list(value.get('capabilities',[]))
+        ok,reason=(mypaint_worker.available_crop if 'append_brush_crop' in caps else mypaint_worker.available)(value.get('width'),value.get('height'))
+        if 'append_brush_layer' not in caps and 'append_brush_crop' not in caps:ok=False;reason='Native MyPaint layer support is not available in this engine build.'
+        if ok:caps.append('mypaint_ink')
+        presets=['pointy_ink'] if ok else []
+        if ok and 'append_brush_crop' in caps:
+            try:mypaint_worker.selected_pins('dry_brush');presets.append('dry_brush')
+            except (ValueError,OSError):pass
+        value['mypaint_presets']=presets
+        value['mypaint_radius_scale_range']=[.25,8] if ok and 'append_brush_crop' in caps else [1,1]
+        value['mypaint_paint_modes']=(['multiply','normal'] if ok and 'append_brush_crop' in caps and 'append_brush_normal' in caps else ['multiply'] if ok else [])
+        value['capabilities']=caps;value['mypaint_status']=reason
+        return value
+
+    def mypaint_stroke(self,body,state):
+        if 'mypaint_ink' not in state.get('capabilities',[]):fail(422,'unsupported',state.get('mypaint_status','MyPaint unavailable'))
+        if body.get('expected_revision')!=state.get('revision'):fail(409,'stale_revision','Stale MyPaint revision')
+        preset=body.get('preset','pointy_ink')
+        if preset not in state.get('mypaint_presets',['pointy_ink']):fail(422,'unsupported','Selected MyPaint preset unavailable; nothing added')
+        try:scale=mypaint_worker.radius_scale(body.get('radius_scale',1))
+        except ValueError as e:fail(422,'invalid_input',str(e))
+        if scale!=1 and 'append_brush_crop' not in state.get('capabilities',[]):fail(422,'unsupported','Scaled MyPaint requires cropped native support')
+        paint_mode=body.get('paint_mode','multiply')
+        if paint_mode not in state.get('mypaint_paint_modes',['multiply']):fail(422,'unsupported','Selected MyPaint paint_mode unavailable; nothing added')
+        if paint_mode=='normal' and not {'append_brush_crop','append_brush_normal'}.issubset(state.get('capabilities',[])):fail(422,'unsupported','Normal paint requires native support; nothing added')
+        folder_id=body.get('folder_id')
+        if 'folder_id' in body:
+            if 'mypaint_folder' not in state.get('capabilities',[]) or not isinstance(folder_id,str) or not any(n['id']==folder_id and n.get('mypaint_folder_eligible') for n in state.get('nodes',[])):fail(422,'invalid_input','Choose a visible unlocked topmost neutral MyPaint folder')
+        worker_body={k:v for k,v in body.items() if k!='folder_id'}
+        document_id=state.get('document_id');project_id=self.active
+        if not isinstance(document_id,str) or not document_id:fail(422,'unsupported','Native document identity unavailable')
+        cancel=Event()
+        with self.mypaint_gate:self.mypaint_cancel=cancel
+        try:
+            with tempfile.TemporaryDirectory(dir=self.root) as folder:
+                try:png,manifest=mypaint_worker.render(worker_body,state,folder,cancel)
+                except ValueError as e:fail(422,'invalid_input',str(e))
+                except (RuntimeError,OSError) as e:fail(422,'mypaint_failed',str(e))
+                with self.mypaint_gate:
+                    if cancel.is_set():fail(409,'cancelled','MyPaint cancelled; nothing added')
+                    self.mypaint_cancel=None # Commit starts; cancellation no longer reports success.
+                current=self.rpc('state')
+                if self.active!=project_id or current.get('document_id')!=document_id or current.get('revision')!=body['expected_revision']:fail(409,'stale_revision','Document changed while MyPaint rendered; nothing added')
+                if paint_mode=='normal' and not {'append_brush_crop','append_brush_normal'}.issubset(current.get('capabilities',[])):fail(422,'unsupported','Normal paint support changed; nothing added')
+                params=dict(path=str(png),manifest_path=str(manifest),expected_revision=body['expected_revision'],expected_document_id=document_id)
+                if paint_mode=='normal':params['paint_mode']='normal'
+                if folder_id is not None:params['folder_id']=folder_id
+                method='append_brush_layer'
+                if 'append_brush_crop' in state.get('capabilities',[]):
+                    crop=json.loads(manifest.read_text());params.update(origin_x=str(crop['origin'][0]),origin_y=str(crop['origin'][1]));method='append_brush_crop'
+                return self.state(self.rpc(method,**params))
+        finally:
+            with self.mypaint_gate:
+                if self.mypaint_cancel is cancel:self.mypaint_cancel=None
+
+    def save_copy(self, expected_revision):
+        pid=str(uuid4())
+        path=self.project_path(pid)
+        path.parent.mkdir()
+        # Keep a possibly written copy on an uncertain IPC failure. Never delete
+        # an artifact just because the response was lost.
+        result=self.rpc('save_copy',path=str(path),expected_revision=expected_revision)
+        self.active=pid
+        return self.state(result)
 
     def prepare_switch(self):
         self.start()
@@ -139,13 +246,17 @@ class Projects:
 
     def render(self,pid,format,event_limit=None):
         self.select(pid)
-        with tempfile.TemporaryDirectory(dir=self.root) as tmp:
-            path=Path(tmp)/('preview.'+format)
+        tmp=tempfile.TemporaryDirectory(dir=self.root)
+        try:
+            path=Path(tmp.name)/('preview.'+format)
             params=dict(path=str(path),format=format)
             if event_limit is not None:params['event_limit']=event_limit
             result=self.rpc('export',**params)
-            return Response(path.read_bytes(),media_type='image/png' if format=='png' else 'image/openraster',
-                            headers={'Cache-Control':'no-store','X-Drawborad-Revision':result['revision'],'X-Drawborad-Source-Asset-Reads':result['source_asset_reads']})
+            return FileResponse(path,media_type='image/png' if format=='png' else 'image/openraster',background=BackgroundTask(tmp.cleanup),
+                            headers={'Cache-Control':'no-store','X-Drawborad-Revision':result['revision'],'X-Drawborad-Source-Asset-Reads':result['source_asset_reads'],
+                                     'X-Drawborad-Export-Warnings':json.dumps(result.get('warnings',[]),ensure_ascii=True)})
+        except BaseException:
+            tmp.cleanup();raise
 
 
 def install_projects(app,config,authorized):
@@ -171,11 +282,32 @@ def install_projects(app,config,authorized):
     @router.post('/import',status_code=201)
     def import_project(project:UploadFile=File(...)):
         with projects.transaction():
-            data=project.file.read(64*1024*1024+1)
-            if not data or len(data)>64*1024*1024:fail(413,'invalid_input','Choose a .draw file up to 64 MiB')
             with tempfile.NamedTemporaryFile(dir=projects.root) as tmp:
-                tmp.write(data);tmp.flush()
+                total=0
+                while chunk:=project.file.read(1024*1024):
+                    total+=len(chunk)
+                    if total>256*1024*1024:fail(413,'invalid_input','Choose a .draw file up to 256 MiB')
+                    tmp.write(chunk)
+                if not total:fail(413,'invalid_input','Choose a nonempty .draw file')
+                tmp.flush()
                 return projects.import_file(tmp.name)
+
+    @router.post('/import-lineart',status_code=201)
+    def import_lineart(lineart:UploadFile=File(...)):
+        with projects.transaction():
+            params=projects.prepare_switch()
+            with tempfile.NamedTemporaryFile(dir=projects.root,suffix='.png') as tmp:
+                total=0
+                while chunk:=lineart.file.read(1024*1024):
+                    if total==0 and not chunk.startswith(b'\x89PNG\r\n\x1a\n'):fail(422,'invalid_input','PNG lineart required')
+                    total+=len(chunk)
+                    if total>128*1024*1024:fail(413,'invalid_input','Choose a PNG lineart file up to 128 MiB')
+                    tmp.write(chunk)
+                if not total:fail(413,'invalid_input','Choose a nonempty PNG lineart file')
+                tmp.flush()
+                state=projects.rpc('import_lineart',path=tmp.name,**params)
+            projects.active=str(uuid4());projects.project_path(projects.active).parent.mkdir()
+            return projects.state(state)
 
     @router.get('/{pid}')
     def state(pid:str):
@@ -184,10 +316,106 @@ def install_projects(app,config,authorized):
     @router.post('/{pid}/commands')
     def command(pid:str,body:dict):
         with projects.transaction():
-            projects.select(pid)
-            allowed={'expected_revision','type','stroke_id','color','node_id','visible','locked'}
+            current=projects.select(pid)
+            if body.get('type')=='draw_stroke' and body.get('brush')=='mypaint_ink':
+                return projects.mypaint_stroke(body,current)
+            if body.get('type') in {'add_hidden_boundary','toggle_hidden_boundary','hidden_boundary_fill'}:
+                kind=body['type']
+                extras={'add_hidden_boundary':{'lineart_id','points','radius'},'toggle_hidden_boundary':{'boundary_id','enabled'},'hidden_boundary_fill':{'lineart_id','layer_id','x','y','source_luminance_threshold','color'}}
+                if set(body)!=({'type','expected_revision','expected_document_id'}|extras[kind]):fail(422,'invalid_input','Missing or unknown hidden boundary fields')
+                if 'hidden_fill_boundary' not in current.get('capabilities',[]):fail(422,'unsupported','Native hidden boundary support unavailable')
+                if body['expected_document_id']!=current.get('document_id') or body['expected_revision']!=current.get('revision'):fail(409,'stale_document','Painting identity or revision changed')
+                width,height=int(current['width']),int(current['height'])
+                if kind!='toggle_hidden_boundary':
+                    if not any(n.get('id')==body['lineart_id'] and n.get('stage')=='drawborad.lineart.rgba.v1' for n in current.get('nodes',[])):fail(422,'invalid_input','Choose original imported lineart')
+                if kind=='add_hidden_boundary':
+                    import math
+                    points,radius=body['points'],body['radius']
+                    if type(radius) not in (int,float) or not math.isfinite(radius) or not .5<=radius<=4:fail(422,'invalid_input','Helper radius must be 0.5 to 4 pixels')
+                    if not isinstance(points,list) or not 2<=len(points)<=256:fail(422,'invalid_input','Helper requires 2 to 256 points')
+                    for point in points:
+                        if not isinstance(point,dict) or set(point)!={'x','y'} or any(type(v) not in (int,float) or not math.isfinite(v) for v in point.values()) or not 0<=point['x']<width or not 0<=point['y']<height:fail(422,'invalid_input','Helper coordinates must be inside canvas')
+                    boundaries=current.get('hidden_boundaries',[])
+                    if len(boundaries)>=32 or sum(len(b.get('points',[])) for b in boundaries)+len(points)>4096:fail(422,'invalid_input','Hidden boundary budget exceeded')
+                elif kind=='toggle_hidden_boundary':
+                    if type(body['enabled'])!=bool or not any(b.get('id')==body['boundary_id'] for b in current.get('hidden_boundaries',[])):fail(422,'invalid_input','Choose an existing boundary and boolean enabled')
+                else:
+                    if any(type(body[k])!=int for k in ('x','y','source_luminance_threshold')) or not 0<=body['x']<width or not 0<=body['y']<height or not 0<=body['source_luminance_threshold']<=255:fail(422,'invalid_input','Invalid fill seed or source luminance threshold')
+                    if not isinstance(body['color'],str) or not re.fullmatch(r'#[0-9a-fA-F]{6}',body['color']):fail(422,'invalid_input','Invalid fill color')
+                return projects.state(projects.rpc(kind,**{k:v for k,v in body.items() if k!='type'}))
+            if body.get('type') in {'set_stroke_mask','toggle_stroke_mask'}:
+                kind=body['type']
+                allowed={'type','layer_id','expected_revision','expected_document_id'}|({'rect'} if kind=='set_stroke_mask' else {'enabled'})
+                if set(body)!=allowed:fail(422,'invalid_input','Missing or unknown single-stroke mask fields')
+                if 'cropped_stroke_mask' not in current.get('capabilities',[]):fail(422,'unsupported','Native single-stroke masks unavailable; nothing changed')
+                node=next((n for n in current.get('nodes',[]) if n.get('id')==body.get('layer_id')),None)
+                if not node or node.get('mask_supported') is not True:fail(422,'unsupported','Select a supported cropped MyPaint stroke, not a group')
+                if body.get('expected_document_id')!=current.get('document_id'):fail(409,'stale_document','Painting identity changed; refresh before editing mask')
+                if body.get('expected_revision')!=current.get('revision'):fail(409,'stale_revision','Painting changed; refresh before editing mask')
+                if kind=='set_stroke_mask':
+                    rect=body['rect']
+                    if not isinstance(rect,dict) or set(rect)!={'x','y','width','height'} or any(type(v)!=int for v in rect.values()):fail(422,'invalid_input','Mask rectangle requires integer canvas coordinates')
+                    x,y,w,h=(rect[k] for k in ('x','y','width','height'))
+                    if x<0 or y<0 or w<=0 or h<=0 or x+w>int(current['width']) or y+h>int(current['height']):fail(422,'invalid_input','Mask rectangle must lie inside the canvas')
+                elif type(body['enabled'])!=bool or not node.get('stroke_mask'):fail(422,'invalid_input','Toggle requires an existing mask and boolean enabled')
+                params={k:v for k,v in body.items() if k!='type'}
+                return projects.state(projects.rpc(kind,**params))
+            fields={'add_mypaint_folder':set(),'reorder_layer':{'layer_id','direction'},'duplicate_paint_layer':{'layer_id'},'recolor_layer':{'layer_id','color'},'recolor_stroke':{'stroke_id','color'},
+                    'set_properties':{'node_id','visible','locked'},
+                    'add_fill_layer':set(),
+                    'bucket_fill':{'layer_id','x','y','tolerance','color','under_ink'},
+                    'draw_stroke':{'layer_id','points','width','color','brush','pressure_taper'},
+                    'update_layer':{'node_id','name','opacity'}}
+            kind=body.get('type')
+            if not isinstance(kind,str) or kind not in fields:fail(422,'invalid_input','Unknown command type')
+            allowed={'expected_revision','type'}|fields[kind]
             if set(body)-allowed:fail(422,'invalid_input','Unknown command fields')
             return projects.state(projects.rpc('command',**body))
+
+    @router.get('/recovery/projects/list')
+    def recovery_projects():
+        with projects.transaction():
+            rows=[]
+            folders=sorted((p for p in projects.root.iterdir() if p.is_dir()),key=lambda p:p.stat().st_mtime,reverse=True)[:1000]
+            for folder in folders:
+                try:records=projects.recovery_records(folder.name)
+                except HTTPException:continue
+                if records:rows.append({'id':folder.name,'checkpoints':[dict({k:v for k,v in item.items() if k!='file'},available=(folder/item['file']).is_file()) for item in records]})
+                if len(rows)>=200:break
+            return {'projects':rows,'limit':200}
+
+    @router.post('/{pid}/checkpoint')
+    def checkpoint(pid:str,body:dict):
+        projects.project_path(pid)
+        with projects.transaction():return projects.checkpoint(pid,body)
+
+    @router.get('/{pid}/recovery')
+    def recovery_info(pid:str):
+        with projects.transaction():
+            records=projects.recovery_records(pid)
+            return {'available':any((projects.project_path(pid).parent/item['file']).is_file() for item in records),'checkpoints':[dict({k:v for k,v in item.items() if k!='file'},available=(projects.project_path(pid).parent/item['file']).is_file()) for item in records]}
+
+    @router.get('/{pid}/recovery-download')
+    def recovery_download(pid:str,version:int=0):
+        with projects.transaction():
+            records=projects.recovery_records(pid)
+            if version not in (0,1):fail(422,'invalid_input','Recovery version must be 0 (latest) or 1 (previous)')
+            if version>=len(records) or not (projects.project_path(pid).parent/records[version]['file']).is_file():fail(404,'not_found','Selected recovery copy is unavailable; try the other version')
+            selected=records[version]
+            tmp=tempfile.TemporaryDirectory(dir=projects.root)
+            try:
+                target=Path(tmp.name)/'recovery.draw'
+                shutil.copyfile(projects.project_path(pid).parent/selected['file'],target)
+                return FileResponse(target,media_type='application/octet-stream',background=BackgroundTask(tmp.cleanup),headers={'Content-Disposition':'attachment; filename="recovery.draw"','Cache-Control':'no-store','X-Drawborad-Revision':selected['revision']})
+            except BaseException:tmp.cleanup();raise
+
+    @router.post('/{pid}/cancel-brush')
+    def cancel_brush(pid:str):
+        projects.project_path(pid)
+        with projects.mypaint_gate:
+            if projects.active!=pid or projects.mypaint_cancel is None:fail(409,'not_rendering','No cancellable MyPaint render; native commit may already have started')
+            projects.mypaint_cancel.set()
+        return {'cancel_requested':True}
 
     def operation(pid,method,body):
         with projects.transaction():
@@ -205,6 +433,12 @@ def install_projects(app,config,authorized):
     def redo(pid:str,body:dict):return operation(pid,'redo',body)
     @router.post('/{pid}/save')
     def save(pid:str,body:dict):return operation(pid,'save',body)
+    @router.post('/{pid}/save-copy',status_code=201)
+    def save_copy(pid:str,body:dict):
+        with projects.transaction():
+            projects.select(pid)
+            if set(body)-{'expected_revision'}:fail(422,'invalid_input','Unknown save-copy fields')
+            return projects.save_copy(body.get('expected_revision'))
     @router.post('/{pid}/close')
     def close(pid:str,body:dict):return operation(pid,'close',body)
     @router.get('/{pid}/preview.png')
@@ -218,8 +452,16 @@ def install_projects(app,config,authorized):
         with projects.transaction():
             state=projects.select(pid)
             if state['dirty']:fail(409,'unsaved_changes','Save the project before downloading')
-            return Response(projects.project_path(pid).read_bytes(),media_type='application/octet-stream',
-                            headers={'Content-Disposition':'attachment; filename="project.draw"','Cache-Control':'no-store'})
+            # Snapshot while holding the transaction; later saves cannot mutate
+            # a file already being streamed to the browser.
+            tmp=tempfile.TemporaryDirectory(dir=projects.root)
+            try:
+                snapshot=Path(tmp.name)/'project.draw'
+                shutil.copyfile(projects.project_path(pid),snapshot)
+                return FileResponse(snapshot,media_type='application/octet-stream',background=BackgroundTask(tmp.cleanup),
+                                    headers={'Content-Disposition':'attachment; filename="project.draw"','Cache-Control':'no-store'})
+            except BaseException:
+                tmp.cleanup();raise
 
     app.include_router(router)
     return projects

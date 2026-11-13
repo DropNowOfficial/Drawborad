@@ -1,5 +1,9 @@
+#include "core/PersistentRasterPaint.h"
+#include "core/HiddenBoundary.h"
+#include "core/CroppedStrokeMask.h"
 #include "ProjectStore.h"
 #include "Binary.h"
+#include "core/MyPaintCroppedRaster.h"
 #include <algorithm>
 namespace drawborad {
 namespace fs = std::filesystem;
@@ -7,6 +11,25 @@ namespace {
 fs::path suffix(fs::path p, const std::string& s) {
     p += s;
     return p;
+}
+unsigned formatGeneration(const DocumentSnapshot& s) {
+    if(std::any_of(s.nodes->begin(),s.nodes->end(),[](const auto& item){return item.second.stage==persistentRaster::Stage;}))return 25;
+    if(std::any_of(s.eventIndex->begin(),s.eventIndex->end(),[](const auto&e){return e.engineVersion==24;}))return 24;
+    if(std::any_of(s.eventIndex->begin(),s.eventIndex->end(),[](const auto&e){return e.engineVersion==23;}))return 23;
+    if(std::any_of(s.eventIndex->begin(),s.eventIndex->end(),[](const auto&e){return e.engineVersion==22;}))return 22;
+    if(std::any_of(s.eventIndex->begin(),s.eventIndex->end(),[](const auto&e){return e.engineVersion==21;}))return 21;
+    if(!s.fillOperations.empty())return 20;
+    if(std::any_of(s.eventIndex->begin(),s.eventIndex->end(),[](const auto& e){return e.engineVersion==19;}))return 19;
+    if(std::any_of(s.resources->begin(),s.resources->end(),[](const auto& item){return hiddenBoundary::tagged(item.second);}))return 16;
+    if(std::any_of(s.resources->begin(),s.resources->end(),[](const auto& item){return cropMask::tagged(item.second);}))return 15;
+    if(std::any_of(s.nodes->begin(),s.nodes->end(),[](const auto& item){return item.second.stage==croppedRaster::NormalStage;}))return 14;
+ if(std::any_of(s.nodes->begin(),s.nodes->end(),[](const auto& item){return item.second.stage==croppedRaster::Stage;}))return 13;
+    if(std::any_of(s.eventIndex->begin(),s.eventIndex->end(),[](const auto& e){return e.engineVersion==12;}))return 12;
+    if(std::any_of(s.resources->begin(),s.resources->end(),[](const auto& item){return item.second.bytes->size()>LegacyMaxResourceBytes;}))return 11;
+    if(std::any_of(s.eventIndex->begin(),s.eventIndex->end(),[](const auto& e){return e.engineVersion==10;}))return 10;
+    if(std::any_of(s.nodes->begin(),s.nodes->end(),[](const auto& item){const auto& n=item.second;return n.sourceKind==SourceKind::ImportedRaster && n.stage=="drawborad.lineart.rgba.v1";}))return 9;
+    return std::any_of(s.eventIndex->begin(),s.eventIndex->end(),
+                       [](const auto& e){ return e.engineVersion==8; }) ? 8 : 2;
 }
 Result<RecoveryResult> load(FileIO& io, const ProjectPath& p) {
     auto one = [&](const fs::path& path) -> Result<DocumentSnapshot> {
@@ -23,10 +46,20 @@ Result<RecoveryResult> load(FileIO& io, const ProjectPath& p) {
     auto s = one(p);
     std::vector<std::string> warnings;
     if (!s) {
+        if (s.error().code == ErrorCode::UnsupportedFeature) return s.error();
+        const auto primaryError = s.error();
         s = one(suffix(p, ".bak"));
         if (!s)
-            return s.error();
+            return primaryError;
         warnings.push_back("recovery.used-backup");
+    }
+    if (fs::exists(suffix(p, ".bak"))) {
+        auto backup = one(suffix(p, ".bak"));
+        if (!backup && backup.error().code == ErrorCode::UnsupportedFeature)
+            return backup.error();
+        if ((!backup && formatGeneration(s.value())>=8) ||
+            (backup && formatGeneration(backup.value())!=formatGeneration(s.value())))
+            return error(ErrorCode::UnsupportedFeature, "project.mixed-format-backup");
     }
     auto jp = suffix(p, ".journal");
     if (fs::exists(jp)) {
@@ -42,7 +75,11 @@ Result<RecoveryResult> load(FileIO& io, const ProjectPath& p) {
             }
             try {
                 binary::Reader peek{r.value().data};
-                (void)peek.text(32);
+                const auto format=peek.text(32);
+                if(format!="DRAW-DELTA-1" && format!="DRAW-DELTA-8" && format!="DRAW-DELTA-9" && format!="DRAW-DELTA-10" && format!="DRAW-DELTA-11" && format!="DRAW-DELTA-12" && format!="DRAW-DELTA-13" && format!="DRAW-DELTA-14" && format!="DRAW-DELTA-15" && format!="DRAW-DELTA-16" && format!="DRAW-DELTA-19" && format!="DRAW-DELTA-20" && format!="DRAW-DELTA-21" && format!="DRAW-DELTA-22" && format!="DRAW-DELTA-23" && format!="DRAW-DELTA-24"&&format!="DRAW-DELTA-25")
+                    return error(ErrorCode::UnsupportedFeature,"project.journal-version");
+                if((format=="DRAW-DELTA-25"?25u:format=="DRAW-DELTA-24"?24u:format=="DRAW-DELTA-23"?23u:format=="DRAW-DELTA-22"?22u:format=="DRAW-DELTA-21"?21u:format=="DRAW-DELTA-20"?20u:format=="DRAW-DELTA-19"?19u:format=="DRAW-DELTA-16"?16u:format=="DRAW-DELTA-15"?15u:format=="DRAW-DELTA-14"?14u:format=="DRAW-DELTA-13"?13u:format=="DRAW-DELTA-12"?12u:format=="DRAW-DELTA-11"?11u:format=="DRAW-DELTA-10"?10u:format=="DRAW-DELTA-9"?9u:format=="DRAW-DELTA-8"?8u:2u)!=formatGeneration(s.value()))
+                    return error(ErrorCode::UnsupportedFeature,"project.mixed-format-journal");
                 (void)peek.id();
                 (void)peek.u64();
                 (void)peek.hash();
@@ -55,9 +92,12 @@ Result<RecoveryResult> load(FileIO& io, const ProjectPath& p) {
                 if (revision > s.value().revision) {
                     auto next = decodeDelta(r.value().data, s.value());
                     if (!next) {
+                        if (next.error().code == ErrorCode::UnsupportedFeature) return next.error();
                         warnings.push_back("recovery.noncontinuing-tail");
                         break;
                     }
+                    if (formatGeneration(next.value())!=formatGeneration(s.value()))
+                        return error(ErrorCode::UnsupportedFeature, "project.mixed-format-journal");
                     s = std::move(next);
                 }
             } catch (const binary::Invalid&) {
@@ -78,10 +118,15 @@ Result<void> ProjectStore::save(const ProjectPath& p, const DocumentSnapshot& s)
     auto held = lease.acquire(suffix(p, ".lock"));
     if (!held)
         return held.error();
+    if (!fs::exists(p) && (fs::exists(suffix(p, ".bak")) ||
+                           fs::exists(suffix(p, ".journal"))))
+        return error(ErrorCode::UnsupportedFeature, "save.clean-copy-required");
     if (fs::exists(p)) {
         auto old = load(*io_, p);
         if (!old)
             return old.error();
+        if (formatGeneration(old.value().snapshot)!=formatGeneration(s))
+            return error(ErrorCode::UnsupportedFeature, "save.format-copy-required");
         if (old.value().snapshot.documentId != s.documentId ||
             old.value().lastCommittedRevision > s.revision)
             return error(ErrorCode::StaleRevision, "save.stale");
@@ -129,6 +174,8 @@ Result<void> ProjectStore::appendJournal(const ProjectPath& p, const DocumentSna
     auto held = lease.acquire(suffix(p, ".lock"));
     if (!held)
         return held.error();
+    if (formatGeneration(before)!=formatGeneration(after))
+        return error(ErrorCode::UnsupportedFeature, "journal.format-copy-required");
     auto disk = load(*io_, p);
     if (!disk)
         return disk.error();

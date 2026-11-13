@@ -1,0 +1,43 @@
+#include "brush/HiddenBoundaryFill.h"
+#include "storage/ProjectStore.h"
+#include "ui/MergedDocument.h"
+#include "ui/LayerStream.h"
+#include <cassert>
+#include <iostream>
+using namespace drawborad;
+std::size_t count(const Command&c){std::size_t total=0;for(const auto&o:c.operations)if(auto p=std::get_if<Paint>(&o))for(std::size_t i=0;i<p->event.geometry.size();i+=2)total+=std::size_t(p->event.geometry[i+1].x-p->event.geometry[i].x);return total;}
+void checkResourceEncoding(){
+ Hash hash;for(std::size_t i=0;i<hash.bytes.size();++i)hash.bytes[i]=static_cast<std::uint8_t>(i);
+ const auto source=Id::fromNumber(42);
+ for(std::size_t count:{2u,256u})for(bool enabled:{false,true}){
+  std::vector<hiddenBoundary::Point> points(count,{3.5,7.25});
+  auto r=hiddenBoundary::resource(source,hash,points,1.5,enabled);
+  const auto& b=*r.bytes;
+  assert(b.size()==69+count*16);
+  assert(std::equal(hiddenBoundary::Magic,hiddenBoundary::Magic+8,b.begin()));
+  assert(std::equal(source.bytes.begin(),source.bytes.end(),b.begin()+8));
+  assert(std::equal(hash.bytes.begin(),hash.bytes.end(),b.begin()+24));
+  assert(b[56]==(enabled?1:0));
+  assert(croppedRaster::get(b,57,8)==std::bit_cast<std::uint64_t>(1.5));
+  assert(croppedRaster::get(b,65,4)==count);
+  for(std::size_t i=0;i<count;++i){
+   assert(croppedRaster::get(b,69+i*16,8)==std::bit_cast<std::uint64_t>(3.5));
+   assert(croppedRaster::get(b,77+i*16,8)==std::bit_cast<std::uint64_t>(7.25));
+  }
+  assert(r.id==sha256(b)&&r.dependencies==std::vector<Hash>{hash});
+ }
+}
+int main(int argc,char**argv){assert(argc==2);checkResourceEncoding();NewDocumentRequest req;req.dimensions={16,16,Unit::Px,300};auto spec=validateDocument(req,{});assert(spec);auto doc=Document::create(spec.value(),Id::fromNumber(1));assert(doc);Bytes rgba(16*16*4,255);for(unsigned y=3;y<=12;y++)for(unsigned x=3;x<=12;x++)if(x==3||x==12||y==3||y==12){auto i=(y*16+x)*4;rgba[i]=rgba[i+1]=rgba[i+2]=(x==12&&y==8)?160:0;}
+ auto ink=Id::fromNumber(2),fill=Id::fromNumber(3),helper=Id::fromNumber(4);auto add=makeLineartRasterCommand(rgba,{'p'},16,16,ink);assert(add&&doc.value().apply(add.value(),0));auto fillLayer=addFillLayerCommand(doc.value().snapshot(),fill,true,true);assert(fillLayer&&doc.value().apply(fillLayer.value(),doc.value().snapshot().revision));auto baseline=doc.value().snapshot();ColorValue red;red.channels={1,0,0,0};red.alpha=1;
+ auto leaking=hiddenBoundaryFillCommand(baseline,ink,fill,Id::fromNumber(9),6,8,120,red);assert(leaking);auto threshold180=hiddenBoundaryFillCommand(baseline,ink,fill,Id::fromNumber(9),6,8,180,red);assert(threshold180&&count(leaking.value())>count(threshold180.value()));
+ auto addHelper=hiddenBoundary::add(baseline,helper,ink,{{12,7},{12,10}},1);assert(addHelper&&doc.value().apply(addHelper.value(),baseline.revision));auto aided=doc.value().snapshot();auto before=renderMergedDocument(baseline,{baseline.revision}),after=renderMergedDocument(aided,{aided.revision});assert(before&&after&&before.value().merged.bytes==after.value().merged.bytes);auto stream=NativeLayerStream::create(aided,{aided.revision}),oldStream=NativeLayerStream::create(baseline,{baseline.revision});assert(stream&&oldStream&&stream.value().size()==oldStream.value().size());
+ auto bounded=hiddenBoundaryFillCommand(aided,ink,fill,Id::fromNumber(9),6,8,120,red);assert(bounded&&count(bounded.value())<count(leaking.value()));auto toggle=hiddenBoundary::toggle(aided,helper,false);assert(toggle&&doc.value().apply(toggle.value(),aided.revision));auto disabled=doc.value().snapshot();auto again=hiddenBoundaryFillCommand(disabled,ink,fill,Id::fromNumber(9),6,8,120,red);assert(again&&count(again.value())==count(leaking.value()));assert(doc.value().undo());assert(doc.value().snapshot().sameContent(aided));
+ auto invalid=Document::fromSnapshot(aided);assert(invalid);SetProperties props;props.id=helper;props.locked=false;assert(!invalid.value().apply(Command(props),aided.revision));assert(invalid.value().snapshot().sameContent(aided));assert(!hiddenBoundary::add(aided,Id::fromNumber(10),ink,{{-1,0},{2,2}},1));
+ for(const auto&[hash,res]:*baseline.resources)assert(*aided.resources->at(hash).bytes==*res.bytes);
+ auto stripped=aided;auto nodes=std::make_shared<NodeMap>(*aided.nodes);nodes->at(helper).stage="";stripped.nodes=nodes;assert(!validateSnapshot(stripped));
+ nodes=std::make_shared<NodeMap>(*aided.nodes);nodes->at(helper).visible=true;stripped.nodes=nodes;assert(!validateSnapshot(stripped));
+ nodes=std::make_shared<NodeMap>(*aided.nodes);nodes->at(ink).sourceResource={};stripped.nodes=nodes;assert(!validateSnapshot(stripped));
+ std::stop_source cancelled;cancelled.request_stop();assert(!hiddenBoundaryFillCommand(aided,ink,fill,Id::fromNumber(9),6,8,120,red,cancelled.get_token()));
+ auto oldBefore=bucketFillCommand(baseline,fill,Id::fromNumber(9),before.value().merged,6,8,120,red);auto oldAfter=bucketFillCommand(aided,fill,Id::fromNumber(9),after.value().merged,6,8,120,red);assert(oldBefore&&oldAfter&&count(oldBefore.value())==count(oldAfter.value()));
+ ProjectStore store;std::filesystem::path root=argv[1];assert(store.save(root/"original.draw",baseline));assert(store.save(root/"boundary16.draw",aided));assert(store.save(root/"disabled16.draw",disabled));assert(!store.save(root/"original.draw",aided));auto reopened=store.recover(root/"boundary16.draw");assert(reopened&&reopened.value().snapshot.sameContent(aided));auto encoded=encodeDelta(DocumentSnapshot{},disabled);assert(encoded);std::string floor="DRAW-DELTA-16";assert(std::search(encoded.value().begin(),encoded.value().end(),floor.begin(),floor.end())!=encoded.value().end());std::cout<<"PASS hidden boundary source immutable/render invisible/ORA excluded/threshold distinct/toggle undo/save floor16; leaked="<<count(leaking.value())<<" closed="<<count(bounded.value())<<" default180="<<count(threshold180.value())<<"\n";
+}

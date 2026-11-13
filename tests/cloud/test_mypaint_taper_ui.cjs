@@ -1,0 +1,6 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const html=fs.readFileSync('cloud/static/index.html','utf8');const source=html.slice(html.indexOf('function nativeMyPaintTaperPoints('),html.indexOf('function nativeInkDraft('));const c=vm.createContext({});vm.runInContext(source,c);const taper=c.nativeMyPaintTaperPoints;
+const ps=[{x:10,y:20,pressure:.35,time_ms:0},{x:110,y:20,pressure:.35,time_ms:100}],original=JSON.stringify(ps);
+assert.equal(taper(ps,0),ps);assert.equal(taper([ps[0]],.2)[0],ps[0]);const result=taper(ps,.2);assert.equal(result.length,4);assert.equal(JSON.stringify(ps),original);assert.deepEqual(Array.from(result,p=>p.x),[10,30,90,110]);assert.deepEqual(Array.from(result,p=>p.time_ms),[0,20,80,100]);assert.ok(result[0].pressure<result[1].pressure);assert.equal(result[1].pressure,.35);assert.equal(taper(ps,.5).length,3);
+const dense=Array.from({length:1024},(_,i)=>({x:i,y:0,pressure:.3,time_ms:i}));assert.throws(()=>taper(dense,.2),/shorter stroke/);for(const bad of [NaN,-.1,1])assert.throws(()=>taper(ps,bad));
+console.log('PASS MyPaint actual pressure envelope: sparse ramp knots, monotonic time, no mutation, stationary/off preserved, bounded count');

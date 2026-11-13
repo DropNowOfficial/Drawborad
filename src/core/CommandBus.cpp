@@ -1,4 +1,12 @@
+#include "EditableCubicPath.h"
+#include "EditableCubic.h"
+#include "EraserEligibility.h"
+#include "brush/CloseStrokeGap.h"
+#include "brush/WithdrawClosedInkFill.h"
 #include "Commands.h"
+#include "view/LayerTree.h"
+#include "EditableStroke.h"
+#include "FillProvenance.h"
 #include <algorithm>
 #include <cmath>
 #include <set>
@@ -83,6 +91,14 @@ Result<ChangeSet> Document::apply(const Command& cmd, Revision expected) {
         return error(ErrorCode::Overflow, "revision.overflow");
     if (cmd.version != 1 || cmd.operations.empty() || cmd.operations.size() > 65536)
         return error(ErrorCode::InvalidInput, "command.version-or-size");
+    bool persistent=persistentRaster::present(state_);std::uint64_t candidateBytes=0;
+    for(const auto&op:cmd.operations){if(const auto*n=std::get_if<AddNode>(&op))persistent=persistent||n->node.stage==persistentRaster::Stage;if(std::holds_alternative<AppendRasterPatch>(op)||std::holds_alternative<StepRasterHistory>(op))persistent=true;}
+    if(persistent)for(const auto&op:cmd.operations){
+        if(const auto*n=std::get_if<AddNode>(&op))persistent=persistent||n->node.stage==persistentRaster::Stage;
+        if(std::holds_alternative<AppendRasterPatch>(op)||std::holds_alternative<StepRasterHistory>(op)){persistent=true;if(candidateBytes>persistentRaster::MaxRetainedBytes-2*persistentRaster::MaxManifestBytes)return error(ErrorCode::BudgetExceeded,"paint-history.candidate-peak");candidateBytes+=2*persistentRaster::MaxManifestBytes;}
+        if(const auto*r=std::get_if<InstallResource>(&op)){if(!r->resource.bytes||r->resource.bytes->size()>persistentRaster::MaxRetainedBytes/2||candidateBytes>persistentRaster::MaxRetainedBytes-2*r->resource.bytes->size())return error(ErrorCode::BudgetExceeded,"paint-history.candidate-peak");candidateBytes+=2*r->resource.bytes->size();}
+    }
+    if(persistent){auto budget=admitRasterHistoryMemory(candidateBytes,cmd.operations.size()*2);if(!budget)return budget.error();}
     auto next = state_;
     auto ns = std::make_shared<NodeMap>(*state_.nodes);
     auto rs = std::make_shared<ResourceMap>(*state_.resources);
@@ -107,7 +123,25 @@ Result<ChangeSet> Document::apply(const Command& cmd, Revision expected) {
             std::visit(
                 [&](const auto& o) {
                     using O = std::decay_t<decltype(o)>;
-                    if constexpr (std::is_same_v<O, InstallResource>) {
+                    if constexpr (std::is_same_v<O, AppendRasterPatch> || std::is_same_v<O, StepRasterHistory>) {
+                        exists(o.id);require(!locked(*ns,o.id),ErrorCode::Locked,"paint-history.locked");
+                        auto& node=ns->at(o.id);require(node.stage==persistentRaster::Stage&&node.sourceResource==o.expectedManifest,ErrorCode::StaleRevision,"paint-history.source");
+                        auto history=persistentRaster::read(next,o.id);if(!history)throw Failure{history.error()};
+                        if constexpr(std::is_same_v<O,AppendRasterPatch>){
+                            require(history.value().cursor==history.value().records.size(),ErrorCode::UnsupportedFeature,"paint-history.branch-required");
+                            require(history.value().records.size()<persistentRaster::MaxRecords,ErrorCode::BudgetExceeded,"paint-history.record-limit");
+                            auto pixels=persistentRaster::patch(next,o.record.patch);if(!pixels)throw Failure{pixels.error()};
+                            history.value().records.push_back(o.record);++history.value().cursor;
+                        }else{
+                            require(o.delta==1||o.delta==-1,ErrorCode::InvalidInput,"paint-history.step");
+                            require(o.delta==1?history.value().cursor<history.value().records.size():history.value().cursor>0,ErrorCode::InvalidInput,"paint-history.no-step");
+                            if(o.delta==1)++history.value().cursor;else --history.value().cursor;
+                        }
+                        auto resource=persistentRaster::manifest(history.value());if(!resource)throw Failure{resource.error()};
+                        const auto hash=resource.value().id;auto old=rs->find(hash);require(old==rs->end()||old->second==resource.value(),ErrorCode::DigestMismatch,"paint-history.collision");
+                        if(old==rs->end()){rs->emplace(hash,std::move(resource.value()));}
+                        node.sourceResource=hash;change.resourceRefs.push_back(hash);mark(o.id);
+                    } else if constexpr (std::is_same_v<O, InstallResource>) {
                         require(!o.resource.id.empty() && o.resource.bytes != nullptr,
                                 ErrorCode::InvalidInput, "resource.id");
                         auto r = o.resource;
@@ -282,8 +316,88 @@ Result<ChangeSet> Document::apply(const Command& cmd, Revision expected) {
                         found->color = o.color;
                         next.eventIndex = ev;
                         mark(found->layerId);
+                    } else if constexpr (std::is_same_v<O, AdjustStrokeSamples>) {
+                        require(cmd.operations.size()==1,ErrorCode::InvalidInput,"stroke-edit.single-operation");
+                        const auto eligible=editableStrokeIndex(next,o.id);
+                        if(!eligible)throw Failure{eligible.error()};
+                        const auto index=eligible.value();const auto& old=(*next.eventIndex)[index];
+                        require(!o.geometry.empty()&&o.geometry.size()==old.geometry.size(),ErrorCode::InvalidInput,"stroke-edit.smooth-shape");
+                        for(std::size_t i=0;i<o.geometry.size();++i){
+                            const auto& p=o.geometry[i];const auto& before=old.geometry[i];
+                            require(p.timestampUs==before.timestampUs && p.tiltX==before.tiltX && p.tiltY==before.tiltY && p.deviceKind==before.deviceKind && p.capabilities==before.capabilities,
+                                    ErrorCode::InvalidInput,"stroke-edit.sample-metadata");
+                            require(std::isfinite(p.x)&&std::isfinite(p.y)&&std::isfinite(p.pressure)&&p.pressure>=0&&p.pressure<=1&&p.x>=0&&p.y>=0&&p.x<=double(next.spec.pixelSize.width)&&p.y<=double(next.spec.pixelSize.height),
+                                    ErrorCode::InvalidInput,"stroke-edit.sample-bounds");
+                        }
+                        ev=std::make_shared<EventList>(*next.eventIndex);
+                        (*ev)[index].geometry=o.geometry;auto barrier=validateDisjointBucketEdit(next,index,(*ev)[index]);if(!barrier)throw Failure{barrier.error()};next.eventIndex=ev;
+                        mark(old.layerId);
+                        // Cover both old and new footprint, even when a legacy
+                        // layer's declared bounds do not enclose its strokes.
+                        change.dirtyRegions.push_back({0,0,next.spec.pixelSize.width,next.spec.pixelSize.height});
+                    } else if constexpr (std::is_same_v<O, AdjustCubicPathControl>) {
+                        require(cmd.operations.size()==1,ErrorCode::InvalidInput,"cubic-path-edit.single-operation");
+                        auto eligible=editableCubicPathIndex(next,o.id);if(!eligible)throw Failure{eligible.error()};
+                        const auto index=eligible.value();const auto& original=next.eventIndex->at(index);
+                        require(o.index<original.geometry.size()&&cubicControlInDocumentRange(next.spec,o.x,o.y),ErrorCode::InvalidInput,"cubic-path-edit.control-bounds");
+                        const auto layer=original.layerId;
+                        ev=std::make_shared<EventList>(*next.eventIndex);(*ev)[index].geometry[o.index].x=o.x;(*ev)[index].geometry[o.index].y=o.y;
+                        auto barrier=validateDisjointBucketEdit(next,index,(*ev)[index]);if(!barrier)throw Failure{barrier.error()};next.eventIndex=ev;mark(layer);change.dirtyRegions.push_back({0,0,next.spec.pixelSize.width,next.spec.pixelSize.height});
+                    } else if constexpr (std::is_same_v<O, AdjustCubicControls>) {
+                        require(cmd.operations.size()==1,ErrorCode::InvalidInput,"cubic-edit.single-operation");
+                        auto eligible=editableCubicIndex(next,o.id);if(!eligible)throw Failure{eligible.error()};
+                        const auto index=eligible.value();const auto layer=next.eventIndex->at(index).layerId;
+                        ev=std::make_shared<EventList>(*next.eventIndex);
+                        for(std::size_t i=0;i<4;++i){const auto& p=o.controls[i];require(cubicControlInDocumentRange(next.spec,p[0],p[1]),ErrorCode::InvalidInput,"cubic-edit.control-bounds");(*ev)[index].geometry[i].x=p[0];(*ev)[index].geometry[i].y=p[1];}
+                        auto barrier=validateDisjointBucketEdit(next,index,(*ev)[index]);if(!barrier)throw Failure{barrier.error()};next.eventIndex=ev;mark(layer);change.dirtyRegions.push_back({0,0,next.spec.pixelSize.width,next.spec.pixelSize.height});
+                    } else if constexpr (std::is_same_v<O, CloseStrokeGap>) {
+                        require(cmd.operations.size()==1,ErrorCode::InvalidInput,"stroke-close.single-operation");
+                        auto geometry=closedStrokeGapGeometry(state_,o.eventId);if(!geometry)throw Failure{geometry.error()};
+                        ev=std::make_shared<EventList>(*next.eventIndex);
+                        auto stroke=std::find_if(ev->begin(),ev->end(),[&](const auto&e){return e.id==o.eventId;});
+                        require(stroke!=ev->end(),ErrorCode::InvalidInput,"stroke-close.missing");stroke->geometry=std::move(geometry.value());mark(stroke->layerId);next.eventIndex=ev;
+                        change.dirtyRegions.push_back({0,0,next.spec.pixelSize.width,next.spec.pixelSize.height});
+                    } else if constexpr (std::is_same_v<O, WithdrawClosedInkFill>) {
+                        require(cmd.operations.size()==1,ErrorCode::InvalidInput,"fill-withdraw.single-operation");
+                        auto candidate=closedInkWithdrawalCandidate(state_,o.operationId);if(!candidate)throw Failure{candidate.error()};
+                        const auto record=std::find_if(state_.fillOperations.begin(),state_.fillOperations.end(),[&](const auto&entry){return entry.id==o.operationId;});
+                        require(record!=state_.fillOperations.end(),ErrorCode::InvalidInput,"fill-withdraw.record-required");mark(record->target);
+                        next.eventIndex=candidate.value().eventIndex;next.fillOperations=candidate.value().fillOperations;
+                        change.dirtyRegions.push_back({0,0,next.spec.pixelSize.width,next.spec.pixelSize.height});
+                    } else if constexpr (std::is_same_v<O, RecordClosedInkFill>) {
+                        require(!cmd.operations.empty() && std::holds_alternative<RecordClosedInkFill>(cmd.operations.back()),ErrorCode::InvalidInput,"fill-source.record-last");
+                        require(std::count_if(cmd.operations.begin(),cmd.operations.end(),[](const auto&x){return std::holds_alternative<RecordClosedInkFill>(x);})==1,ErrorCode::InvalidInput,"fill-source.one-record");
+                        auto boundary=std::find_if(state_.eventIndex->begin(),state_.eventIndex->end(),[&](const auto&e){return e.id==o.operation.boundaryEvent;});
+                        require(boundary!=state_.eventIndex->end() && boundary->layerId==o.operation.boundaryLayer && boundary->engineVersion==19 && fill_provenance::eventDigest(*boundary)==o.operation.boundaryDigest,ErrorCode::InvalidInput,"fill-source.preexisting-boundary");
+                        require(state_.nodes->contains(o.operation.source)&&state_.nodes->contains(o.operation.target)&&state_.nodes->contains(o.operation.boundaryLayer),ErrorCode::InvalidInput,"fill-source.preexisting-nodes");
+                        require(state_.nodes->at(o.operation.source).sourceResource==o.operation.sourceResource && state_.resources->contains(o.operation.sourceResource),ErrorCode::InvalidInput,"fill-source.creation-resource");
+                        require(sha256(*state_.resources->at(o.operation.sourceResource).bytes)==o.operation.sourceDigest,ErrorCode::InvalidInput,"fill-source.creation-resource");
+                        require(fill_provenance::contextDigest(state_,o.operation)==o.operation.contextDigest,ErrorCode::InvalidInput,"fill-source.creation-context");
+                        require(next.fillOperations.size()<256,ErrorCode::BudgetExceeded,"fill-source.record-budget");
+                        require(cmd.operations.size()==o.operation.members.size()+1,ErrorCode::InvalidInput,"fill-source.atomic-members");
+                        std::set<Id> painted;
+                        for(const auto& member:cmd.operations)if(const auto*p=std::get_if<Paint>(&member))painted.insert(p->event.id);else require(std::holds_alternative<RecordClosedInkFill>(member),ErrorCode::InvalidInput,"fill-source.atomic-members");
+                        require(painted.size()==o.operation.members.size(),ErrorCode::InvalidInput,"fill-source.atomic-members");
+                        for(const auto&[id,digest]:o.operation.members){(void)digest;require(painted.contains(id),ErrorCode::InvalidInput,"fill-source.atomic-members");}
+                        next.fillOperations.push_back(o.operation);
                     } else if constexpr (std::is_same_v<O, Paint>) {
                         const auto& e = o.event;
+                        if(isAuthoredCubic(e)){
+                            require(cmd.operations.size()==1,ErrorCode::InvalidInput,"cubic.single-operation");
+                            auto admitted=validateCubicAppendBudget(*state_.eventIndex,e);if(!admitted)throw Failure{admitted.error()};
+                            require(nativeLayerPaintable(state_,e.layerId)&&state_.nodes->at(e.layerId).sourceResource.empty(),ErrorCode::UnsupportedFeature,"cubic.native-layer");
+                            for(const auto&p:e.geometry)require(cubicControlInDocumentRange(state_.spec,p.x,p.y),ErrorCode::InvalidInput,"cubic.control-bounds");
+                        }
+                        if(e.engineVersion==22){
+                            require(cmd.operations.size()==1,ErrorCode::InvalidInput,"continuous-eraser.single-operation");
+                            auto eligible=continuousEraserLayerEligible(state_,e.layerId);if(!eligible)throw Failure{eligible.error()};
+                            std::size_t points=e.geometry.size();
+                            require(points<=1000000,ErrorCode::BudgetExceeded,"continuous-eraser.point-budget");
+                            for(const auto& old:*state_.eventIndex){
+                                require(old.geometry.size()<=1000000-points,ErrorCode::BudgetExceeded,"continuous-eraser.point-budget");
+                                points+=old.geometry.size();
+                            }
+                        }
                         exists(e.layerId);
                         require(ns->at(e.layerId).kind == NodeKind::Layer &&
                                     ns->at(e.layerId).objectId == e.objectId,
@@ -298,6 +412,8 @@ Result<ChangeSet> Document::apply(const Command& cmd, Revision expected) {
                         change.dirtyRegions.push_back(o.dirty);
                         touched.insert(e.layerId);
                     } else if constexpr (std::is_same_v<O, ConvertColor>) {
+                        const auto hasCubic=[](const auto& events){return events&&std::any_of(events->begin(),events->end(),[](const auto&e){return isAuthoredCubic(e);});};
+                        require(!hasCubic(next.eventIndex)&&!hasCubic(o.events),ErrorCode::UnsupportedFeature,"cubic.color-convert-not-supported");
                         for (auto& [id, n] : *ns) {
                             require(!locked(*ns, id), ErrorCode::Locked, "convert.locked");
                             if (!n.content.empty())

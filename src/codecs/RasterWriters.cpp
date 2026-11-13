@@ -64,24 +64,41 @@ Result<void> validateMetadata(const RasterEncodingOptions& o) {
 #pragma warning(push)
 #pragma warning(disable: 4611)
 #endif
-struct PngWriteState { Bytes bytes; };
+struct PngWriteState { Bytes bytes; std::uint64_t maxBytes=UINT64_MAX; std::stop_token stop; int failure{}; };
 void pngWrite(png_structp png,png_bytep data,png_size_t length) {
     auto* state=static_cast<PngWriteState*>(png_get_io_ptr(png));
-    state->bytes.insert(state->bytes.end(),data,data+length);
+    if(state->stop.stop_requested()){state->failure=2;png_error(png,"cancelled");return;}
+    if(length>state->maxBytes-state->bytes.size()){state->failure=1;png_error(png,"output limit");return;}
+    bool allocationFailed=false;
+    try{state->bytes.insert(state->bytes.end(),data,data+length);}catch(const std::bad_alloc&){allocationFailed=true;}
+    if(allocationFailed){state->failure=1;png_error(png,"allocation");}
 }
 void pngFlush(png_structp) {}
 
-Result<Bytes> encodePng(const TileData& p,const RasterEncodingOptions& o) {
+Result<Bytes> encodePng(const TileData& p,const RasterEncodingOptions& o,std::uint64_t maxBytes=UINT64_MAX,std::stop_token stop={}) {
     if(p.format.mode!=ColorMode::RGB)
         return error(ErrorCode::UnsupportedFeature,"png.rgb-only");
     auto valid=validateRaster(p);if(!valid)return valid.error();
+    if(stop.stop_requested())return error(ErrorCode::Cancelled,"png.cancelled");
+    auto state=std::make_unique<PngWriteState>();state->maxBytes=maxBytes;state->stop=stop;
+    if(maxBytes!=UINT64_MAX){
+        if(!maxBytes || maxBytes>SIZE_MAX)return error(ErrorCode::BudgetExceeded,"png.output-limit");
+        state->bytes.reserve(std::size_t(maxBytes));
+    }
+    std::string xmpStorage;
+    if(o.metadata.preserveXmp && !o.metadata.xmp.empty())
+        xmpStorage.assign(reinterpret_cast<const char*>(o.metadata.xmp.data()),o.metadata.xmp.size());
     auto* png=png_create_write_struct(PNG_LIBPNG_VER_STRING,nullptr,nullptr,nullptr);
     if(!png)return error(ErrorCode::IoError,"png.create");
     auto* info=png_create_info_struct(png);
     if(!info){png_destroy_write_struct(&png,nullptr);return error(ErrorCode::IoError,"png.info");}
-    PngWriteState state;
-    if(setjmp(png_jmpbuf(png))){png_destroy_write_struct(&png,&info);return error(ErrorCode::CorruptData,"png.encode");}
-    png_set_write_fn(png,&state,pngWrite,pngFlush);
+    if(setjmp(png_jmpbuf(png))){
+        png_destroy_write_struct(&png,&info);
+        if(state->failure==2)return error(ErrorCode::Cancelled,"png.cancelled");
+        if(state->failure==1)return error(ErrorCode::BudgetExceeded,"png.output-limit");
+        return error(ErrorCode::CorruptData,"png.encode");
+    }
+    png_set_write_fn(png,state.get(),pngWrite,pngFlush);
     const int colorType=p.format.alpha?PNG_COLOR_TYPE_RGBA:PNG_COLOR_TYPE_RGB;
     png_set_IHDR(png,info,p.width,p.height,p.format.depth==Depth::U16?16:8,colorType,
                  PNG_INTERLACE_NONE,PNG_COMPRESSION_TYPE_DEFAULT,PNG_FILTER_TYPE_DEFAULT);
@@ -103,15 +120,12 @@ Result<Bytes> encodePng(const TileData& p,const RasterEncodingOptions& o) {
 #endif
     }
     png_text xmpText{};
-    std::string xmpStorage;
     if(o.metadata.preserveXmp && !o.metadata.xmp.empty()) {
         if(std::find(o.metadata.xmp.begin(),o.metadata.xmp.end(),std::uint8_t(0))!=
            o.metadata.xmp.end()) {
             png_destroy_write_struct(&png,&info);
             return error(ErrorCode::InvalidInput,"png.xmp-nul");
         }
-        xmpStorage.assign(reinterpret_cast<const char*>(o.metadata.xmp.data()),
-                          o.metadata.xmp.size());
         xmpText.compression=PNG_ITXT_COMPRESSION_NONE;
         xmpText.key=const_cast<png_charp>("XML:com.adobe.xmp");
         xmpText.text=xmpStorage.data();
@@ -123,19 +137,20 @@ Result<Bytes> encodePng(const TileData& p,const RasterEncodingOptions& o) {
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
     if(p.format.depth==Depth::U16) png_set_swap(png);
 #endif
-    std::vector<png_bytep> rows(p.height);
-    for(std::uint32_t y=0;y<p.height;y++)
-        rows[y]=const_cast<png_bytep>(reinterpret_cast<png_const_bytep>(p.bytes.data()+std::uint64_t(y)*p.rowStride));
-    png_write_image(png,rows.data());
+    for(std::uint32_t y=0;y<p.height;y++){
+        if(stop.stop_requested()){png_destroy_write_struct(&png,&info);return error(ErrorCode::Cancelled,"png.cancelled");}
+        auto row=const_cast<png_bytep>(reinterpret_cast<png_const_bytep>(p.bytes.data()+std::uint64_t(y)*p.rowStride));
+        png_write_row(png,row);
+    }
     png_write_end(png,info);
     png_destroy_write_struct(&png,&info);
-    return state.bytes;
+    return std::move(state->bytes);
 }
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
 #else
-Result<Bytes> encodePng(const TileData&,const RasterEncodingOptions&) {
+Result<Bytes> encodePng(const TileData&,const RasterEncodingOptions&,std::uint64_t=UINT64_MAX,std::stop_token={}) {
     return error(ErrorCode::UnsupportedFeature,"png.codec-unavailable");
 }
 #endif
@@ -348,6 +363,17 @@ Result<Bytes> encodeWebp(const TileData&,const RasterEncodingOptions&) {
 #endif
 }
 
+Result<Bytes> encodePngBounded(const TileData& pixels,const RasterEncodingOptions& options,
+                               std::uint64_t maxBytes,std::stop_token stop){
+    if(stop.stop_requested())return error(ErrorCode::Cancelled,"png.cancelled");
+    auto metadata=validateMetadata(options);if(!metadata)return metadata.error();
+    if(!maxBytes || maxBytes>SIZE_MAX)return error(ErrorCode::BudgetExceeded,"png.output-limit");
+    if(options.iccProfile.size()>16*1024*1024)return error(ErrorCode::BudgetExceeded,"png.profile-limit");
+    if(!std::isfinite(options.ppi)||options.ppi<=0||options.ppi>100000)return error(ErrorCode::InvalidInput,"png.ppi");
+    try{return encodePng(pixels,options,maxBytes,stop);}
+    catch(const std::bad_alloc&){return error(ErrorCode::BudgetExceeded,"png.allocation");}
+}
+
 Result<Bytes> encodeRaster(ExportFormat format,const TileData& pixels,const RasterEncodingOptions& options){
     auto metadata=validateMetadata(options);if(!metadata)return metadata.error();
     switch(format){
@@ -391,3 +417,4 @@ Result<ExportReport> writeRaster(const ExportPlan& plan,const TileData& pixels,
     return report;
 }
 }
+

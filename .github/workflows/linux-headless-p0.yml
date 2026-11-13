@@ -71,7 +71,7 @@ jobs:
       - name: Install distro-native build dependencies
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends ca-certificates git cmake ninja-build make g++ qt6-base-dev qt6-base-private-dev libpng-dev zlib1g-dev libjpeg-dev libtiff-dev libwebp-dev libheif-dev liblcms2-dev python3 python3-venv python3-pil python3-yaml python3-skimage python3-opencv python3-numpy python3-scipy
+          apt-get install -y --no-install-recommends ca-certificates git cmake ninja-build make g++ qt6-base-dev qt6-base-private-dev qt6-declarative-dev qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts qml6-module-qtquick-dialogs qml6-module-qtquick-templates qml6-module-qtquick-window qml6-module-qtqml-workerscript qml6-module-qtqml-models libpng-dev zlib1g-dev libjpeg-dev libtiff-dev libwebp-dev libheif-dev liblcms2-dev python3 python3-venv python3-pil python3-yaml python3-skimage python3-opencv python3-numpy python3-scipy
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -91,7 +91,7 @@ jobs:
         run: |
           mkdir -p out/evidence
           cp /etc/os-release out/evidence/build-os-release
-          cmake -S . -B out/linux-headless -G Ninja -DCMAKE_BUILD_TYPE=Release -DDRAWBORAD_HEADLESS_WORKFLOW=ON -DDRAWBORAD_DESKTOP=OFF -DDRAWBORAD_QUALIFY=OFF -DDRAWBORAD_ONNXRUNTIME_ROOT= 2>&1 | tee out/evidence/configure.log
+          cmake -S . -B out/linux-headless -G Ninja -DCMAKE_BUILD_TYPE=Release -DDRAWBORAD_HEADLESS_WORKFLOW=ON -DDRAWBORAD_QT_CANVAS_TESTS=ON -DDRAWBORAD_DESKTOP=OFF -DDRAWBORAD_QUALIFY=OFF -DDRAWBORAD_ONNXRUNTIME_ROOT= 2>&1 | tee out/evidence/configure.log
       - name: Build
         run: |
           cmake --build out/linux-headless --parallel 2 2>&1 | tee out/evidence/build.log
@@ -171,6 +171,11 @@ jobs:
           out/api-venv/bin/pip install 'playwright>=1.50,<2'
           out/api-venv/bin/python -m playwright install --with-deps chromium
           PYTHONPATH="$PWD" out/api-venv/bin/python tests/batch/acceptance.py out/linux-headless/DrawboradHeadless out/evidence/real-input/source.png out/evidence/batch --browser
+      - name: Native viewport real Chromium acceptance (synthetic canvas)
+        run: PYTHONPATH="$PWD" out/api-venv/bin/python tests/cloud/native_view_browser.py out/linux-headless/DrawboradHeadless out/evidence/native-viewport
+      - name: Native poster combined workflow in Chromium (synthetic 3300x5100)
+        timeout-minutes: 8
+        run: PYTHONPATH="$PWD" out/api-venv/bin/python tests/cloud/native_view_browser.py out/linux-headless/DrawboradHeadless out/evidence/poster-workflow --poster
       - name: Upload build evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -212,6 +217,8 @@ jobs:
           cp out/linux-headless/DrawboradHeadless out/runtime/runtime-target.json "$bundle/"
           cp cloud/*.py cloud/requirements.txt "$bundle/cloud/"
           cp cloud/static/index.html "$bundle/cloud/static/"
+          mkdir -p "$bundle/cloud/mypaint_data"
+          find cloud/mypaint_data -maxdepth 1 -type f -exec cp {} "$bundle/cloud/mypaint_data/" \;
           cp tools/segmentation/guided_grabcut.py "$bundle/tools/segmentation/"
           cp tools/models/sam3_semantic.py "$bundle/tools/models/"
           cp tools/packaging/{install-runtime-linux.sh,install-runtime-ubuntu.sh,runtime_platform.py} "$bundle/tools/packaging/"
@@ -310,7 +317,10 @@ jobs:
           out/browser-venv/bin/pip install 'playwright>=1.50,<2' pillow
           out/browser-venv/bin/python -m playwright install --with-deps chromium
       - name: Native layer selection UI regressions
+        timeout-minutes: 5
         run: |
+          node tests/cloud/test_mypaint_ui.cjs
+          node tests/cloud/test_mypaint_taper_ui.cjs
           node tests/cloud/native_layer_selection_unit.cjs
           node tests/cloud/token_file_import_unit.cjs
           node tests/cloud/token_file_reconnect_unit.cjs
@@ -324,7 +334,29 @@ jobs:
           export DRAWBORAD_CLOUD_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
           echo "::add-mask::$DRAWBORAD_CLOUD_TOKEN"
           trap 'docker compose logs --no-color editor; docker compose down --volumes' EXIT
+          # Owner-approved optional runtime installation: only this temporary CI image.
+          mkdir -p tools/experimental/mypaint
+          cp ../../tools/experimental/mypaint/provision_ci_pins.py tools/experimental/mypaint/
+          printf '\n!tools/experimental/\n!tools/experimental/mypaint/\n!tools/experimental/mypaint/provision_ci_pins.py\n' >> .dockerignore
+          cat >> Dockerfile <<'DOCKER'
+          USER root
+          COPY tools/experimental/mypaint/provision_ci_pins.py /app/tools/experimental/mypaint/provision_ci_pins.py
+          RUN apt-get update \
+              && MYPAINT_CANDIDATE="$(apt-cache policy libmypaint-1.5-1 | awk '/Candidate:/ {print $2}')" \
+              && JSON_C_CANDIDATE="$(apt-cache policy libjson-c5 | awk '/Candidate:/ {print $2}')" \
+              && test -n "$MYPAINT_CANDIDATE" && test "$MYPAINT_CANDIDATE" != "(none)" \
+              && test -n "$JSON_C_CANDIDATE" && test "$JSON_C_CANDIDATE" != "(none)" \
+              && apt-get install -y --no-install-recommends "libmypaint-1.5-1=$MYPAINT_CANDIDATE" "libjson-c5=$JSON_C_CANDIDATE" \
+              && GITHUB_ACTIONS=true python /app/tools/experimental/mypaint/provision_ci_pins.py --allow-ci-provision --output /app/mypaint-ci-pins.json --receipt /app/mypaint-ci-receipt.json --expected-libmypaint-version "$MYPAINT_CANDIDATE" --expected-json-c-version "$JSON_C_CANDIDATE" \
+              && chown studio:studio /app/mypaint-ci-pins.json /app/mypaint-ci-receipt.json \
+              && rm -rf /var/lib/apt/lists/*
+          ENV DRAWBORAD_MYPAINT_PINS_FILE=/app/mypaint-ci-pins.json
+          USER studio
+          DOCKER
           docker compose up -d --build --wait --wait-timeout 90
+          mkdir -p ../browser-evidence
+          docker compose exec -T editor cat /app/mypaint-ci-receipt.json > ../browser-evidence/mypaint-runtime-provision.json
+          export DRAWBORAD_REQUIRE_MYPAINT=1
           docker compose exec -T editor python -c 'import os; assert os.geteuid() != 0'
           docker compose exec -T editor python /app/tools/packaging/runtime_platform.py check-bundle /app/runtime-target.json
           ../browser-venv/bin/python ../../tests/cloud/browser_native_acceptance.py ../native-evidence/real-input ../browser-evidence

@@ -22,6 +22,7 @@ struct InputInfo {
     std::uint16_t orientation{1};
 };
 struct ImportedImage { InputInfo info; Bytes encodedSource; std::optional<TileData> decodedPixels; };
-Result<InputInfo> preflightInput(const InputPath&, const ResourceBudget&);
+Result<InputInfo> preflightInput(const InputPath&, const ResourceBudget&, std::uint64_t maxEncodedBytes=64*1024*1024);
 Result<ImportedImage> decodeImage(const InputPath&, const DecodeOptions&, std::stop_token = {});
 }
+

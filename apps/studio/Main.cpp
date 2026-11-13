@@ -11,6 +11,7 @@
 #endif
 #ifdef DRAWBORAD_HAS_QT
 #include "QtBridge.h"
+#include "OriginalReferenceProvider.h"
 #include "platform/CanvasItem.h"
 #include <qqml.h>
 #include <QGuiApplication>
@@ -49,7 +50,7 @@ int main(int argc,char**argv){
     QQuickWindow::setGraphicsApi(QSGRendererInterface::Direct3D11);
     QGuiApplication app(argc,argv);app.setApplicationName("Drawborad");
     qmlRegisterType<CanvasItem>("Drawborad.Native",1,0,"NativeCanvas");
-    QtBridge bridge;QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("studio",&bridge);engine.loadFromModule("Drawborad","Main");if(engine.rootObjects().isEmpty())return 2;
+    QtBridge bridge;QQmlApplicationEngine engine;engine.addImageProvider("original-reference",new OriginalReferenceProvider(bridge));engine.rootContext()->setContextProperty("studio",&bridge);engine.loadFromModule("Drawborad","Main");if(engine.rootObjects().isEmpty())return 2;
     auto window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());if(!window)return 2;
     if(smoke){
         auto count=std::make_shared<int>(0);
@@ -65,3 +66,4 @@ int main(int argc,char**argv){
     (void)warp;if(smoke){std::cerr<<"BLOCKED: Windows Qt/D3D11 not built\n";return 77;}return writeReport(path,collectDeviceReport());
 #endif
 }
+
