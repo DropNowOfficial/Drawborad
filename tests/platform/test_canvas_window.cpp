@@ -3,6 +3,8 @@
 #include "core/LineartRaster.h"
 #include "storage/ProjectStore.h"
 #include <QGuiApplication>
+#include <QQmlApplicationEngine>
+#include <QQmlContext>
 #include <QQuickWindow>
 #include <QTemporaryDir>
 #include <QTest>
@@ -28,5 +30,22 @@ int main(int argc,char**argv){
  auto unsupportedPath=dir.filePath("transformed-raster.draw");assert(st.save(unsupportedPath.toStdString(),unsupported));bridge.openUrl(QUrl::fromLocalFile(unsupportedPath));QTest::qWait(100);assert(!canvas.renderError().isEmpty());
  assert(bridge.addLayer());const auto beforeErrorDraw=*bridge.canvasSnapshot();assert(!canvas.renderError().isEmpty());
  QTest::mousePress(&w,Qt::LeftButton,{},QPoint(75,275));QTest::mouseRelease(&w,Qt::LeftButton,{},QPoint(225,275));assert(bridge.canvasSnapshot()->sameContent(beforeErrorDraw));
- std::cout<<"PASS real Qt software window: imported pixels, native paint, pan/zoom unchanged, unsupported raster error prevents drawing\n";
+ qmlRegisterType<CanvasItem>("Drawborad.Native",1,0,"NativeCanvas");
+ QtBridge uiBridge;QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("studio",&uiBridge);
+ engine.load(QUrl::fromLocalFile(QStringLiteral(DRAWBORAD_SOURCE_DIR "/ui/Main.qml")));assert(!engine.rootObjects().isEmpty());
+ auto uiWindow=qobject_cast<QQuickWindow*>(engine.rootObjects().front());assert(uiWindow);QTest::qWait(200);
+ auto uiCanvas=uiWindow->findChild<CanvasItem*>("nativeCanvas");auto errorLabel=uiWindow->findChild<QObject*>("canvasRenderError");assert(uiCanvas&&errorLabel);
+ uiBridge.openUrl(QUrl::fromLocalFile(unsupportedPath));QTest::qWait(200);assert(!uiCanvas->renderError().isEmpty());assert(errorLabel->property("visible").toBool());assert(errorLabel->property("text").toString().contains(uiCanvas->renderError()));
+ uiBridge.openUrl(QUrl::fromLocalFile(path));QTest::qWait(200);assert(uiCanvas->renderError().isEmpty());assert(!errorLabel->property("visible").toBool());
+ NewDocumentRequest posterRequest;posterRequest.dimensions={3300,5100,Unit::Px,300};auto posterSpec=validateDocument(posterRequest,{});assert(posterSpec);auto poster=Document::create(posterSpec.value(),Id::fromNumber(11));assert(poster);
+ Bytes posterPixels(3300*5100*4,0);for(int y=2000;y<3100;y++)for(int x=1100;x<2200;x++){posterPixels[(y*3300+x)*4]=255;posterPixels[(y*3300+x)*4+3]=255;}
+ auto posterCmd=makeLineartRasterCommand(posterPixels,{137,80,78,71,13,10,26,10},3300,5100,Id::fromNumber(12));assert(posterCmd);assert(poster.value().apply(posterCmd.value(),0));posterPixels.clear();posterPixels.shrink_to_fit();
+ auto posterPath=dir.filePath("poster.draw");assert(st.save(posterPath.toStdString(),poster.value().snapshot()));uiBridge.openUrl(QUrl::fromLocalFile(posterPath));QTest::qWait(300);assert(uiCanvas->renderError().isEmpty());assert(!errorLabel->property("visible").toBool());
+ auto center=uiCanvas->mapToScene(uiCanvas->documentRect().center()).toPoint();auto posterShot=uiWindow->grabWindow();assert(!posterShot.isNull());auto posterColor=posterShot.pixelColor(center);assert(posterColor.red()>250&&posterColor.green()<5);
+ for(int dy=-50;dy<=50;dy++)for(int dx=-50;dx<=50;dx++){auto px=posterShot.pixelColor(center+QPoint(dx,dy));assert(px.red()>250&&px.green()<5&&px.blue()<5);}
+ assert(uiBridge.addLayer());auto posterEvents=uiBridge.canvasSnapshot()->eventIndex->size();auto rect=uiCanvas->documentRect();auto start=uiCanvas->mapToScene({rect.left()+rect.width()*0.2,rect.top()+rect.height()*0.8}).toPoint();auto end=uiCanvas->mapToScene({rect.left()+rect.width()*0.8,rect.top()+rect.height()*0.8}).toPoint();
+ QTest::mousePress(uiWindow,Qt::LeftButton,{},start);QTest::mouseMove(uiWindow,end);QTest::mouseRelease(uiWindow,Qt::LeftButton,{},end);QTest::qWait(200);assert(uiBridge.canvasSnapshot()->eventIndex->size()==posterEvents+1);assert(uiCanvas->renderError().isEmpty());
+ auto paintedShot=uiWindow->grabWindow();auto strokeMid=(start+end)/2;int darkest=255;for(int dy=-2;dy<=2;dy++)for(int dx=-2;dx<=2;dx++)darkest=std::min(darkest,paintedShot.pixelColor(strokeMid+QPoint(dx,dy)).red());assert(darkest<120);
+ const auto posterPainted=*uiBridge.canvasSnapshot();auto savedPoster=dir.filePath("poster-painted.draw");uiBridge.saveUrl(QUrl::fromLocalFile(savedPoster));uiBridge.openUrl(QUrl::fromLocalFile(savedPoster));QTest::qWait(200);assert(uiBridge.canvasSnapshot()->sameContent(posterPainted));assert(uiCanvas->renderError().isEmpty());
+ std::cout<<"PASS real Qt software/QML: imported pixels, native paint, pan/zoom, visible error recovery; 3300x5100 seam-free display, paint, save/reopen\n";
 }

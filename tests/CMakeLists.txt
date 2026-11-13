@@ -256,11 +256,11 @@ if(DRAWBORAD_QT_CANVAS_TESTS)
     ${PROJECT_SOURCE_DIR}/src/platform/CanvasItem.cpp ${PROJECT_SOURCE_DIR}/src/platform/CanvasItem.h)
   set_target_properties(test_CanvasWindow PROPERTIES AUTOMOC ON)
   target_include_directories(test_CanvasWindow PRIVATE ${PROJECT_SOURCE_DIR})
-  target_compile_definitions(test_CanvasWindow PRIVATE DRAWBORAD_HAS_QT)
+  target_compile_definitions(test_CanvasWindow PRIVATE DRAWBORAD_HAS_QT DRAWBORAD_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
   target_compile_options(test_CanvasWindow PRIVATE -UNDEBUG)
   target_link_libraries(test_CanvasWindow PRIVATE drawborad_workflow drawborad_render Qt6::Quick Qt6::QuickControls2 Qt6::Test)
   add_test(NAME Desktop.QtSoftwareCanvas COMMAND test_CanvasWindow)
-  set_tests_properties(Desktop.QtSoftwareCanvas PROPERTIES TIMEOUT 60 ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+  set_tests_properties(Desktop.QtSoftwareCanvas PROPERTIES TIMEOUT 180 ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 endif()
 
 # Register all native features before labeling the test inventory.

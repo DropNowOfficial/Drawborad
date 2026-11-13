@@ -9,6 +9,7 @@
 #include <QWheelEvent>
 #include <QSGSimpleRectNode>
 #include <QSGSimpleTextureNode>
+#include <QSGRendererInterface>
 #include <QSGOpacityNode>
 #include <QSGTransformNode>
 #include <QSGClipNode>
@@ -236,9 +237,11 @@ QSGNode* CanvasItem::updatePaintNode(QSGNode* old,UpdatePaintNodeData*){
     documentClip->setClipRect(QRectF(0, 0, double(snap->spec.pixelSize.width), double(snap->spec.pixelSize.height)));
     viewport->appendChildNode(documentClip);
     if(!frame.isNull()){
-        // Texture tiles avoid hardware maximum texture dimensions on print-size canvases.
-        for(int y=0;y<frame.height();y+=int(TileSide))for(int x=0;x<frame.width();x+=int(TileSide)){
-            const QRect rect(x,y,std::min(int(TileSide),frame.width()-x),std::min(int(TileSide),frame.height()-y));
+        // GPU tiles respect texture limits. Software paints one image to avoid
+        // fractional-scale seams between independently sampled tile edges.
+        const int displayTileSide=window()->rendererInterface()->graphicsApi()==QSGRendererInterface::Software ? std::max(frame.width(),frame.height()) : int(TileSide);
+        for(int y=0;y<frame.height();y+=displayTileSide)for(int x=0;x<frame.width();x+=displayTileSide){
+            const QRect rect(x,y,std::min(displayTileSide,frame.width()-x),std::min(displayTileSide,frame.height()-y));
             auto* texture=window()->createTextureFromImage(frame.copy(rect).convertToFormat(QImage::Format_RGBA8888_Premultiplied));
             if(!texture){
                 const auto failedDocument=snap->documentId;const auto failedRevision=snap->revision;const auto failedFrameKey=frame.cacheKey();
