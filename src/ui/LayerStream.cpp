@@ -14,6 +14,7 @@ Result<NativeLayerStream> NativeLayerStream::create(const DocumentSnapshot& s,Ev
   auto all=s;all.nodes=visibleNodes;auto p=planMergedDocument(all,budget);if(!p)return p.error();
   NativeLayerStream stream;stream.snapshot_=s;stream.limit_=limit;
   auto views=croppedRaster::PreparedViews::prepare(s);if(!views)return views.error();stream.croppedViews_=std::move(views.value());
+  auto history=persistentRaster::Prepared::prepare(s);if(!history)return history.error();stream.historyViews_=std::move(history.value());
   stream.order_=layerOrder(s);std::reverse(stream.order_.begin(),stream.order_.end());
   if(!s.spec.background.transparent)stream.order_.push_back(NodeId{}); // Bottom paper, not a document node.
   auto prepared=stream.renderer_.prepare(s);if(!prepared)return prepared.error();
@@ -47,10 +48,11 @@ Result<ArchiveLayer> NativeLayerStream::read(std::size_t index,std::stop_token s
   }
   const auto& node=s.nodes->at(id);out.name=node.name;out.visible=layerVisible(s,id);out.opacity=node.opacity;out.blend=node.blend;
   const bool cropped=croppedRaster::isStage(node.stage);
-  const bool raster=node.stage==LineartStage || cropped;croppedRaster::View crop;
+  const bool historyLayer=node.stage==persistentRaster::Stage;
+  const bool raster=node.stage==LineartStage || cropped || historyLayer;croppedRaster::View crop;
   std::span<const std::uint8_t> raw;
   if(cropped){const auto* v=croppedViews_.find(s,id);if(!v)return error(ErrorCode::CorruptData,"crop.prepared-view");crop=*v;}
-  else if(raster){auto source=lineartRasterPixels(s,id);if(!source)return source.error();raw=source.value();}
+  else if(raster&&!historyLayer){auto source=lineartRasterPixels(s,id);if(!source)return source.error();raw=source.value();}
   for(std::uint64_t y=0;y<size.height;y+=TileSide)for(std::uint64_t x=0;x<size.width;x+=TileSide){
    if(stop.stop_requested())return error(ErrorCode::Cancelled,"layer-stream.cancelled");
    Rect rect{std::int64_t(x),std::int64_t(y),std::min<std::uint64_t>(TileSide,size.width-x),std::min<std::uint64_t>(TileSide,size.height-y)};
@@ -58,7 +60,8 @@ Result<ArchiveLayer> NativeLayerStream::read(std::size_t index,std::stop_token s
    if(raster){
     TileData t;t.width=std::uint32_t(rect.width);t.height=std::uint32_t(rect.height);t.rowStride=rect.width*4;t.format=image.format;t.profileId=image.profileId;
     t.bytes.resize(std::size_t(t.rowStride*t.height));
-    if(cropped){auto copied=croppedRaster::copyRegion(crop,rect,t.bytes);if(!copied)return copied.error();}
+    if(historyLayer){auto copied=historyViews_.render(s,id,rect,t.bytes,stop);if(!copied)return copied.error();}
+    else if(cropped){auto copied=croppedRaster::copyRegion(crop,rect,t.bytes);if(!copied)return copied.error();}
     else for(std::uint32_t row=0;row<t.height;row++)std::copy_n(raw.begin()+std::ptrdiff_t(((y+row)*size.width+x)*4),std::size_t(t.rowStride),t.bytes.begin()+std::ptrdiff_t(row*t.rowStride));
     tile=std::move(t);
    }else tile=renderer_.renderRegion(s,id,rect,limit_,stop);

@@ -1,5 +1,6 @@
 #pragma once
 #include "MergedDocument.h"
+#include "core/PersistentRasterPaint.h"
 #include "core/MyPaintCroppedRaster.h"
 #include "codecs/LayerArchive.h"
 namespace drawborad {
@@ -13,6 +14,7 @@ class NativeLayerStream {
  std::vector<NodeId> order_;
  ReferenceRenderer renderer_;
  croppedRaster::PreparedViews croppedViews_;
+ persistentRaster::Prepared historyViews_;
  public:
  static Result<NativeLayerStream> create(const DocumentSnapshot&,EventLimit,MergedBudget={});
  std::size_t size()const{return order_.size();}

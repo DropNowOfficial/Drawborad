@@ -1,3 +1,4 @@
+#include "core/PersistentRasterPaint.h"
 #include "core/HiddenBoundary.h"
 #include "core/CroppedStrokeMask.h"
 #pragma once
@@ -53,7 +54,7 @@ inline bool nativeCompositingSupported(const DocumentSnapshot& snapshot, NodeId 
         if (found == snapshot.nodes->end()) return false;
         const auto& node = found->second;
         if(node.stage==hiddenBoundary::Stage){if(!hiddenBoundary::parse(snapshot,node))return false;id=node.parent;continue;}
-        const bool lineart=(node.stage==LineartStage && bool(lineartRasterPixels(snapshot,id))) || (croppedRaster::isStage(node.stage) && (prepared?prepared->find(snapshot,id)!=nullptr:bool(croppedRaster::parse(snapshot,id))));
+        const bool lineart=(node.stage==persistentRaster::Stage && node.kind==NodeKind::Layer && node.sourceKind==SourceKind::ImportedRaster && node.content.empty() && node.children.empty() && node.blend==BlendMode::Normal && node.maskId.empty()) || (node.stage==LineartStage && bool(lineartRasterPixels(snapshot,id))) || (croppedRaster::isStage(node.stage) && (prepared?prepared->find(snapshot,id)!=nullptr:bool(croppedRaster::parse(snapshot,id))));
         if (!lineart && (!node.content.empty() || node.sourceKind != SourceKind::Reconstructed ||
             !node.sourceResource.empty() || node.blend != BlendMode::Normal ||
             (node.kind != NodeKind::Layer && node.opacity != 1))) return false;

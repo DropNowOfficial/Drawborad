@@ -1,3 +1,4 @@
+#include "core/PersistentRasterPaint.h"
 #include "MergedDocument.h"
 #include "render/DryInkCoverage.h"
 #include "view/LayerTree.h"
@@ -52,10 +53,12 @@ Result<MergedPlan> plan(const DocumentSnapshot& s,MergedBudget budget){
    if(!repeats || !addWithin(work,repeats.value(),budget.maxRasterWork))return error(ErrorCode::BudgetExceeded,"merged.mask-scan-limit");
   }
  }
+ auto history=persistentRaster::Prepared::prepare(s);if(!history)return history.error();
  auto prepared=croppedRaster::PreparedViews::prepare(s);if(!prepared)return prepared.error();
  for(const auto& [id,node]:*s.nodes)
   if(node.transform!=LayerTransform{} || !nativeCompositingSupported(s,id,&prepared.value()))return error(ErrorCode::UnsupportedFeature,"merged.native-compositing-required");
  MergedPlan out;out.mergedBytes=bytes.value();
+ if(!addWithin(work,history.value().work(),budget.maxRasterWork)||!addWithin(out.indexEntries,history.value().indexEntries(),budget.maxIndexEntries))return error(ErrorCode::BudgetExceeded,"paint-history.merged-budget");
  // One RGBA tile + uint16 coverage; two extra RGBA tiles of conservative slack.
  const auto tilePixels=std::min<std::uint64_t>(TileSide,size.width)*std::min<std::uint64_t>(TileSide,size.height);
  const bool hasDryInk=std::any_of(s.eventIndex->begin(),s.eventIndex->end(),[](const auto& e){return e.engineVersion==12;});
@@ -63,7 +66,7 @@ Result<MergedPlan> plan(const DocumentSnapshot& s,MergedBudget budget){
  for(const auto& [id,node]:*s.nodes)if(node.kind==NodeKind::Layer && layerVisible(s,id))
   if(!addWithin(work,pixels.value(),budget.maxRasterWork))return error(ErrorCode::BudgetExceeded,"merged.composite-work-limit");
  for(const auto& e:*s.eventIndex){
-  if(s.nodes->contains(e.layerId) && (s.nodes->at(e.layerId).stage==LineartStage || croppedRaster::isStage(s.nodes->at(e.layerId).stage)))return error(ErrorCode::UnsupportedFeature,"lineart.paint-events");
+  if(s.nodes->contains(e.layerId) && (s.nodes->at(e.layerId).stage==LineartStage || croppedRaster::isStage(s.nodes->at(e.layerId).stage)||s.nodes->at(e.layerId).stage==persistentRaster::Stage))return error(ErrorCode::UnsupportedFeature,"lineart.paint-events");
   auto b=strokeBounds(e);if(!b)return b.error();
   const auto& r=b.value();
   const auto nx=std::uint64_t(tileAt(r.x+std::int64_t(r.width)-1)-tileAt(r.x)+1);
@@ -89,6 +92,7 @@ Result<MergedPlan> plan(const DocumentSnapshot& s,MergedBudget budget){
   auto total=checkedMultiply(eventWork,count.value());if(!total || !addWithin(work,total.value(),budget.maxRasterWork))return error(ErrorCode::BudgetExceeded,"merged.raster-work-limit");
  }
  out.estimatedBytes=out.mergedBytes;
+ if(!addWithin(out.estimatedBytes,history.value().estimatedBytes(),budget.maxBytes))return error(ErrorCode::BudgetExceeded,"paint-history.merged-memory");
  // Index map nodes/vectors, candidate copies, bounds and node traversal allowance.
  const auto cropCount=std::count_if(s.nodes->begin(),s.nodes->end(),[](const auto& item){return croppedRaster::isStage(item.second.stage);});
  // Only cropped layers allocate entries in PreparedViews; legacy nodes retain
@@ -106,7 +110,8 @@ Result<MergedDocument> renderMergedDocument(const DocumentSnapshot& s,EventLimit
  if(limit.revision!=s.revision)return error(ErrorCode::StaleRevision,"merged.revision");
  auto p=planMergedDocument(s,budget);if(!p)return p.error();
  try{
-  auto prepared=croppedRaster::PreparedViews::prepare(s);if(!prepared)return prepared.error();
+  auto history=persistentRaster::Prepared::prepare(s);if(!history)return history.error();
+ auto prepared=croppedRaster::PreparedViews::prepare(s);if(!prepared)return prepared.error();
   MergedDocument out;out.plan=p.value();auto& dest=out.merged;
   const auto size=s.spec.pixelSize;dest.width=std::uint32_t(size.width);dest.height=std::uint32_t(size.height);
   dest.rowStride=size.width*4;dest.format=s.spec.colorSpec.format;dest.profileId=s.spec.colorSpec.profileId;dest.engineVersion=2;
@@ -123,15 +128,17 @@ Result<MergedDocument> renderMergedDocument(const DocumentSnapshot& s,EventLimit
     if(stop.stop_requested())return error(ErrorCode::Cancelled,"merged.cancelled");
     Rect rect{std::int64_t(x),std::int64_t(y),std::min<std::uint64_t>(TileSide,size.width-x),std::min<std::uint64_t>(TileSide,size.height-y)};
     const bool cropped=croppedRaster::isStage(s.nodes->at(id).stage);
-    const bool raster=s.nodes->at(id).stage==LineartStage || cropped;
+    const bool historyLayer=s.nodes->at(id).stage==persistentRaster::Stage;
+    const bool raster=s.nodes->at(id).stage==LineartStage || cropped || historyLayer;
     Result<TileData> tile=error(ErrorCode::UnsupportedFeature,"lineart.tile");
     if(raster){
      std::span<const std::uint8_t> raw;croppedRaster::View crop;
      if(cropped){const auto* v=prepared.value().find(s,id);if(!v)return error(ErrorCode::CorruptData,"crop.prepared-view");crop=*v;}
-     else {auto v=lineartRasterPixels(s,id);if(!v)return v.error();raw=v.value();}
+     else if(!historyLayer) {auto v=lineartRasterPixels(s,id);if(!v)return v.error();raw=v.value();}
      TileData t;t.width=std::uint32_t(rect.width);t.height=std::uint32_t(rect.height);t.rowStride=rect.width*4;
      t.format=s.spec.colorSpec.format;t.profileId=s.spec.colorSpec.profileId;t.bytes.resize(std::size_t(t.rowStride*t.height));
-     if(cropped){auto copied=croppedRaster::copyRegion(crop,rect,t.bytes);if(!copied)return copied.error();}
+     if(historyLayer){auto copied=history.value().render(s,id,rect,t.bytes,stop);if(!copied)return copied.error();}
+     else if(cropped){auto copied=croppedRaster::copyRegion(crop,rect,t.bytes);if(!copied)return copied.error();}
      else for(std::uint32_t row=0;row<t.height;row++)std::copy_n(raw.begin()+std::ptrdiff_t(((y+row)*size.width+x)*4),std::size_t(t.rowStride),t.bytes.begin()+std::ptrdiff_t(row*t.rowStride));
      tile=std::move(t);
     }else tile=renderer.renderRegion(s,id,rect,limit,stop);

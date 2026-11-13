@@ -103,6 +103,7 @@ class Document {
     Result<ChangeSet> commitExternal(const DocumentSnapshot&, Revision);
     DocumentSnapshot state_;
     std::vector<DocumentSnapshot> undo_, redo_;
+    Result<void> admitRasterHistoryMemory(std::uint64_t candidateBytes,std::uint64_t candidateEntries=0) const;
     explicit Document(DocumentSnapshot s) : state_(std::move(s)) {}
     Result<ChangeSet> restore(std::vector<DocumentSnapshot>&, std::vector<DocumentSnapshot>&);
 

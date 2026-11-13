@@ -91,6 +91,14 @@ Result<ChangeSet> Document::apply(const Command& cmd, Revision expected) {
         return error(ErrorCode::Overflow, "revision.overflow");
     if (cmd.version != 1 || cmd.operations.empty() || cmd.operations.size() > 65536)
         return error(ErrorCode::InvalidInput, "command.version-or-size");
+    bool persistent=persistentRaster::present(state_);std::uint64_t candidateBytes=0;
+    for(const auto&op:cmd.operations){if(const auto*n=std::get_if<AddNode>(&op))persistent=persistent||n->node.stage==persistentRaster::Stage;if(std::holds_alternative<AppendRasterPatch>(op)||std::holds_alternative<StepRasterHistory>(op))persistent=true;}
+    if(persistent)for(const auto&op:cmd.operations){
+        if(const auto*n=std::get_if<AddNode>(&op))persistent=persistent||n->node.stage==persistentRaster::Stage;
+        if(std::holds_alternative<AppendRasterPatch>(op)||std::holds_alternative<StepRasterHistory>(op)){persistent=true;if(candidateBytes>persistentRaster::MaxRetainedBytes-2*persistentRaster::MaxManifestBytes)return error(ErrorCode::BudgetExceeded,"paint-history.candidate-peak");candidateBytes+=2*persistentRaster::MaxManifestBytes;}
+        if(const auto*r=std::get_if<InstallResource>(&op)){if(!r->resource.bytes||r->resource.bytes->size()>persistentRaster::MaxRetainedBytes/2||candidateBytes>persistentRaster::MaxRetainedBytes-2*r->resource.bytes->size())return error(ErrorCode::BudgetExceeded,"paint-history.candidate-peak");candidateBytes+=2*r->resource.bytes->size();}
+    }
+    if(persistent){auto budget=admitRasterHistoryMemory(candidateBytes,cmd.operations.size()*2);if(!budget)return budget.error();}
     auto next = state_;
     auto ns = std::make_shared<NodeMap>(*state_.nodes);
     auto rs = std::make_shared<ResourceMap>(*state_.resources);
@@ -115,7 +123,25 @@ Result<ChangeSet> Document::apply(const Command& cmd, Revision expected) {
             std::visit(
                 [&](const auto& o) {
                     using O = std::decay_t<decltype(o)>;
-                    if constexpr (std::is_same_v<O, InstallResource>) {
+                    if constexpr (std::is_same_v<O, AppendRasterPatch> || std::is_same_v<O, StepRasterHistory>) {
+                        exists(o.id);require(!locked(*ns,o.id),ErrorCode::Locked,"paint-history.locked");
+                        auto& node=ns->at(o.id);require(node.stage==persistentRaster::Stage&&node.sourceResource==o.expectedManifest,ErrorCode::StaleRevision,"paint-history.source");
+                        auto history=persistentRaster::read(next,o.id);if(!history)throw Failure{history.error()};
+                        if constexpr(std::is_same_v<O,AppendRasterPatch>){
+                            require(history.value().cursor==history.value().records.size(),ErrorCode::UnsupportedFeature,"paint-history.branch-required");
+                            require(history.value().records.size()<persistentRaster::MaxRecords,ErrorCode::BudgetExceeded,"paint-history.record-limit");
+                            auto pixels=persistentRaster::patch(next,o.record.patch);if(!pixels)throw Failure{pixels.error()};
+                            history.value().records.push_back(o.record);++history.value().cursor;
+                        }else{
+                            require(o.delta==1||o.delta==-1,ErrorCode::InvalidInput,"paint-history.step");
+                            require(o.delta==1?history.value().cursor<history.value().records.size():history.value().cursor>0,ErrorCode::InvalidInput,"paint-history.no-step");
+                            if(o.delta==1)++history.value().cursor;else --history.value().cursor;
+                        }
+                        auto resource=persistentRaster::manifest(history.value());if(!resource)throw Failure{resource.error()};
+                        const auto hash=resource.value().id;auto old=rs->find(hash);require(old==rs->end()||old->second==resource.value(),ErrorCode::DigestMismatch,"paint-history.collision");
+                        if(old==rs->end()){rs->emplace(hash,std::move(resource.value()));}
+                        node.sourceResource=hash;change.resourceRefs.push_back(hash);mark(o.id);
+                    } else if constexpr (std::is_same_v<O, InstallResource>) {
                         require(!o.resource.id.empty() && o.resource.bytes != nullptr,
                                 ErrorCode::InvalidInput, "resource.id");
                         auto r = o.resource;

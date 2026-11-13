@@ -1,3 +1,4 @@
+#include "PersistentRasterPaint.h"
 #include "core/CubicInkEvent.h"
 #include "core/ContinuousEraserEvent.h"
 #include "core/ChiselInkEvent.h"
@@ -50,6 +51,11 @@ Result<void> validateSnapshot(const DocumentSnapshot& s) {
         return error(ErrorCode::CorruptData, "document.spec");
     if (f.mode == ColorMode::CMYK && s.spec.colorSpec.profileId.empty())
         return error(ErrorCode::ProfileRequired, "color.cmyk-profile");
+    if(persistentRaster::present(s)){
+        if(f.mode!=ColorMode::RGB||f.depth!=Depth::U8||!f.alpha||!s.spec.colorSpec.profileId.empty())return error(ErrorCode::UnsupportedFeature,"paint-history.rgb8-unprofiled");
+        std::uint64_t bytes=0;for(const auto&[h,r]:*s.resources){(void)h;if(!r.bytes||r.bytes->size()>persistentRaster::MaxRetainedBytes-bytes)return error(ErrorCode::BudgetExceeded,"paint-history.resources");bytes+=r.bytes->size();}
+        auto h=persistentRaster::Prepared::prepare(s);if(!h)return h.error();
+    }
     for(const auto& [hash,r]:*s.resources)if(cropMask::tagged(r)){auto mask=cropMask::parse(s,r);if(!mask)return mask.error();}
     std::set<NodeId> listed;
     for (auto& [id, n] : ns) {
@@ -243,6 +249,16 @@ Result<ChangeSet> Document::restore(std::vector<DocumentSnapshot>& from,
 }
 Result<ChangeSet> Document::undo() { return restore(undo_, redo_); }
 Result<ChangeSet> Document::redo() { return restore(redo_, undo_); }
+Result<void> Document::admitRasterHistoryMemory(std::uint64_t candidateBytes,std::uint64_t candidateEntries) const try {
+    if(undo_.size()+redo_.size()>=4096)return error(ErrorCode::BudgetExceeded,"paint-history.snapshot-limit");
+    if(candidateBytes>persistentRaster::MaxRetainedBytes)return error(ErrorCode::BudgetExceeded,"paint-history.candidate-peak");
+    std::uint64_t bytes=candidateBytes;std::set<const Bytes*> seen;std::set<const ResourceMap*> maps;std::set<const NodeMap*> nodeMaps;std::uint64_t entries=state_.resources->size()+state_.nodes->size()+candidateEntries;if(entries>262144)return error(ErrorCode::BudgetExceeded,"paint-history.map-entries");
+    auto scan=[&](const DocumentSnapshot&s)->bool{if(nodeMaps.insert(s.nodes.get()).second){if(s.nodes->size()>262144-entries)return false;entries+=s.nodes->size();}if(!maps.insert(s.resources.get()).second)return true;if(s.resources->size()>262144-entries)return false;entries+=s.resources->size();for(const auto&[h,r]:*s.resources){(void)h;if(!r.bytes)return false;if(seen.insert(r.bytes.get()).second){if(r.bytes->size()>persistentRaster::MaxRetainedBytes-bytes)return false;bytes+=r.bytes->size();}}return true;};
+    if(!scan(state_))return error(ErrorCode::BudgetExceeded,"paint-history.retained-memory");
+    for(const auto&s:undo_)if(!scan(s))return error(ErrorCode::BudgetExceeded,"paint-history.retained-memory");
+    for(const auto&s:redo_)if(!scan(s))return error(ErrorCode::BudgetExceeded,"paint-history.retained-memory");
+    return {};
+}catch(const std::bad_alloc&){return error(ErrorCode::BudgetExceeded,"paint-history.allocation");}
 Result<ChangeSet> Document::commitExternal(const DocumentSnapshot& next, Revision expected) {
     if (state_.revision != expected || expected == UINT64_MAX || next.revision != expected + 1 ||
         next.documentId != state_.documentId)
@@ -251,6 +267,10 @@ Result<ChangeSet> Document::commitExternal(const DocumentSnapshot& next, Revisio
         return error(ErrorCode::InvalidInput,"worker.fill-record-rewrite");
     if (next.spec != state_.spec)
         return error(ErrorCode::InvalidInput, "worker.cannot-change-document-spec");
+    // External workers cannot author, rewrite, remove, or strip this native history.
+    for(const auto&[id,n]:*state_.nodes)if(n.stage==persistentRaster::Stage){auto it=next.nodes->find(id);if(it==next.nodes->end()||it->second!=n)return error(ErrorCode::UnsupportedFeature,"worker.paint-history");}
+    for(const auto&[id,n]:*next.nodes)if(n.stage==persistentRaster::Stage){auto it=state_.nodes->find(id);if(it==state_.nodes->end()||it->second!=n)return error(ErrorCode::UnsupportedFeature,"worker.paint-history");}
+    if(persistentRaster::present(state_)||persistentRaster::present(next)){if(*state_.resources!=*next.resources)return error(ErrorCode::UnsupportedFeature,"worker.paint-history-resources");auto mem=admitRasterHistoryMemory(0);if(!mem)return mem.error();}
     auto valid = validateSnapshot(next);
     if (!valid)
         return valid.error();

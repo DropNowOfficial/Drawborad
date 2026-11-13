@@ -356,7 +356,7 @@ void CanvasItem::finishStroke(){
         const auto preset=gestureMyPaintPreset_;const auto scale=gestureMyPaintScale_;const bool mouse=!tabletStroke_;
         stroke_.clear();strokeTarget_.reset();gestureMyPaint_=false;tabletStroke_=false;clearPreview();emit renderErrorChanged();
         const bool started=bridge_->previewMyPaintGesture(std::move(samples),color,opacity,preset,scale,mouse);
-        brushNotice_=started?tr("已收笔，MyPaint 正在真实验收；未接受前原稿不变。"):tr("MyPaint 未启动，工程未改。");emit brushSettingsChanged();return;
+        brushNotice_=started?tr("本笔已交给 MyPaint；处理进度请查看审阅状态。"):tr("MyPaint 未启动，工程未改。");emit brushSettingsChanged();return;
     }
     if(!snap||!strokeTarget_||strokeTarget_->document!=snap->documentId||
        strokeTarget_->generation!=bridge_->canvasGeneration()||

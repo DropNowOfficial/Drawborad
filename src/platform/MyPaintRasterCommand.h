@@ -16,4 +16,6 @@ Result<unsigned> desktopMyPaintStrokeCount(const DocumentSnapshot&);
 Result<void> validateMyPaintRuntime(const MyPaintRuntime&);
 Result<MyPaintRasterCandidate> buildMyPaintRasterCommand(const DocumentSnapshot&,Revision,
     const MyPaintGesture&,NodeId newLayer,NodeId folder,const MyPaintRuntime&,std::stop_token={});
+Result<MyPaintRasterCandidate> buildMyPaintPersistentCommand(const DocumentSnapshot&,Revision,
+    const MyPaintGesture&,NodeId layer,Id strokeId,const MyPaintRuntime&,std::stop_token={});
 }

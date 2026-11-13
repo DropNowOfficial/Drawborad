@@ -36,6 +36,8 @@ class QtBridge : public QObject {
     Q_PROPERTY(QVariantList editableStrokes READ editableStrokes NOTIFY changed)
     Q_PROPERTY(QString selectedEditStroke READ selectedEditStroke NOTIFY changed)
     Q_PROPERTY(QVariantList localStrokePoints READ localStrokePoints NOTIFY changed)
+    Q_PROPERTY(bool persistentPaintSelected READ persistentPaintSelected NOTIFY changed)
+    Q_PROPERTY(QString persistentPaintStatus READ persistentPaintStatus NOTIFY changed)
     Q_PROPERTY(bool myPaintAvailable READ myPaintAvailable NOTIFY changed)
     Q_PROPERTY(QString myPaintStatus READ myPaintStatus NOTIFY changed)
     Q_PROPERTY(bool myPaintPreviewPending READ myPaintPreviewPending NOTIFY changed)
@@ -206,6 +208,10 @@ class QtBridge : public QObject {
     Q_INVOKABLE void createDocument(double width, double height, double ppi, bool whitePaper = false);
     Q_INVOKABLE bool addLayer();
     Q_INVOKABLE bool addFinishingLayer();
+    Q_INVOKABLE bool addPersistentPaintLayer();
+    Q_INVOKABLE bool stepPersistentPaint(int delta);
+    bool persistentPaintSelected() const;
+    QString persistentPaintStatus() const;
     Q_INVOKABLE bool useActiveBoundary();
     Q_INVOKABLE bool clearSelectedBoundary();
     QString selectedBoundaryName() const;

@@ -50,16 +50,16 @@ Result<void> validateMyPaintRuntime(const MyPaintRuntime& r) try {
     (void)read(r.worker,256*1024);return {};
 #endif
 }catch(const Failure& f){return f.error;}catch(const std::bad_alloc&){return error(ErrorCode::BudgetExceeded,"mypaint.runtime-allocation");}
-Result<MyPaintRasterCandidate> buildMyPaintRasterCommand(const DocumentSnapshot& s,Revision revision,
-    const MyPaintGesture& input,NodeId layer,NodeId folder,const MyPaintRuntime& runtime,std::stop_token stop) try {
+namespace {
+struct ValidatedPatch {Bytes rgba,png,manifest;Rect roi;};
+Result<ValidatedPatch> validatedPatch(const DocumentSnapshot& s,Revision revision,
+    const MyPaintGesture& input,const MyPaintRuntime& runtime,std::stop_token stop) try {
     const auto checkStop=[&]{need(!stop.stop_requested(),"mypaint.cancelled",ErrorCode::Cancelled);};checkStop();
     need(s.revision==revision,"mypaint.revision",ErrorCode::StaleRevision);
-    auto valid=validateSnapshot(s);if(!valid)return valid.error();auto count=desktopMyPaintStrokeCount(s);if(!count)return count.error();need(count.value()<32,"mypaint.desktop-32-stroke-limit",ErrorCode::BudgetExceeded);
+    auto valid=validateSnapshot(s);if(!valid)return valid.error();
     const auto w=s.spec.pixelSize.width,h=s.spec.pixelSize.height;
     need(s.spec.colorSpec.format==PixelFormat{ColorMode::RGB,Depth::U8,true}&&s.spec.colorSpec.profileId.empty(),"mypaint.rgb8-unprofiled-only",ErrorCode::UnsupportedFeature);
     need(w&&h&&w<=8192&&h<=8192&&w*h<=20000000,"mypaint.canvas",ErrorCode::BudgetExceeded);
-    need(!layer.empty()&&!folder.empty()&&layer!=folder&&!s.nodes->contains(layer),"mypaint.layer-id");
-    const bool newFolder=!s.nodes->contains(folder);need(newFolder||eligible(s,folder),"mypaint.folder-not-top-neutral");
     const auto& rootNode=s.nodes->at(Document::rootId());
     need(rootNode.visible&&!rootNode.locked&&rootNode.opacity==1&&rootNode.blend==BlendMode::Normal&&rootNode.transform==LayerTransform{}&&rootNode.maskId.empty(),"mypaint.root-not-neutral");
     need(input.samples.size()>=2&&input.samples.size()<=1024,"mypaint.sample-count",ErrorCode::BudgetExceeded);
@@ -103,11 +103,41 @@ Result<MyPaintRasterCandidate> buildMyPaintRasterCommand(const DocumentSnapshot&
     need(pixels.width==roi.width&&pixels.height==roi.height&&pixels.rowStride==roi.width*4&&pixels.format==PixelFormat{ColorMode::RGB,Depth::U8,true}&&info.icc.empty()&&info.iccProfile.empty()&&pixels.profileId.empty(),"mypaint.png-layout");need(QString::fromStdString(sha256(pixels.bytes).hex())==worker["rgba_sha256"].toString(),"mypaint.rgba-digest",ErrorCode::DigestMismatch);
     bool visible=false;for(std::size_t i=0;i<pixels.bytes.size();i+=4){visible|=pixels.bytes[i+3]!=0;for(unsigned c=0;c<3;++c)need(pixels.bytes[i+c]==std::uint8_t(std::lround(input.color.channels[c]*255)),"mypaint.pixel-color");}need(visible,"mypaint.empty");checkStop();
     manifest["desktop_protocol"]=Marker;manifest["mouse_pressure_simulated"]=input.mouseSimulated;manifest["tilt_ignored"]=tiltIgnored;manifest["desktop_opacity"]=input.opacity*input.color.alpha;
-    const auto stored=QJsonDocument(manifest).toJson(QJsonDocument::Compact);auto command=croppedRaster::makeNormal(std::move(pixels.bytes),Bytes(png.begin(),png.end()),Bytes(stored.begin(),stored.end()),roi,w,h,layer);if(!command)return command.error();
+    const auto stored=QJsonDocument(manifest).toJson(QJsonDocument::Compact);
+    return ValidatedPatch{std::move(pixels.bytes),Bytes(png.begin(),png.end()),Bytes(stored.begin(),stored.end()),roi};
+}catch(const Failure& f){return f.error;}catch(const std::bad_alloc&){return error(ErrorCode::BudgetExceeded,"mypaint.allocation");}
+}
+Result<MyPaintRasterCandidate> buildMyPaintRasterCommand(const DocumentSnapshot& s,Revision revision,
+    const MyPaintGesture& input,NodeId layer,NodeId folder,const MyPaintRuntime& runtime,std::stop_token stop) try {
+    const auto checkStop=[&]{need(!stop.stop_requested(),"mypaint.cancelled",ErrorCode::Cancelled);};checkStop();
+    need(s.revision==revision,"mypaint.revision",ErrorCode::StaleRevision);
+    auto count=desktopMyPaintStrokeCount(s);if(!count)return count.error();need(count.value()<32,"mypaint.desktop-32-stroke-limit",ErrorCode::BudgetExceeded);
+    need(!layer.empty()&&!folder.empty()&&layer!=folder&&!s.nodes->contains(layer),"mypaint.layer-id");
+    const bool newFolder=!s.nodes->contains(folder);need(newFolder||eligible(s,folder),"mypaint.folder-not-top-neutral");
+    auto data=validatedPatch(s,revision,input,runtime,stop);if(!data)return data.error();const auto roi=data.value().roi;
+    auto command=croppedRaster::makeNormal(std::move(data.value().rgba),std::move(data.value().png),std::move(data.value().manifest),roi,s.spec.pixelSize.width,s.spec.pixelSize.height,layer);if(!command)return command.error();
     std::uint64_t resourceBytes=0;for(const auto& [id,r]:*s.resources){(void)id;resourceBytes+=r.bytes->size();}for(const auto& op:command.value().operations)if(const auto* r=std::get_if<InstallResource>(&op))if(!s.resources->contains(r->resource.id))resourceBytes+=r->resource.bytes->size();need(resourceBytes<=128ULL*1024*1024,"mypaint.document-resource-budget",ErrorCode::BudgetExceeded);
     if(newFolder){LayerNode n;n.id=folder;n.parent=Document::rootId();n.kind=NodeKind::Group;n.stage=FolderStage;n.name="MyPaint strokes (up to 32)";command.value().operations.insert(command.value().operations.begin(),AddNode{n});}
     for(auto& op:command.value().operations)if(auto* n=std::get_if<AddNode>(&op))if(n->node.id==layer){n->node.parent=folder;n->node.name="MyPaint "+input.preset.toStdString()+" (baked stroke)";n->node.opacity=input.opacity*input.color.alpha;}
     auto candidate=Document::fromSnapshot(s);if(!candidate)return candidate.error();auto applied=candidate.value().apply(command.value(),revision);if(!applied)return applied.error();auto mergedPlan=planMergedDocument(candidate.value().snapshot());if(!mergedPlan)return mergedPlan.error();checkStop();
     return MyPaintRasterCandidate{revision,std::move(command.value()),roi,layer,folder};
 }catch(const Failure& f){return f.error;}catch(const std::bad_alloc&){return error(ErrorCode::BudgetExceeded,"mypaint.allocation");}
+Result<MyPaintRasterCandidate> buildMyPaintPersistentCommand(const DocumentSnapshot&s,Revision revision,
+ const MyPaintGesture& input,NodeId layer,Id strokeId,const MyPaintRuntime& runtime,std::stop_token stop)try{
+ need(!stop.stop_requested(),"mypaint.cancelled",ErrorCode::Cancelled);need(s.revision==revision,"mypaint.revision",ErrorCode::StaleRevision);
+ auto valid=validateSnapshot(s);if(!valid)return valid.error();auto history=persistentRaster::read(s,layer);if(!history)return history.error();
+ need(history.value().cursor==history.value().records.size(),"paint-history.branch-required",ErrorCode::UnsupportedFeature);
+ need(history.value().records.size()<persistentRaster::MaxRecords,"paint-history.record-limit",ErrorCode::BudgetExceeded);
+ need(!strokeId.empty()&&std::none_of(history.value().records.begin(),history.value().records.end(),[&](const auto&r){return r.id==strokeId;}),"paint-history.stroke-id");
+ for(auto id=layer;!id.empty();id=s.nodes->at(id).parent){const auto&n=s.nodes->at(id);need(n.visible&&!n.locked&&n.transform==LayerTransform{}&&n.maskId.empty()&&n.blend==BlendMode::Normal,"paint-history.layer-not-writable",ErrorCode::Locked);}
+ auto data=validatedPatch(s,revision,input,runtime,stop);if(!data)return data.error();
+ Resource png;png.kind=ResourceKind::Reference;png.id=sha256(data.value().png);png.bytes=std::make_shared<const Bytes>(std::move(data.value().png));
+ Resource provenance;provenance.kind=ResourceKind::Reference;provenance.id=sha256(data.value().manifest);provenance.bytes=std::make_shared<const Bytes>(std::move(data.value().manifest));
+ auto patch=persistentRaster::makePatch(s,data.value().roi,data.value().rgba,{png.id,provenance.id});if(!patch)return patch.error();
+ const auto opacity=std::uint8_t(std::lround(input.opacity*input.color.alpha*255));need(opacity!=0,"mypaint.opacity-quantized-empty");
+ Command command;command.operations={InstallResource{png},InstallResource{provenance},InstallResource{patch.value()},AppendRasterPatch{layer,s.nodes->at(layer).sourceResource,{strokeId,patch.value().id,opacity}}};
+ auto candidate=Document::fromSnapshot(s);if(!candidate)return candidate.error();auto applied=candidate.value().apply(command,revision);if(!applied)return applied.error();auto plan=planMergedDocument(candidate.value().snapshot());if(!plan)return plan.error();need(!stop.stop_requested(),"mypaint.cancelled",ErrorCode::Cancelled);
+ return MyPaintRasterCandidate{revision,std::move(command),data.value().roi,layer,{}};
+}catch(const Failure&f){return f.error;}catch(const std::bad_alloc&){return error(ErrorCode::BudgetExceeded,"mypaint.allocation");}
+
 }
