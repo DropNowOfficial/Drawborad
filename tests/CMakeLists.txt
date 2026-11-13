@@ -319,5 +319,17 @@ add_test(NAME Build.InventoryMatchesCTest COMMAND ${Python3_EXECUTABLE}
   --build ${CMAKE_BINARY_DIR} --ctest ${CMAKE_CTEST_COMMAND} --config "$<CONFIG>")
 set_tests_properties(Build.InventoryMatchesCTest PROPERTIES TIMEOUT 60)
 
+if(DRAWBORAD_QT_SOLID_MASK_CACHE)
+  add_executable(test_QtSolidMaskCache platform/test_qt_solid_mask_cache.cpp)
+  target_link_libraries(test_QtSolidMaskCache PRIVATE drawborad_qt_solid_masks Qt6::Core Qt6::Gui)
+  if(MSVC)
+    target_compile_options(test_QtSolidMaskCache PRIVATE /UNDEBUG)
+  else()
+    target_compile_options(test_QtSolidMaskCache PRIVATE -UNDEBUG)
+  endif()
+  add_test(NAME Qt.SolidMaskCache COMMAND test_QtSolidMaskCache)
+  set_tests_properties(Qt.SolidMaskCache PROPERTIES TIMEOUT 60 LABELS "ExperimentalQtBackend")
+endif()
+
 # Finalize only after every test, including this inventory regression.
 include(${PROJECT_SOURCE_DIR}/cmake/TestTargets.cmake)
