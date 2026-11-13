@@ -20,6 +20,7 @@ class QtBridge;
 class CanvasItem : public QQuickItem {
     Q_OBJECT
     Q_PROPERTY(QVariantList brushFootprint READ brushFootprint NOTIFY footprintChanged)
+    Q_PROPERTY(QVariantList cubicHandles READ cubicHandles NOTIFY viewChanged)
     Q_PROPERTY(QVariantList localStrokeHandles READ localStrokeHandles NOTIFY viewChanged)
     Q_PROPERTY(QObject* bridge READ studio WRITE setStudio NOTIFY studioChanged)
     Q_PROPERTY(bool closeGapTool READ closeGapTool WRITE setCloseGapTool NOTIFY brushSettingsChanged)
@@ -150,6 +151,8 @@ class CanvasItem : public QQuickItem {
     void viewChanged();
     void renderErrorChanged();
   public:
+    QVariantList cubicHandles() const;
+    Q_INVOKABLE bool moveCubicHandle(int index,double x,double y);
     QVariantList localStrokeHandles() const;
     bool closeGapTool() const { return closeGapTool_; }
     void setCloseGapTool(bool);

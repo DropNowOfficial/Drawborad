@@ -36,6 +36,10 @@ class QtBridge : public QObject {
     Q_PROPERTY(QVariantList editableStrokes READ editableStrokes NOTIFY changed)
     Q_PROPERTY(QString selectedEditStroke READ selectedEditStroke NOTIFY changed)
     Q_PROPERTY(QVariantList localStrokePoints READ localStrokePoints NOTIFY changed)
+    Q_PROPERTY(bool cubicPreviewPending READ cubicPreviewPending NOTIFY changed)
+    Q_PROPERTY(bool cubicDraftActive READ cubicDraftActive NOTIFY changed)
+    Q_PROPERTY(QVariantList cubicControls READ cubicControls NOTIFY cubicControlsChanged)
+    Q_PROPERTY(QVariantList editableCubics READ editableCubics NOTIFY changed)
     Q_PROPERTY(bool fillPending READ fillPending NOTIFY changed)
     Q_PROPERTY(bool strokeCommitBusy READ strokeCommitBusy NOTIFY changed)
     Q_PROPERTY(bool fillBusy READ fillBusy NOTIFY changed)
@@ -62,6 +66,7 @@ class QtBridge : public QObject {
     mutable std::shared_ptr<const Bytes> referenceCacheBytes_;
     mutable QString referenceCacheKey_, referenceCacheInfo_;
     void refreshOriginalReference() const;
+    enum class PreviewKind { Existing, CubicCreate, CubicEdit };
     struct LocalEditCompletion {
         std::optional<Command> command;
         DocumentSnapshot source;
@@ -72,6 +77,7 @@ class QtBridge : public QObject {
         bool closedInk{};
         bool withdrawal{};
         bool closeStroke{};
+        PreviewKind kind{PreviewKind::Existing};
     };
     std::mutex localEditMutex_;
     std::optional<LocalEditCompletion> localEditCompletion_;
@@ -86,6 +92,16 @@ class QtBridge : public QObject {
     bool pendingClosedInk_{false};
     bool pendingWithdrawal_{false};
     bool pendingCloseStroke_{false};
+    PreviewKind pendingKind_{PreviewKind::Existing};
+    mutable std::optional<DocumentSnapshot> cubicMenuSource_;
+    mutable std::optional<NodeId> cubicMenuLayer_;
+    mutable QVariantList cubicMenu_;
+    std::optional<DocumentSnapshot> cubicSource_;
+    std::optional<Id> cubicEvent_;
+    std::optional<NodeId> cubicLayer_;
+    std::array<std::array<double,2>,4> cubicPoints_{};
+    double cubicWidth_{4};
+    QColor cubicColor_{Qt::black};
     std::optional<NodeId> activeLayer_;
     std::optional<Id> selectedEditStroke_;
     mutable std::optional<DocumentSnapshot> editCacheSource_;
@@ -101,6 +117,16 @@ class QtBridge : public QObject {
     bool initializeCanvas(double width, double height, double ppi, bool whitePaper = false);
     void resetLayerSelection();
   public:
+    bool cubicPreviewPending() const { return pendingFill_.has_value() && pendingKind_!=PreviewKind::Existing; }
+    bool cubicDraftActive() const { return cubicSource_.has_value(); }
+    QVariantList cubicControls() const;
+    QVariantList editableCubics() const;
+    Q_INVOKABLE bool beginCubicDraft(double width, const QColor& color);
+    Q_INVOKABLE bool selectCubic(const QString& id);
+    Q_INVOKABLE bool moveCubicControl(int index,double x,double y);
+    Q_INVOKABLE bool previewCubic();
+    Q_INVOKABLE void cancelCubic();
+    Q_INVOKABLE bool resumeCubicDraft();
     Q_INVOKABLE QVariantMap sampleOriginalReference(const QString& expectedUrl,double x,double y) const;
     Q_INVOKABLE bool attachOriginalReferenceUrl(const QUrl&);
     QUrl originalReferenceUrl() const;
@@ -167,6 +193,7 @@ class QtBridge : public QObject {
     Q_INVOKABLE void probeWorker();
     Q_INVOKABLE void cancelWorker();
   signals:
+    void cubicControlsChanged();
     void changed();
 };
 }

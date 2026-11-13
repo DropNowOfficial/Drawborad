@@ -131,9 +131,9 @@ ApplicationWindow {
     FileDialog { id: oraExportDialog; title: qsTr("导出叶图层 ORA（组展开、蒙版烘焙；新文件名）"); fileMode: FileDialog.SaveFile; defaultSuffix: "ora"; nameFilters: ["OpenRaster (*.ora)"]; onAccepted: studio.workflow.exportNative(selectedFile, "ora") }
     FileDialog { id: psdDialog; title: qsTr("导出笔迹分层 PSD（请选择新文件名）"); fileMode: FileDialog.SaveFile; defaultSuffix: "psd"; nameFilters: ["Photoshop (*.psd)"]; onAccepted: studio.workflow.exportPsd(selectedFile) }
     FileDialog { id: relinkDialog; title: qsTr("选择与原始文件哈希一致的图片"); nameFilters: ["PNG/JPEG (*.png *.jpg *.jpeg)"]; onAccepted: studio.workflow.relinkSource(selectedFile) }
-    Dialog { id: fillPendingDialog; title: qsTr("填色尚未提交"); modal: true; standardButtons: Dialog.Ok; Label { text: qsTr("请等待笔迹/填色完成并保存，或取消未提交操作后再关闭。"); wrapMode: Text.Wrap } }
+    Dialog { id: fillPendingDialog; title: qsTr("操作尚未提交"); modal: true; standardButtons: Dialog.Ok; Label { text: qsTr("请先接受或取消曲线草稿、笔迹或填色，保存后再关闭。"); wrapMode: Text.Wrap } }
     onClosing: function(event) {
-        if (studio.strokeCommitBusy || studio.fillBusy || studio.fillPending) { event.accepted = false; fillPendingDialog.open(); return }
+        if (studio.cubicDraftActive || studio.strokeCommitBusy || studio.fillBusy || studio.fillPending) { event.accepted = false; fillPendingDialog.open(); return }
         if (studio.dirty && !approvedClose) { event.accepted = false; closeDialog.open() }
     }
     header: ToolBar {
@@ -177,7 +177,7 @@ ApplicationWindow {
                 TabButton { text: qsTr("原图与蒙版审阅") }
                 TabButton { text: qsTr("绘制结果") }
             }
-            NativeCanvas { id: nativeCanvas; objectName: "nativeCanvas"; anchors.fill: parent; anchors.margins: 24; anchors.topMargin: workspaceTabs.visible ? 64 : 24; visible: studio.hasDocument && !reviewPanel.visible; enabled: !strokeEditMode.checked; bridge: studio }
+            NativeCanvas { id: nativeCanvas; objectName: "nativeCanvas"; anchors.fill: parent; anchors.margins: 24; anchors.topMargin: workspaceTabs.visible ? 64 : 24; visible: studio.hasDocument && !reviewPanel.visible; enabled: !strokeEditMode.checked && !studio.cubicDraftActive; bridge: studio }
             Canvas {
                 id: strokeEditOverlay; objectName: "strokeEditOverlay"
                 x: nativeCanvas.x; y: nativeCanvas.y; width: nativeCanvas.width; height: nativeCanvas.height; z: 4
@@ -220,6 +220,50 @@ ApplicationWindow {
                         }
                     }
                     onCanceled: { strokeEditOverlay.selectedIndex=-1 }
+                }
+            }
+            Canvas {
+                id: cubicOverlay; objectName: "cubicOverlay"
+                x:nativeCanvas.x;y:nativeCanvas.y;width:nativeCanvas.width;height:nativeCanvas.height;z:6;clip:true
+                visible:nativeCanvas.visible && studio.cubicDraftActive
+                property var handles:nativeCanvas.cubicHandles
+                property int dragIndex:-1
+                property real startX:0
+                property real startY:0
+                focus:visible
+                Keys.onEscapePressed: { dragIndex=-1;studio.cancelCubic() }
+                onHandlesChanged:requestPaint()
+                onVisibleChanged:{abandonDrag();requestPaint();if(visible)forceActiveFocus()}
+                function abandonDrag(){if(dragIndex>=0)studio.moveCubicControl(dragIndex,startX,startY);dragIndex=-1}
+                onWidthChanged:abandonDrag()
+                onHeightChanged:abandonDrag()
+                onPaint:{
+                    const c=getContext("2d");c.clearRect(0,0,width,height);const p=handles;if(p.length!==4)return;
+                    c.strokeStyle="#efbc52";c.lineWidth=1;c.beginPath();c.moveTo(p[0].x,p[0].y);c.lineTo(p[1].x,p[1].y);c.moveTo(p[2].x,p[2].y);c.lineTo(p[3].x,p[3].y);c.stroke();
+                    if(!studio.fillPending){c.strokeStyle="#5dd6ff";c.beginPath();c.moveTo(p[0].x,p[0].y);c.bezierCurveTo(p[1].x,p[1].y,p[2].x,p[2].y,p[3].x,p[3].y);c.stroke();}
+                    for(let i=0;i<4;i++){c.fillStyle=(i===0||i===3)?"#5dd6ff":"#efbc52";c.beginPath();c.arc(p[i].x,p[i].y,6,0,Math.PI*2);c.fill();c.fillText(String(i+1),p[i].x+9,p[i].y-8)}
+                }
+                Connections { target:studio;function onChanged(){cubicOverlay.requestPaint()} }
+                Connections { target:nativeCanvas;function onViewChanged(){cubicOverlay.requestPaint()} }
+                Connections { target:window;function onActiveChanged(){if(!window.active)cubicOverlay.abandonDrag()} }
+                MouseArea {
+                    objectName:"cubicHandleDrag";anchors.fill:parent;acceptedButtons:Qt.LeftButton | Qt.MiddleButton
+                    enabled:!studio.fillBusy
+                    property real lastX:0;property real lastY:0
+                    onPressed:function(mouse){
+                        lastX=mouse.x;lastY=mouse.y;cubicOverlay.dragIndex=-1;
+                        if(mouse.button!==Qt.LeftButton||studio.fillPending)return;
+                        let distance=100;const p=cubicOverlay.handles;
+                        for(let i=0;i<p.length;i++){const d=Math.pow(p[i].x-mouse.x,2)+Math.pow(p[i].y-mouse.y,2);if(d<distance){distance=d;cubicOverlay.dragIndex=i}}
+                        if(cubicOverlay.dragIndex>=0){const source=studio.cubicControls[cubicOverlay.dragIndex];cubicOverlay.startX=source.x;cubicOverlay.startY=source.y}
+                    }
+                    onPositionChanged:function(mouse){
+                        if(pressedButtons & Qt.MiddleButton){cubicOverlay.abandonDrag();nativeCanvas.panBy(mouse.x-lastX,mouse.y-lastY);lastX=mouse.x;lastY=mouse.y;return}
+                        if((pressedButtons & Qt.LeftButton)&&cubicOverlay.dragIndex>=0)nativeCanvas.moveCubicHandle(cubicOverlay.dragIndex,mouse.x,mouse.y)
+                    }
+                    onReleased:function(mouse){if(mouse.button===Qt.LeftButton&&cubicOverlay.dragIndex>=0){const index=cubicOverlay.dragIndex;cubicOverlay.dragIndex=-1;if(mouse.x>=0&&mouse.y>=0&&mouse.x<width&&mouse.y<height){nativeCanvas.moveCubicHandle(index,mouse.x,mouse.y);studio.previewCubic()}else studio.moveCubicControl(index,cubicOverlay.startX,cubicOverlay.startY)}}
+                    onCanceled:{if(cubicOverlay.dragIndex>=0)studio.moveCubicControl(cubicOverlay.dragIndex,cubicOverlay.startX,cubicOverlay.startY);cubicOverlay.dragIndex=-1}
+                    onWheel:function(wheel){cubicOverlay.abandonDrag();nativeCanvas.zoomAt(wheel.angleDelta.y>0?1.25:.8,wheel.x,wheel.y);wheel.accepted=true}
                 }
             }
             Canvas { id: brushFootprintOverlay; objectName:"brushFootprintOverlay";x:nativeCanvas.x;y:nativeCanvas.y;width:nativeCanvas.width;height:nativeCanvas.height;z:3;clip:true;visible:nativeCanvas.visible && nativeCanvas.enabled
@@ -345,7 +389,7 @@ ApplicationWindow {
             Label { text: qsTr("当前验证范围：PNG/JPEG、RGB 8 位、最多 400 万像素；暂不支持半透明对象组。"); color: "#b5b5bd"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Button { objectName: "cancelWorkerButton"; text: qsTr("取消后台任务"); visible: studio.busy; enabled: studio.busy; onClicked: studio.cancelWorker() }
             ProgressBar { objectName: "workerProgress"; visible: studio.workflow.busy; Layout.fillWidth: true; from: 0; to: Math.max(1, studio.workflow.progressTotal); value: studio.workflow.progressCompleted; indeterminate: studio.workflow.progressTotal === 0 }
-            BusyIndicator { running: studio.workflow.busy; visible: running }
+            BusyIndicator { running: studio.workflow.busy && !studio.cubicDraftActive; visible: running }
             Label { text: qsTr("候选可能是背景或物体部件。请自行命名、选取和合并；不会补画被遮挡内容。"); visible: studio.workflow.hasReview; color: "#c9d2d6"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Repeater {
                 model: studio.workflow.candidates
@@ -446,6 +490,13 @@ ApplicationWindow {
                 }
                 ScrollBar.vertical: ScrollBar { }
             }
+            Button { objectName:"newCubicButton";text:qsTr("新建原生四点曲线草稿");enabled:studio.hasDocument && !studio.busy;Layout.fillWidth:true;onClicked:studio.beginCubicDraft(Math.max(.5,Math.min(128,nativeCanvas.brushWidth)),nativeCanvas.brushColor) }
+            ComboBox { id:cubicSelector;objectName:"cubicSelector";Layout.fillWidth:true;model:studio.editableCubics;textRole:"name";enabled:!studio.busy;onActivated:studio.selectCubic(model[index].id) }
+            Label { visible:studio.cubicDraftActive;text:qsTr("蓝色端点1/4，黄色控制点2/3。细线仅几何指引，不是最终笔迹。拖柄松开才计算精确预览；接受或取消后才能继续。中键平移、滚轮缩放。");wrapMode:Text.Wrap;Layout.fillWidth:true;color:"#edc79a" }
+            Button { objectName:"previewCubicButton";text:qsTr("精确预览四点曲线");visible:studio.cubicDraftActive;enabled:!studio.fillBusy && !studio.fillPending;onClicked:studio.previewCubic() }
+            Button { objectName:"acceptCubicButton";text:qsTr("接受曲线（保留四控点）");visible:studio.cubicPreviewPending;enabled:!nativeCanvas.rendering && nativeCanvas.renderError.length===0;onClicked:studio.acceptFill() }
+            Button { objectName:"resumeCubicButton";text:qsTr("返回调柄（保留草稿）");visible:studio.cubicDraftActive && studio.fillPending;onClicked:studio.resumeCubicDraft() }
+            Button { objectName:"cancelCubicButton";text:qsTr("取消曲线草稿（不改工程）");visible:studio.cubicDraftActive;onClicked:studio.cancelCubic() }
             Button { objectName: "importLineartButton"; text: qsTr("空白工程 · 嵌入原线稿"); enabled: !studio.busy; onClicked: lineartDialog.open() }
             CheckBox { objectName: "lineartBucketTool"; text: qsTr("原线稿填色桶（鼠标点击）"); checked: nativeCanvas.bucketTool; onToggled: nativeCanvas.bucketTool = checked }
             Button { objectName: "useActiveBoundaryButton"; text: qsTr("用所选手绘细节层作为填色边界"); enabled: studio.hasDocument && !studio.busy; Layout.fillWidth: true; onClicked: studio.useActiveBoundary() }
@@ -555,7 +606,7 @@ ApplicationWindow {
             Label { text: qsTr("Reference could not be displayed."); color: "#ffc2a1"; visible: studio.hasReference && referencePreview.status === Image.Error }
             Label { text: qsTr("This build includes the native tiled canvas, mouse/tablet stroke input, replay core, DPI coordinates and cache recovery foundation."); color: "#a5a5ae"; wrapMode: Text.Wrap; Layout.fillWidth: true; lineHeight: 1.45 }
             Button { text: qsTr("Check native worker"); enabled: studio.hasDocument && !studio.busy; onClicked: studio.probeWorker() }
-            BusyIndicator { running: studio.busy && !studio.fillPending; visible: running }
+            BusyIndicator { objectName:"operationSpinner"; running: studio.strokeCommitBusy || studio.fillBusy || (studio.busy && !studio.cubicDraftActive && !studio.fillPending); visible: running }
             Label { text: studio.message; color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             }
         }

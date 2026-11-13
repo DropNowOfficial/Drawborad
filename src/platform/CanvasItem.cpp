@@ -99,9 +99,21 @@ void CanvasItem::setStudio(QObject* value) {
     if (bridge_) disconnect(bridge_, nullptr, this, nullptr);
     cancelStroke();
     bridge_ = next;
-    if (bridge_) connect(bridge_, &QtBridge::changed, this, &CanvasItem::refreshSnapshot);
+    if (bridge_) {connect(bridge_, &QtBridge::changed, this, &CanvasItem::refreshSnapshot);connect(bridge_, &QtBridge::cubicControlsChanged, this, &CanvasItem::viewChanged);}
     refreshSnapshot();
     emit studioChanged();
+}
+QVariantList CanvasItem::cubicHandles() const {
+    QVariantList out;if(!bridge_)return out;const auto snap=bridge_->canvasSnapshot();if(!snap)return out;
+    double zoom;QPointF pan;{std::lock_guard lock(snapshotMutex_);zoom=zoom_;pan=pan_;}
+    const auto transform=documentTransform(*snap,zoom,pan);
+    for(const auto& value:bridge_->cubicControls()){const auto p=value.toMap();const auto mapped=transform.map(QPointF(p["x"].toDouble(),p["y"].toDouble()));out.push_back(QVariantMap{{"x",mapped.x()},{"y",mapped.y()}});}return out;
+}
+bool CanvasItem::moveCubicHandle(int index,double x,double y){
+    if(!bridge_||!std::isfinite(x)||!std::isfinite(y)||x<0||y<0||x>=width()||y>=height())return false;
+    const auto snap=bridge_->canvasSnapshot();if(!snap)return false;double zoom;QPointF pan;{std::lock_guard lock(snapshotMutex_);zoom=zoom_;pan=pan_;}
+    bool valid=false;const auto inverse=documentTransform(*snap,zoom,pan).inverted(&valid);if(!valid)return false;const auto p=inverse.map(QPointF(x,y));
+    return bridge_->moveCubicControl(index,p.x(),p.y());
 }
 void CanvasItem::refreshSnapshot() {
     const auto next = bridge_ ? bridge_->displaySnapshot() : std::nullopt;

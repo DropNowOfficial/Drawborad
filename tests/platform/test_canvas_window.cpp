@@ -32,12 +32,58 @@
 #include <cassert>
 #include <iostream>
 using namespace drawborad;
+static int cubicBindingDiagnostics=0;
 void present(CanvasItem& c){if(auto* w=c.window()){QSignalSpy frames(w,&QQuickWindow::frameSwapped);w->update();assert(frames.wait(5000)||frames.count()>0);}}
 void settlePreview(CanvasItem& c){QElapsedTimer t;t.start();while(c.previewing()&&t.elapsed()<15000)QTest::qWait(5);assert(!c.previewing());present(c);}
 void settle(CanvasItem& c){QElapsedTimer t;t.start();while(c.rendering()&&t.elapsed()<15000)QTest::qWait(5);assert(!c.rendering());present(c);}
 void settleFill(QtBridge& b){QElapsedTimer t;t.start();while(b.fillBusy()&&t.elapsed()<30000)QTest::qWait(5);assert(!b.fillBusy());}
 int main(int argc,char**argv){
  QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);QGuiApplication app(argc,argv);
+ if(qEnvironmentVariableIsSet("DRAWBORAD_CUBIC_BRIDGE_TEST")){
+  QTemporaryDir dir;assert(dir.isValid());QtBridge b;b.createDocument(128,128,300,true);const auto initial=*b.canvasSnapshot();
+  assert(b.beginCubicDraft(4,Qt::black));assert(b.cubicDraftActive()&&b.busy()&&b.dirty()&&b.cubicControls().size()==4);
+  const auto path=dir.filePath("curve.draw");b.saveUrl(QUrl::fromLocalFile(path));assert(!QFile::exists(path));
+  b.createDocument(64,64,300,true);assert(b.canvasSnapshot()->sameContent(initial));assert(!b.undoDrawing());
+  assert(!b.moveCubicControl(4,10,10)&&!b.moveCubicControl(1,1e9,10));assert(b.moveCubicControl(1,75.25,-10.5));
+  assert(b.previewCubic());assert(!b.moveCubicControl(1,20,30));settleFill(b);assert(b.fillPending());assert(b.canvasSnapshot()->sameContent(initial));
+  assert(b.resumeCubicDraft()&&b.cubicDraftActive()&&!b.fillPending());assert(b.cubicControls()[1].toMap()["x"].toDouble()==75.25);b.saveUrl(QUrl::fromLocalFile(path));assert(!QFile::exists(path));assert(b.moveCubicControl(2,90,50));assert(b.previewCubic());settleFill(b);assert(b.fillPending());
+  assert(b.acceptFill()&&!b.cubicDraftActive());const auto accepted=*b.canvasSnapshot();assert(accepted.eventIndex->size()==1&&accepted.eventIndex->back().engineVersion==23&&accepted.eventIndex->back().geometry.size()==4&&accepted.eventIndex->back().geometry[1].x==75.25);
+  assert(b.undoDrawing()&&b.canvasSnapshot()->sameContent(initial));assert(b.redoDrawing());b.saveUrl(QUrl::fromLocalFile(path));assert(QFile::exists(path));
+  QtBridge reopened;reopened.openUrl(QUrl::fromLocalFile(path));assert(reopened.hasDocument()&&reopened.canvasSnapshot()->sameContent(accepted));auto menu=reopened.editableCubics();assert(menu.size()==1);
+  assert(reopened.selectCubic(menu.front().toMap()["id"].toString()));assert(reopened.moveCubicControl(2,30,80));assert(reopened.previewCubic());settleFill(reopened);assert(reopened.fillPending());reopened.cancelFill();assert(!reopened.cubicDraftActive()&&!reopened.fillPending()&&reopened.canvasSnapshot()->sameContent(accepted));
+  assert(reopened.selectCubic(menu.front().toMap()["id"].toString()));assert(reopened.moveCubicControl(2,30,80));assert(reopened.previewCubic());settleFill(reopened);assert(reopened.acceptFill());assert(reopened.canvasSnapshot()->eventIndex->back().geometry[2].x==30);
+  assert(reopened.beginCubicDraft(4,Qt::red));assert(reopened.previewCubic());reopened.cancelCubic();assert(!reopened.beginCubicDraft(4,Qt::blue));settleFill(reopened);assert(!reopened.fillPending()&&!reopened.cubicDraftActive()&&reopened.eventCount()==1);assert(reopened.beginCubicDraft(4,Qt::blue));assert(reopened.previewCubic());settleFill(reopened);assert(reopened.fillPending());reopened.cancelCubic();assert(reopened.eventCount()==1);
+  std::cout<<"PASS cubic bridge create/edit/real preview/accept/cancel/Undo/reopen/draft save guards\n";return 0;
+ }
+ if(qEnvironmentVariableIsSet("DRAWBORAD_CUBIC_UI_TEST")){
+  const auto previousHandler=qInstallMessageHandler([](QtMsgType,const QMessageLogContext&,const QString& message){if(message.contains("Binding loop")||message.contains("ReferenceError")||message.contains("TypeError"))++cubicBindingDiagnostics;std::cerr<<message.toStdString()<<"\n";});
+  qmlRegisterType<CanvasItem>("Drawborad.Native",1,0,"NativeCanvas");QtBridge b;QQmlApplicationEngine engine;engine.addImageProvider("original-reference",new OriginalReferenceProvider(b));engine.rootContext()->setContextProperty("studio",&b);
+  engine.load(QUrl::fromLocalFile(QStringLiteral(DRAWBORAD_SOURCE_DIR "/ui/Main.qml")));assert(!engine.rootObjects().isEmpty());auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().front());assert(window);auto* canvas=window->findChild<CanvasItem*>("nativeCanvas");assert(canvas);QTest::qWait(150);
+  b.createDocument(1725,2625,300,true);settle(*canvas);const auto blank=*b.canvasSnapshot();assert(b.beginCubicDraft(4,Qt::black));QTest::qWait(50);
+  auto* area=window->findChild<QQuickItem*>("cubicHandleDrag");assert(area&&area->isVisible());auto handles=canvas->cubicHandles();assert(handles.size()==4);auto start=handles[1].toMap();auto from=area->mapToScene({start["x"].toDouble(),start["y"].toDouble()}).toPoint();auto to=from+QPoint(20,10);
+  QTest::mousePress(window,Qt::LeftButton,{},from);QTest::mouseMove(window,to);assert(!b.fillBusy()&&b.canvasSnapshot()->sameContent(blank));QTest::mouseRelease(window,Qt::LeftButton,{},to);settleFill(b);assert(b.fillPending());settle(*canvas);assert(canvas->renderError().isEmpty());
+  auto*acceptButton=window->findChild<QQuickItem*>("acceptCubicButton");assert(acceptButton&&b.cubicPreviewPending());for(auto*ancestor=acceptButton->parentItem();ancestor;ancestor=ancestor->parentItem()){if(ancestor->inherits("QQuickFlickable")){auto*content=qvariant_cast<QQuickItem*>(ancestor->property("contentItem"));assert(content);ancestor->setProperty("contentY",acceptButton->mapToItem(content,{0,0}).y()-12);break;}}QTest::qWait(30);const auto acceptAt=acceptButton->mapToScene({acceptButton->width()/2,acceptButton->height()/2}).toPoint();assert(acceptAt.y()>0&&acceptAt.y()<window->height());QTest::mouseClick(window,Qt::LeftButton,{},acceptAt);assert(!b.cubicDraftActive()&&!b.fillPending());settle(*canvas);assert(b.eventCount()==1&&b.canvasSnapshot()->eventIndex->back().engineVersion==23);
+  QTemporaryDir exportDir;assert(exportDir.isValid());const auto out=qEnvironmentVariableIsSet("DRAWBORAD_CUBIC_EXPORT_DIR")?qEnvironmentVariable("DRAWBORAD_CUBIC_EXPORT_DIR"):exportDir.path();QDir().mkpath(out);auto* workflow=qobject_cast<WorkflowController*>(b.workflow());assert(workflow);assert(workflow->exportNative(QUrl::fromLocalFile(out+"/curve.png"),"png"));assert(workflow->exportNative(QUrl::fromLocalFile(out+"/curve.ora"),"ora"));QImage png(out+"/curve.png");assert(png.size()==QSize(1725,2625));bool ink=false;for(int y=0;y<png.height();++y)for(int x=0;x<png.width();++x)ink|=png.pixelColor(x,y).red()<100;assert(ink);
+  b.saveUrl(QUrl::fromLocalFile(out+"/curve.draw"));auto accepted=*b.canvasSnapshot();b.createDocument(64,64,300,true);b.openUrl(QUrl::fromLocalFile(out+"/curve.draw"));settle(*canvas);assert(canvas->renderError().isEmpty()&&b.canvasSnapshot()->sameContent(accepted));assert(b.selectCubic(b.editableCubics().front().toMap()["id"].toString()));
+  int mappingCases=0;
+  for(const double factor:{.25,64.}){
+   assert(canvas->zoomAt(factor,canvas->width()/2,canvas->height()/2));canvas->panBy(13,-9);auto rect=canvas->documentRect();const double x=canvas->width()/2,y=canvas->height()/2;
+   assert(canvas->moveCubicHandle(1,x,y));const auto p=b.cubicControls()[1].toMap();assert(std::abs(p["x"].toDouble()-(x-rect.x())/rect.width()*1725)<1e-6&&std::abs(p["y"].toDouble()-(y-rect.y())/rect.height()*2625)<1e-6);++mappingCases;
+  }assert(mappingCases==2);
+  auto* overlay=window->findChild<QQuickItem*>("cubicOverlay");assert(overlay);auto center=area->mapToScene({area->width()/2,area->height()/2}).toPoint();
+  // A real MouseArea drag at the zoomed/panned transform, not a direct setter.
+  QTest::mousePress(window,Qt::LeftButton,{},center);QTest::mouseMove(window,center+QPoint(8,5));QTest::mouseRelease(window,Qt::LeftButton,{},center+QPoint(8,5));settleFill(b);assert(b.fillPending());assert(b.resumeCubicDraft());
+  const auto draftPoints=b.cubicControls();assert(!window->findChild<QObject*>("operationSpinner")->property("running").toBool());
+  const auto handleAt=[&](){auto p=canvas->cubicHandles()[1].toMap();return area->mapToScene({p["x"].toDouble(),p["y"].toDouble()}).toPoint();};
+  const auto startDrag=[&](){auto at=handleAt();QTest::mousePress(window,Qt::LeftButton,{},at);QTest::mouseMove(window,at+QPoint(12,7));assert(b.cubicControls()!=draftPoints);return at;};
+  auto at=startDrag();QTest::mouseRelease(window,Qt::LeftButton,{},area->mapToScene({-10,-10}).toPoint());assert(b.cubicControls()==draftPoints&&!b.fillBusy());
+  at=startDrag();area->ungrabMouse();QTest::mouseRelease(window,Qt::LeftButton,{},at+QPoint(12,7));assert(b.cubicControls()==draftPoints&&!b.fillBusy());
+  at=startDrag();overlay->setVisible(false);QTest::qWait(10);assert(b.cubicControls()==draftPoints);QTest::mouseRelease(window,Qt::LeftButton,{},at);overlay->setVisible(true);
+  at=startDrag();window->resize(window->width()+20,window->height()+20);QTest::qWait(30);QTest::mouseRelease(window,Qt::LeftButton,{},at);assert(b.cubicControls()==draftPoints&&!b.fillBusy());
+  window->requestActivate();assert(QTest::qWaitForWindowActive(window));at=startDrag();QQuickWindow other;other.setGeometry(0,0,160,120);other.show();other.requestActivate();assert(QTest::qWaitForWindowActive(&other));assert(!window->isActive()&&b.cubicControls()==draftPoints&&!b.fillBusy());other.hide();window->requestActivate();assert(QTest::qWaitForWindowActive(window));QTest::mouseRelease(window,Qt::LeftButton,{},at);
+  assert(!canvas->moveCubicHandle(1,-1,0));assert(!workflow->exportNative(QUrl::fromLocalFile(out+"/draft.png"),"png"));assert(!QFile::exists(out+"/draft.png"));window->close();QTest::qWait(20);assert(window->isVisible()&&b.cubicDraftActive());b.cancelCubic();assert(b.canvasSnapshot()->sameContent(accepted));
+  assert(cubicBindingDiagnostics==0);qInstallMessageHandler(previousHandler);std::cout<<"PASS actual QML four-handle release preview, portrait export, desktop reopen, mapping and draft close guards; no binding loops\n";return 0;
+ }
  const auto selectionPerf=qEnvironmentVariable("DRAWBORAD_SELECTION_PERF");
  if(!selectionPerf.isEmpty()){
   QtBridge b;b.openUrl(QUrl::fromLocalFile(selectionPerf));assert(b.hasDocument());const auto before=*b.canvasSnapshot();auto menu=b.editableStrokes();assert(menu.size()==128);auto points=b.localStrokePoints();assert(points.size()==4096);QElapsedTimer t;t.start();
