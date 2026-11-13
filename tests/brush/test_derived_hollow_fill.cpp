@@ -31,5 +31,42 @@ int main(){
  auto over=baseline;over.spec.pixelSize={8192,8192};assert(!derivedHollowFillCommand(over,source,overlay,colorLayer,Id::fromNumber(9),10,10,red));
  // Layer names/stages are not a provenance pass: white pixels and geometry decide.
  auto renamed=baseline;auto ns=std::make_shared<NodeMap>(*baseline.nodes);renamed.nodes=ns;ns->at(overlay).name="not a magic provenance label";assert(derivedHollowFillCommand(renamed,source,overlay,colorLayer,Id::fromNumber(9),10,10,red));
+ // Two independent ink components: fill A, append hollow B above the same
+ // original, then fill B. No lower-layer recoloring or flattening of A.
+ {
+  NewDocumentRequest r=req;r.dimensions={64,64,Unit::Px,300};auto sp=validateDocument(r,{});assert(sp);
+  auto created=Document::create(sp.value(),Id::fromNumber(80));assert(created);auto& d=created.value();
+  auto lowerCommand=addFillLayerCommand(d.snapshot(),lower,true,true);assert(lowerCommand&&d.apply(lowerCommand.value(),0));
+  Bytes pixels(64*64*4,255);FillMask regionA,regionB;
+  for(unsigned y=4;y<24;y++)for(unsigned component=0;component<2;component++){
+   const unsigned left=component?36:4;auto& region=component?regionB:regionA;
+   region.runs.push_back({y,left,20});region.pixelCount+=20;
+   for(unsigned x=left;x<left+20;x++){const auto k=(y*64+x)*4;pixels[k]=pixels[k+1]=pixels[k+2]=0;}
+  }
+  auto imported=makeLineartRasterCommand(pixels,{'t'},64,64,source);assert(imported&&d.apply(imported.value(),d.snapshot().revision));const auto original=d.snapshot();
+  auto aHollow=hollowInkOverlayCommand(d.snapshot(),source,overlay,Id::fromNumber(81),regionA,1);assert(aHollow&&d.apply(aHollow.value(),d.snapshot().revision));
+  auto aColor=derivedHollowFillCommand(d.snapshot(),source,overlay,colorLayer,Id::fromNumber(82),10,10,red);assert(aColor&&d.apply(aColor.value(),d.snapshot().revision));const auto aDone=d.snapshot();
+  auto bHollow=hollowInkOverlayCommand(aDone,source,overlay,Id::fromNumber(83),regionB,1);assert(bHollow&&bHollow.value().operations.size()==1);assert(d.apply(bHollow.value(),aDone.revision));const auto bWhite=d.snapshot();
+  assert(bWhite.nodes->size()==aDone.nodes->size());for(std::size_t i=0;i<aDone.eventIndex->size();i++)assert(bWhite.eventIndex->at(i)==aDone.eventIndex->at(i));
+  auto repeated=hollowInkOverlayCommand(bWhite,source,overlay,Id::fromNumber(84),regionA,1);assert(!repeated&&repeated.error().messageKey=="hollow.already-cleared");
+  assert(!hollowInkOverlayCommand(bWhite,source,overlay,Id::fromNumber(84),regionB,1));
+  auto bColor=derivedHollowFillCommand(bWhite,source,overlay,colorLayer,Id::fromNumber(84),42,10,blue);assert(bColor&&d.apply(bColor.value(),bWhite.revision));const auto both=d.snapshot();
+  auto firstFrame=renderMergedDocument(aDone,{aDone.revision});auto bothFrame=renderMergedDocument(both,{both.revision});assert(firstFrame&&bothFrame);
+  for(unsigned y=0;y<64;y++)for(unsigned x=0;x<64;x++){
+   const auto k=(y*64+x)*4;const bool bInterior=x>36&&x<55&&y>4&&y<23;
+   if(bInterior){assert(bothFrame.value().merged.bytes[k]==0&&bothFrame.value().merged.bytes[k+1]==0&&bothFrame.value().merged.bytes[k+2]==255);}
+   else for(unsigned c=0;c<4;c++)assert(bothFrame.value().merged.bytes[k+c]==firstFrame.value().merged.bytes[k+c]);
+  }
+  for(const auto&[id,res]:*original.resources)assert(both.resources->at(id).bytes==res.bytes&&sha256(*res.bytes)==id);
+  assert(d.undo()&&d.snapshot().sameContent(bWhite));assert(d.undo()&&d.snapshot().sameContent(aDone));assert(d.redo()&&d.redo()&&d.snapshot().sameContent(both));
+  auto file=std::filesystem::temp_directory_path()/("multi-hollow-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())+".draw");assert(store.save(file,both));auto recovery=store.recover(file);assert(recovery&&recovery.value().snapshot.sameContent(both));
+  assert(derivedHollowFillCommand(recovery.value().snapshot,source,overlay,colorLayer,Id::fromNumber(85),10,10,blue));assert(derivedHollowFillCommand(recovery.value().snapshot,source,overlay,colorLayer,Id::fromNumber(86),42,10,red));std::filesystem::remove(file);
+  // Validate *all* covers, not just the first; corrupt second cover is refused.
+  auto corrupted=both;auto events=std::make_shared<EventList>(*both.eventIndex);corrupted.eventIndex=events;events->at(2).color.channels={0,0,0,0};assert(!derivedHollowFillCommand(corrupted,source,overlay,colorLayer,Id::fromNumber(87),10,10,red));assert(!hollowInkOverlayCommand(corrupted,source,overlay,Id::fromNumber(87),regionB,1));
+  *events=*both.eventIndex;for(auto& point:events->at(2).geometry)point.x-=32;auto overlap=derivedHollowFillCommand(corrupted,source,overlay,colorLayer,Id::fromNumber(87),10,10,red);assert(!overlap&&overlap.error().messageKey=="derived-fill.overlapping-cover");
+  std::stop_source cancelledAppend;cancelledAppend.request_stop();assert(!hollowInkOverlayCommand(both,source,overlay,Id::fromNumber(87),regionB,1,cancelledAppend.get_token()));
+  // The no-color three-leaf stack also supports successive disjoint hollows.
+  auto noColor=Document::fromSnapshot(original);assert(noColor);assert(noColor.value().apply(aHollow.value(),original.revision));auto next=hollowInkOverlayCommand(noColor.value().snapshot(),source,overlay,Id::fromNumber(88),regionB,1);assert(next&&noColor.value().apply(next.value(),noColor.value().snapshot().revision));assert(derivedHollowFillCommand(noColor.value().snapshot(),source,overlay,colorLayer,Id::fromNumber(89),42,10,red));
+ }
  std::cout<<"PASS derived hollow fill: atomic new layer, source-only repeated reference, exact old resources/cover, undo/redo/save/reopen, stack/color/edge/cancel guards\n";
 }

@@ -333,7 +333,7 @@ bool QtBridge::fillLineartAt(double x,double y,const QColor& color,bool hollow) 
     fillPool_.setMaxThreadCount(1);fillStop_=std::stop_source{};const auto stop=fillStop_.get_token();
     const auto snapshot=*s;auto target=*activeLayer_;NodeId hollowOverlay;bool derived=false;
     const auto& ordered=s->nodes->at(Document::rootId()).children;
-    if(!hollow && (ordered.size()==3||ordered.size()==4) && ordered[1]==source){derived=true;hollowOverlay=ordered[2];target=ordered.size()==4?ordered[3]:uuid();}
+    if((ordered.size()==3||ordered.size()==4) && ordered[1]==source){hollowOverlay=ordered[2];if(!hollow){derived=true;target=ordered.size()==4?ordered[3]:uuid();}}
     const auto event=uuid();const auto generation=canvasGeneration_;
     fillBusy_=true;fillNotice_=tr("正在按原尺寸线稿计算区域；尚未提交，可取消。请接受预览后再保存。");emit changed();
     fillPool_.start([this,snapshot,source,target,event,x,y,paint,stop,generation,hollow,derived,hollowOverlay]{
@@ -349,7 +349,7 @@ bool QtBridge::fillLineartAt(double x,double y,const QColor& color,bool hollow) 
                     for(std::size_t i=0;i<pixels.size();i++){if(i%16384==0&&stop.stop_requested()){cancelled=true;break;}const auto p=raw.value().subspan(i*4,4);const auto v=std::uint8_t(p[3]&&p[0]<255?0:255);pixels[i]={v,v,v,255};}
                     if(cancelled)result=error(ErrorCode::Cancelled,"hollow.cancelled");
                     else if(pixels[std::size_t(y)*w+std::size_t(x)].r!=0)result=error(ErrorCode::InvalidInput,"hollow.click-ink-not-paper");
-                    else{auto selection=floodFill(pixels,std::uint32_t(w),std::uint32_t(h),std::uint32_t(x),std::uint32_t(y),0,{},stop);if(!selection)result=selection.error();else{selectedInk=selection.value().pixelCount;result=hollowInkOverlayCommand(snapshot,source,event,uuid(),selection.value(),1,stop);}}
+                    else{auto selection=floodFill(pixels,std::uint32_t(w),std::uint32_t(h),std::uint32_t(x),std::uint32_t(y),0,{},stop);if(!selection)result=selection.error();else{selectedInk=selection.value().pixelCount;std::vector<Rgba8>().swap(pixels);result=hollowInkOverlayCommand(snapshot,source,hollowOverlay.empty()?event:hollowOverlay,uuid(),selection.value(),1,stop);}}
                 }
             }
         }catch(const std::bad_alloc&){result=error(ErrorCode::BudgetExceeded,"hollow.selection-allocation");}
@@ -369,7 +369,7 @@ bool QtBridge::fillLineartAt(double x,double y,const QColor& color,bool hollow) 
             if(replaying() || !current || current->documentId!=snapshot.documentId || current->revision!=snapshot.revision || canvasGeneration_!=generation){fillNotice_=tr("原工程已变化，旧填色结果已丢弃。");emit changed();return;}
             if(!result){
                 if(hollow && result.error().messageKey=="hollow.no-safe-interior")fillNotice_=tr("此处是细笔触或没有可安全挖空的内部，已保留，不会扩大选区。");
-                else if(hollow && result.error().messageKey=="hollow.source-must-be-top-locked-lineart")fillNotice_=tr("本版局部挖空暂限一个覆盖层；请先撤销上次挖空再选择，原稿未改。");
+                else if(hollow && result.error().messageKey=="hollow.already-cleared")fillNotice_=tr("所选内部已经挖空，未重复覆盖；请点击另一个独立墨块。原稿和已填颜色未改。");
                 else fillNotice_=tr("区域操作未执行，工程未修改：")+QString::fromStdString(result.error().messageKey);
                 emit changed();return;
             }

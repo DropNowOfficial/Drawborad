@@ -1,3 +1,5 @@
+> Follow-up: `2026-11-13-multi-region-hollow.md` extends the original one-event limit to multiple disjoint accepted cover events; this document records the earlier checkpoint.
+
 # Connecting accepted hollow regions to independent color
 
 ## Controlled derived reference
