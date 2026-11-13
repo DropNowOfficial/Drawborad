@@ -1,3 +1,4 @@
+#include "brush/CloseStrokeGap.h"
 #include "brush/WithdrawClosedInkFill.h"
 #include "Commands.h"
 #include "view/LayerTree.h"
@@ -304,6 +305,13 @@ Result<ChangeSet> Document::apply(const Command& cmd, Revision expected) {
                         mark(old.layerId);
                         // Cover both old and new footprint, even when a legacy
                         // layer's declared bounds do not enclose its strokes.
+                        change.dirtyRegions.push_back({0,0,next.spec.pixelSize.width,next.spec.pixelSize.height});
+                    } else if constexpr (std::is_same_v<O, CloseStrokeGap>) {
+                        require(cmd.operations.size()==1,ErrorCode::InvalidInput,"stroke-close.single-operation");
+                        auto geometry=closedStrokeGapGeometry(state_,o.eventId);if(!geometry)throw Failure{geometry.error()};
+                        ev=std::make_shared<EventList>(*next.eventIndex);
+                        auto stroke=std::find_if(ev->begin(),ev->end(),[&](const auto&e){return e.id==o.eventId;});
+                        require(stroke!=ev->end(),ErrorCode::InvalidInput,"stroke-close.missing");stroke->geometry=std::move(geometry.value());mark(stroke->layerId);next.eventIndex=ev;
                         change.dirtyRegions.push_back({0,0,next.spec.pixelSize.width,next.spec.pixelSize.height});
                     } else if constexpr (std::is_same_v<O, WithdrawClosedInkFill>) {
                         require(cmd.operations.size()==1,ErrorCode::InvalidInput,"fill-withdraw.single-operation");

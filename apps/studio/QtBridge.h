@@ -71,6 +71,7 @@ class QtBridge : public QObject {
         std::uint64_t generation{};
         bool closedInk{};
         bool withdrawal{};
+        bool closeStroke{};
     };
     std::mutex localEditMutex_;
     std::optional<LocalEditCompletion> localEditCompletion_;
@@ -84,6 +85,7 @@ class QtBridge : public QObject {
     std::uint64_t pendingFillGeneration_{};
     bool pendingClosedInk_{false};
     bool pendingWithdrawal_{false};
+    bool pendingCloseStroke_{false};
     std::optional<NodeId> activeLayer_;
     std::optional<Id> selectedEditStroke_;
     mutable std::optional<DocumentSnapshot> editCacheSource_;
@@ -111,6 +113,7 @@ class QtBridge : public QObject {
     Q_INVOKABLE bool acceptFill();
     Q_INVOKABLE bool previewClosedInkFill();
     Q_INVOKABLE bool previewWithdrawClosedInkFill();
+    Q_INVOKABLE bool previewCloseStrokeGap();
     Q_INVOKABLE bool previewLocalStrokeEdit(int sampleIndex,double radius,double dx,double dy,double pressureDelta);
     QVariantList localStrokePoints() const;
     QVariantList editableStrokes() const;

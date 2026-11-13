@@ -47,6 +47,7 @@ struct AdjustStrokeSamples {
     Id id;
     std::vector<InputSample> geometry;
 };
+struct CloseStrokeGap { Id eventId; };
 struct WithdrawClosedInkFill { Id operationId; };
 struct RecordClosedInkFill { FillOperation operation; };
 struct Paint {
@@ -69,7 +70,7 @@ struct ConvertColor {
 };
 using Operation =
     std::variant<AddNode, RemoveNode, RenameNode, MoveNode, DuplicateNode, SetProperties, SetMask,
-                 InstallResource, SetDependencies, Paint, RecordClosedInkFill, WithdrawClosedInkFill, RecolorStroke, AdjustStrokeSamples, MergeNodes, SplitNode, ConvertColor>;
+                 InstallResource, SetDependencies, Paint, RecordClosedInkFill, WithdrawClosedInkFill, CloseStrokeGap, RecolorStroke, AdjustStrokeSamples, MergeNodes, SplitNode, ConvertColor>;
 struct Command {
     std::uint32_t version = 1;
     std::vector<Operation> operations;

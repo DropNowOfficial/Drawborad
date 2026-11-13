@@ -1,3 +1,4 @@
+#include "brush/CloseStrokeGap.h"
 #include "brush/WithdrawClosedInkFill.h"
 #include "QtBridge.h"
 #include "AlphaImportPolicy.h"
@@ -75,18 +76,19 @@ QtBridge::QtBridge(QObject* parent)
     poll_.start();
 }
 QtBridge::~QtBridge(){fillStop_.request_stop();fillPool_.clear();fillPool_.waitForDone();}
-void QtBridge::cancelFill(){if(fillPending()){pendingWithdrawal_=false;pendingClosedInk_=false;pendingFill_.reset();pendingFillPreview_.reset();pendingFillSource_.reset();fillNotice_=tr("审阅已取消，原工程未修改。");emit changed();return;}if(fillBusy_){fillStop_.request_stop();fillNotice_=tr("正在取消区域操作；原图及已提交内容不变。");emit changed();}}
+void QtBridge::cancelFill(){if(fillPending()){pendingCloseStroke_=false;pendingWithdrawal_=false;pendingClosedInk_=false;pendingFill_.reset();pendingFillPreview_.reset();pendingFillSource_.reset();fillNotice_=tr("审阅已取消，原工程未修改。");emit changed();return;}if(fillBusy_){fillStop_.request_stop();fillNotice_=tr("正在取消区域操作；原图及已提交内容不变。");emit changed();}}
 bool QtBridge::acceptFill(){
     if(!pendingFill_ || !pendingFillSource_)return false;
     const auto current=app_.snapshot();const auto source=*pendingFillSource_;
     if(!current || current->documentId!=source.documentId || current->revision!=source.revision || canvasGeneration_!=pendingFillGeneration_ || replaying()){cancelFill();fillNotice_=tr("工程发生变化，审阅结果未提交。");emit changed();return false;}
+    const bool closeStroke=pendingCloseStroke_;pendingCloseStroke_=false;
     const bool withdrawal=pendingWithdrawal_;pendingWithdrawal_=false;
     const bool closedInk=pendingClosedInk_;pendingClosedInk_=false;
     auto command=std::move(*pendingFill_);pendingFill_.reset();pendingFillPreview_.reset();pendingFillSource_.reset();
     std::optional<NodeId> paintedLayer;for(const auto& op:command.operations)if(const auto* p=std::get_if<Paint>(&op))paintedLayer=p->event.layerId;
     const auto retained=activeLayer_;const bool keepDetail=retained&&current->nodes->contains(*retained)&&current->nodes->at(*retained).stage==FinishingLayerStage&&nativeLayerPaintable(*current,*retained);
     const bool localEdit=command.operations.size()==1&&std::holds_alternative<AdjustStrokeSamples>(command.operations.front());
-    auto committed=app_.apply(command);if(committed&&paintedLayer&&!keepDetail)activeLayer_=paintedLayer;fillNotice_=committed?(withdrawal?tr("已撤回最近已记录的完整闭合填色组；原图及其他笔迹保留，可撤销恢复。若保存提示格式不同，请另存新文件名，保留原文件。"):localEdit?tr("已接受原笔迹的局部修整；未新增笔迹或图层，颜色和时间不变，可撤销和保存。"):closedInk?tr("已接受闭合墨块内区填充及来源记录；原轮廓和其他层内容未改，可撤销。请首次另存新文件名，旧版不能打开；仅支持已核验记录组的受限撤回。半透明上层合成可能改变。"):tr("已接受区域操作，独立图层已更新；原线稿未改，可撤销和保存。")):QString::fromStdString(committed.error().messageKey);emit changed();return bool(committed);
+    auto committed=app_.apply(command);if(committed&&paintedLayer&&!keepDetail)activeLayer_=paintedLayer;fillNotice_=committed?(closeStroke?tr("已追加所选笔迹的短首尾连接；原样本及其他笔迹未改，可撤销。端点合成外观会变化；过细或低压线仍可能不能填色。"):withdrawal?tr("已撤回最近已记录的完整闭合填色组；原图及其他笔迹保留，可撤销恢复。若保存提示格式不同，请另存新文件名，保留原文件。"):localEdit?tr("已接受原笔迹的局部修整；未新增笔迹或图层，颜色和时间不变，可撤销和保存。"):closedInk?tr("已接受闭合墨块内区填充及来源记录；原轮廓和其他层内容未改，可撤销。请首次另存新文件名，旧版不能打开；仅支持已核验记录组的受限撤回。半透明上层合成可能改变。"):tr("已接受区域操作，独立图层已更新；原线稿未改，可撤销和保存。")):QString::fromStdString(committed.error().messageKey);emit changed();return bool(committed);
 }
 void QtBridge::refreshEditCache() const {
     const auto s=app_.snapshot();
@@ -216,16 +218,37 @@ bool QtBridge::previewWithdrawClosedInkFill() try {
         {std::lock_guard lock(localEditMutex_);localEditCompletion_=std::move(done);}
     });return true;
 }catch(const std::bad_alloc&){fillStop_.request_stop();fillBusy_=false;fillNotice_=tr("撤回验收启动失败，工程未改。");emit changed();return false;}
+bool QtBridge::previewCloseStrokeGap() try {
+    const auto fail=[&](const QString& why){fillNotice_=why;emit changed();return false;};
+    const auto current=app_.snapshot();const auto chosen=editStrokeId();
+    if(!current||busy()||workflow_->pending()||replaying()||!chosen)return fail(tr("请先选择可编辑的连续实墨笔迹；已填色依赖需先安全撤回，不能强行改线。"));
+    const auto snapshot=*current;const auto id=*chosen;const auto generation=canvasGeneration_;
+    fillStop_=std::stop_source{};const auto stop=fillStop_.get_token();fillPool_.setMaxThreadCount(1);
+    {std::lock_guard lock(localEditMutex_);localEditCompletion_.reset();}
+    fillBusy_=true;fillNotice_=tr("正在验证短缺口闭合并渲染候选，未改原笔迹；可取消。");emit changed();
+    fillPool_.start([this,snapshot,id,generation,stop]{
+        LocalEditCompletion done{std::nullopt,snapshot,std::nullopt,{},stop,generation,false,false,true};
+        try {
+            auto command=closeStrokeGapCommand(snapshot,id,stop);
+            if(!command)done.failure=QString::fromStdString(command.error().messageKey);
+            else {auto candidate=Document::fromSnapshot(snapshot);if(!candidate)done.failure=QString::fromStdString(candidate.error().messageKey);
+                else {auto applied=candidate.value().apply(command.value(),snapshot.revision);if(!applied)done.failure=QString::fromStdString(applied.error().messageKey);
+                    else {const auto preview=candidate.value().snapshot();auto frame=renderMergedDocument(preview,{preview.revision},{},stop);if(!frame)done.failure=QString::fromStdString(frame.error().messageKey);else {done.command=std::move(command.value());done.preview=preview;}}}}
+        }catch(const std::bad_alloc&){done.failure=tr("内存预算不足，工程未改。");}
+        if(stop.stop_requested())done.failure=tr("闭合验收已取消，工程未改。");
+        {std::lock_guard lock(localEditMutex_);localEditCompletion_=std::move(done);}
+    });return true;
+}catch(const std::bad_alloc&){fillStop_.request_stop();fillBusy_=false;fillNotice_=tr("闭合验收启动失败，工程未改。");emit changed();return false;}
 void QtBridge::finishLocalStrokeEdit() try {
     std::optional<LocalEditCompletion> done;
     {std::lock_guard lock(localEditMutex_);if(!localEditCompletion_)return;done=std::move(localEditCompletion_);localEditCompletion_.reset();}
     fillBusy_=false;const auto current=app_.snapshot();
     if(done->stop.stop_requested()){fillNotice_=tr("操作已取消，原工程未修改。");emit changed();return;}
     if(!current||replaying()||current->documentId!=done->source.documentId||current->revision!=done->source.revision||canvasGeneration_!=done->generation){fillNotice_=tr("工程已改变，旧操作结果已丢弃。");emit changed();return;}
-    if(!done->failure.isEmpty()||!done->command||!done->preview){fillNotice_=(done->withdrawal?tr("撤回被拒绝，原工程未改："):done->closedInk?tr("闭合墨块填充被拒绝，原工程未改："):tr("局部修整未提交，工程未改："))+done->failure;emit changed();return;}
-    pendingFill_=std::move(done->command);pendingFillSource_=std::move(done->source);pendingFillPreview_=std::move(done->preview);pendingFillGeneration_=done->generation;pendingClosedInk_=done->closedInk;pendingWithdrawal_=done->withdrawal;
-    fillNotice_=done->withdrawal?tr("撤回预览尚未提交：删除最近已记录闭合填色组的全部底色成员，保留原线稿和其后独立手绘；半透明合成可能改变。接受时须同步重算，可能短暂等待。若移除最后记录，须另存新文件名保留原20格式文件。请明确接受或取消。"):done->closedInk?tr("闭合墨块预览，尚未提交：以所选单笔墨色填几何内区，原轮廓及其他层内容不变；半透明上层可透出底色。接受后记录来源并采用新格式，首次须另存全新文件名，旧版不能打开；来源边界/成员受保护，仅支持已核验记录组的受限撤回。请接受或取消。"):tr("局部修整预览，尚未提交：仅沿原笔迹弧长附近调整位置/压力，未新增图层；范围外样本、颜色及时间不变。请接受或取消。");emit changed();
-}catch(const std::bad_alloc&){fillBusy_=false;pendingWithdrawal_=false;pendingClosedInk_=false;pendingFill_.reset();pendingFillSource_.reset();pendingFillPreview_.reset();fillNotice_=tr("预览内存不足，未提交工程。");emit changed();}
+    if(!done->failure.isEmpty()||!done->command||!done->preview){fillNotice_=(done->closeStroke?tr("闭合被拒绝，原工程未改："):done->withdrawal?tr("撤回被拒绝，原工程未改："):done->closedInk?tr("闭合墨块填充被拒绝，原工程未改："):tr("局部修整未提交，工程未改："))+done->failure;emit changed();return;}
+    pendingFill_=std::move(done->command);pendingFillSource_=std::move(done->source);pendingFillPreview_=std::move(done->preview);pendingFillGeneration_=done->generation;pendingClosedInk_=done->closedInk;pendingWithdrawal_=done->withdrawal;pendingCloseStroke_=done->closeStroke;
+    fillNotice_=done->closeStroke?tr("短缺口闭合预览，尚未提交：只追加所选笔迹首尾之间的直线连接，不挪动或简化原样本。连接≤32原像素且≤路径5%，自交拒绝。请看端点形状后接受或取消；闭合不保证低压/过细线可填色。"):done->withdrawal?tr("撤回预览尚未提交：删除最近已记录闭合填色组的全部底色成员，保留原线稿和其后独立手绘；半透明合成可能改变。接受时须同步重算，可能短暂等待。若移除最后记录，须另存新文件名保留原20格式文件。请明确接受或取消。"):done->closedInk?tr("闭合墨块预览，尚未提交：以所选单笔墨色填几何内区，原轮廓及其他层内容不变；半透明上层可透出底色。接受后记录来源并采用新格式，首次须另存全新文件名，旧版不能打开；来源边界/成员受保护，仅支持已核验记录组的受限撤回。请接受或取消。"):tr("局部修整预览，尚未提交：仅沿原笔迹弧长附近调整位置/压力，未新增图层；范围外样本、颜色及时间不变。请接受或取消。");emit changed();
+}catch(const std::bad_alloc&){fillBusy_=false;pendingCloseStroke_=false;pendingWithdrawal_=false;pendingClosedInk_=false;pendingFill_.reset();pendingFillSource_.reset();pendingFillPreview_.reset();fillNotice_=tr("预览内存不足，未提交工程。");emit changed();}
 bool QtBridge::dirty() const {return app_.dirty() || workflow_->pending() || fillPending();}
 int QtBridge::eventCount() const {const auto s=app_.snapshot();return s?int(std::min<std::size_t>(s->eventIndex->size(),std::size_t(INT_MAX))):0;}
 int QtBridge::replayCount() const {return replayCount_<0?eventCount():std::min(replayCount_,eventCount());}
