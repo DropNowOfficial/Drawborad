@@ -137,7 +137,7 @@ class QtBridge : public QObject {
     bool myPaintAvailable() const;
     QString myPaintStatus() const;
     bool myPaintPreviewPending() const { return pendingFill_.has_value()&&pendingKind_==PreviewKind::MyPaintStroke; }
-    bool previewMyPaintGesture(std::vector<InputSample>,const QColor&,double opacity,const QString& preset,double radiusScale,bool mouseSimulated);
+    bool previewMyPaintGesture(std::vector<InputSample>,const QColor&,double opacity,const QString& preset,double radiusScale,bool mouseSimulated,double mouseTaper=0);
     bool solidBakeAvailable() const;
     bool solidBakePreviewPending() const { return pendingFill_.has_value() && pendingKind_==PreviewKind::CubicSolidBake; }
     Q_INVOKABLE bool previewCubicSolidBake();

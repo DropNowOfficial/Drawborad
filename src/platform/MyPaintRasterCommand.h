@@ -10,6 +10,7 @@ struct MyPaintGesture {
     double opacity{1}, radiusScale{1};
     QString preset{"pointy_ink"};
     bool mouseSimulated{};
+    double mouseTaper{}; // Explicit spatial mouse assistance, never measured tablet pressure.
 };
 struct MyPaintRasterCandidate { Revision baseRevision{}; Command command; Rect bounds; NodeId layer,folder; };
 Result<unsigned> desktopMyPaintStrokeCount(const DocumentSnapshot&);

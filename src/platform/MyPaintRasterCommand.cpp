@@ -1,5 +1,6 @@
 #include "MyPaintRasterCommand.h"
 #include "core/MyPaintCroppedRaster.h"
+#include "brush/PressureTaper.h"
 #include "codecs/RasterReaders.h"
 #include "ui/MergedDocument.h"
 #include <QCryptographicHash>
@@ -65,8 +66,15 @@ Result<ValidatedPatch> validatedPatch(const DocumentSnapshot& s,Revision revisio
     need(input.samples.size()>=2&&input.samples.size()<=1024,"mypaint.sample-count",ErrorCode::BudgetExceeded);
     need(input.color.activeChannels==3&&input.color.profileId.empty()&&unit(input.color.alpha)&&unit(input.opacity)&&input.opacity*input.color.alpha>0,"mypaint.color");for(auto c:input.color.channels)need(unit(c),"mypaint.color");
     need(std::isfinite(input.radiusScale)&&input.radiusScale>=.25&&input.radiusScale<=8,"mypaint.radius-scale");need(input.preset=="pointy_ink"||input.preset=="dry_brush","mypaint.preset");
-    QJsonArray points;auto start=input.samples.front().timestampUs,last=start;bool tiltIgnored=false;
-    for(const auto& p:input.samples){checkStop();need(std::isfinite(p.x)&&std::isfinite(p.y)&&p.x>=0&&p.y>=0&&p.x<w&&p.y<h&&unit(p.pressure)&&p.timestampUs>=last&&p.timestampUs-start<=60000000,"mypaint.sample-bounds");last=p.timestampUs;tiltIgnored|=p.tiltX.has_value()||p.tiltY.has_value();points.append(QJsonObject{{"x",p.x},{"y",p.y},{"pressure",input.mouseSimulated?1.0:p.pressure},{"time_ms",double(p.timestampUs-start)/1000.}});}
+    need(std::isfinite(input.mouseTaper)&&input.mouseTaper>=0&&input.mouseTaper<=.5,"mypaint.mouse-taper");
+    need(input.mouseSimulated||input.mouseTaper==0,"mypaint.tablet-taper");
+    auto start=input.samples.front().timestampUs,last=start;bool tiltIgnored=false;QJsonArray raw;
+    for(const auto& p:input.samples){checkStop();need(std::isfinite(p.x)&&std::isfinite(p.y)&&p.x>=0&&p.y>=0&&p.x<w&&p.y<h&&unit(p.pressure)&&p.timestampUs>=last&&p.timestampUs-start<=60000000,"mypaint.sample-bounds");last=p.timestampUs;tiltIgnored|=p.tiltX.has_value()||p.tiltY.has_value();QJsonObject r{{"x",p.x},{"y",p.y},{"pressure",p.pressure},{"timestamp_us",QString::number(p.timestampUs)}};raw.append(r);}
+    auto effective=input.samples;
+    if(input.mouseSimulated){for(auto& p:effective)p.pressure=1.;if(input.mouseTaper>0){checkStop();auto tapered=taperMousePressure(effective,input.mouseTaper,true);if(!tapered)return tapered.error();effective=std::move(tapered.value());checkStop();}}
+    need(effective.size()>=2&&effective.size()<=1024,"mypaint.taper-output-count",ErrorCode::BudgetExceeded);
+    QJsonArray points;last=start;
+    for(const auto& p:effective){checkStop();need(std::isfinite(p.x)&&std::isfinite(p.y)&&p.x>=0&&p.y>=0&&p.x<w&&p.y<h&&unit(p.pressure)&&p.timestampUs>=last&&p.timestampUs>=start&&p.timestampUs-start<=60000000,"mypaint.effective-sample-bounds");last=p.timestampUs;points.append(QJsonObject{{"x",p.x},{"y",p.y},{"pressure",p.pressure},{"time_ms",double(p.timestampUs-start)/1000.}});}
     auto available=validateMyPaintRuntime(runtime);if(!available)return available.error();checkStop();
     auto selectedPins=pins(runtime);const auto root=QFileInfo(runtime.worker).absolutePath();
     if(input.preset=="dry_brush"){const auto dry=hash(read(root+"/mypaint_data/dry_brush.myb",256*1024));need(dry=="57786e87241e977e90873ab1d5a05bdf0228a299cda41b328b97ff01fccff6af","mypaint.dry-pin");selectedPins["preset"]=dry;}
@@ -103,7 +111,9 @@ Result<ValidatedPatch> validatedPatch(const DocumentSnapshot& s,Revision revisio
     need(pixels.width==roi.width&&pixels.height==roi.height&&pixels.rowStride==roi.width*4&&pixels.format==PixelFormat{ColorMode::RGB,Depth::U8,true}&&info.icc.empty()&&info.iccProfile.empty()&&pixels.profileId.empty(),"mypaint.png-layout");need(QString::fromStdString(sha256(pixels.bytes).hex())==worker["rgba_sha256"].toString(),"mypaint.rgba-digest",ErrorCode::DigestMismatch);
     bool visible=false;for(std::size_t i=0;i<pixels.bytes.size();i+=4){visible|=pixels.bytes[i+3]!=0;for(unsigned c=0;c<3;++c)need(pixels.bytes[i+c]==std::uint8_t(std::lround(input.color.channels[c]*255)),"mypaint.pixel-color");}need(visible,"mypaint.empty");checkStop();
     manifest["desktop_protocol"]=Marker;manifest["mouse_pressure_simulated"]=input.mouseSimulated;manifest["tilt_ignored"]=tiltIgnored;manifest["desktop_opacity"]=input.opacity*input.color.alpha;
+    manifest["desktop_pressure_transform"]=QJsonObject{{"policy",input.mouseSimulated?(input.mouseTaper>0?"arc-length-mouse-taper-v1":"constant-mouse-v1"):"tablet-passthrough-v1"},{"fraction",input.mouseTaper},{"raw_points",raw},{"input_count",int(input.samples.size())},{"output_count",int(effective.size())},{"timing_preserved",true}};
     const auto stored=QJsonDocument(manifest).toJson(QJsonDocument::Compact);
+    need(stored.size()<=1024*1024,"mypaint.manifest-budget",ErrorCode::BudgetExceeded);
     return ValidatedPatch{std::move(pixels.bytes),Bytes(png.begin(),png.end()),Bytes(stored.begin(),stored.end()),roi};
 }catch(const Failure& f){return f.error;}catch(const std::bad_alloc&){return error(ErrorCode::BudgetExceeded,"mypaint.allocation");}
 }

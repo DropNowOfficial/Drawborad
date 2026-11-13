@@ -277,7 +277,7 @@ void CanvasItem::beginSample(InputSample sample, bool tablet, bool eraser) {
     if(myPaintTool_) {
         if(!bridge_->myPaintAvailable()||eraser_){brushNotice_=tr("MyPaint 后端不可用或当前是橡皮输入，本笔未提交。");emit brushSettingsChanged();return;}
         gestureMyPaint_=true;gestureMyPaintPreset_=myPaintPreset_;gestureMyPaintScale_=myPaintScale_;
-        gestureColor_=brushColor_;gestureBrush_=brushSettings_;
+        gestureColor_=brushColor_;gestureBrush_=brushSettings_;gestureTaper_=tablet?0:mouseTaper_;
         strokeTarget_=StrokeTarget{snapshot->documentId,{}, {},bridge_->canvasGeneration()};
         stroke_.push_back(sample);setFocus(true,Qt::MouseFocusReason);
         brushNotice_=tr("正在记录原始坐标/压力/时间；没有同引擎实时墨迹，松笔后计算真实预览。鼠标压力模拟、倾斜忽略。");emit brushSettingsChanged();emit renderErrorChanged();return;
@@ -355,7 +355,7 @@ void CanvasItem::finishStroke(){
         auto samples=std::move(stroke_);const auto color=gestureColor_;const auto opacity=gestureBrush_.opacity;
         const auto preset=gestureMyPaintPreset_;const auto scale=gestureMyPaintScale_;const bool mouse=!tabletStroke_;
         stroke_.clear();strokeTarget_.reset();gestureMyPaint_=false;tabletStroke_=false;clearPreview();emit renderErrorChanged();
-        const bool started=bridge_->previewMyPaintGesture(std::move(samples),color,opacity,preset,scale,mouse);
+        const bool started=bridge_->previewMyPaintGesture(std::move(samples),color,opacity,preset,scale,mouse,mouse?gestureTaper_:0);
         brushNotice_=started?tr("本笔已交给 MyPaint；处理进度请查看审阅状态。"):tr("MyPaint 未启动，工程未改。");emit brushSettingsChanged();return;
     }
     if(!snap||!strokeTarget_||strokeTarget_->document!=snap->documentId||

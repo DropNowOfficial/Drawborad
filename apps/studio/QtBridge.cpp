@@ -212,19 +212,19 @@ QString QtBridge::myPaintStatus() const {
         auto count=desktopMyPaintStrokeCount(*s);myPaintCountValid_=bool(count);myPaintCount_=count?count.value():0;myPaintCountSource_=*s;
     }
     if(!myPaintCountValid_)return tr("当前工程无法通过 MyPaint 笔层预算检查，未改动原稿。");
-    return tr("松笔后精确预览；鼠标固定模拟压力，笔压/时间有效、倾斜未使用。独立笔层剩余 %1/32；文档资源128MiB、单笔ROI≤1M像素，超限拒绝不缩图。实验阶段，尚非完整长时绘画。").arg(myPaintCount_>=32?0:32-myPaintCount_);
+    return tr("松笔后精确预览；鼠标默认固定模拟压力，可选空间起收笔辅助；数位笔保留压力/时间、倾斜未使用。独立笔层剩余 %1/32；文档资源128MiB、单笔ROI≤1M像素，超限拒绝不缩图。实验阶段，尚非完整长时绘画。").arg(myPaintCount_>=32?0:32-myPaintCount_);
 #else
     return {};
 #endif
 }
-bool QtBridge::previewMyPaintGesture(std::vector<InputSample> samples,const QColor& selected,double opacity,const QString& preset,double scale,bool mouseSimulated) try {
+bool QtBridge::previewMyPaintGesture(std::vector<InputSample> samples,const QColor& selected,double opacity,const QString& preset,double scale,bool mouseSimulated,double mouseTaper) try {
 #ifndef DRAWBORAD_HAS_MYPAINT_DESKTOP
-    (void)samples;(void)selected;(void)opacity;(void)preset;(void)scale;(void)mouseSimulated;
+    (void)samples;(void)selected;(void)opacity;(void)preset;(void)scale;(void)mouseSimulated;(void)mouseTaper;
     fillNotice_=tr("当前构建没有 MyPaint 桌面后端，笔迹未提交。");emit changed();return false;
 #else
     if(!myPaintAvailable()||busy()||replaying()||workflow_->pending()||!selected.isValid())return false;
     const auto snapshot=app_.snapshot();if(!snapshot)return false;const auto source=*snapshot;
-    MyPaintGesture gesture;gesture.samples=std::move(samples);gesture.preset=preset;gesture.radiusScale=scale;gesture.opacity=opacity;gesture.mouseSimulated=mouseSimulated;
+    MyPaintGesture gesture;gesture.samples=std::move(samples);gesture.preset=preset;gesture.radiusScale=scale;gesture.opacity=opacity;gesture.mouseSimulated=mouseSimulated;gesture.mouseTaper=mouseTaper;
     gesture.color.profileId=source.spec.colorSpec.profileId;gesture.color.channels={selected.redF(),selected.greenF(),selected.blueF(),0};gesture.color.alpha=selected.alphaF();
     auto folder=uuid();const auto& root=source.nodes->at(Document::rootId());
     if(!root.children.empty()){const auto id=root.children.back();if(source.nodes->at(id).stage=="drawborad.mypaint.folder.v1")folder=id;}
