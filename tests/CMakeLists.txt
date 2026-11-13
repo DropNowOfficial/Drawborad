@@ -275,8 +275,6 @@ if(DRAWBORAD_QT_CANVAS_TESTS)
   set_tests_properties(Desktop.QtSoftwareCanvas PROPERTIES TIMEOUT 180 ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 endif()
 
-# Register all native features before labeling the test inventory.
-include(${PROJECT_SOURCE_DIR}/cmake/TestTargets.cmake)
 
 lineart_repair_test(B42.ChiselInk test_chisel_ink.cpp)
 
@@ -284,3 +282,12 @@ set_tests_properties(B42.ChiselInk PROPERTIES LABELS "CorePortable")
 
 add_test(NAME Build.NativeCoverageLists COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/build/test_native_coverage_lists.py)
 set_tests_properties(Build.NativeCoverageLists PROPERTIES LABELS "CorePortable")
+
+add_test(NAME Build.InventoryMatchesCTest COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/build/test_inventory_matches_ctest.py
+  --build ${CMAKE_BINARY_DIR} --ctest ${CMAKE_CTEST_COMMAND} --config "$<CONFIG>")
+set_tests_properties(Build.InventoryMatchesCTest PROPERTIES TIMEOUT 60)
+
+# TestTargets finalizes labels and writes TEST_INVENTORY.json. Keep this after
+# every feature/guard registration, including the inventory regression itself.
+include(${PROJECT_SOURCE_DIR}/cmake/TestTargets.cmake)
