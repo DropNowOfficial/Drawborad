@@ -1,3 +1,5 @@
+> Historical first endpoint checkpoint. The 4Mi-pixel size restriction below is superseded by [native-size asynchronous fill](2026-11-13-large-lineart-fill-design.md); other unfulfilled art-quality limits remain.
+
 # Desktop original-lineart fill checkpoint
 
 ## User goal, not completion claim

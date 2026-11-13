@@ -3,17 +3,23 @@
 #include "core/LineartRaster.h"
 #include "view/LayerTree.h"
 namespace drawborad {
-// Bounded synchronous desktop path. Samples the declared original only, never
+// Worker-only large-canvas path. Samples the declared original only, never
 // the colored composite. Returns a command; it does not mutate its source.
 inline Result<Command> originalLineartFillCommand(const DocumentSnapshot& s,
  NodeId source,NodeId target,Id event,std::uint32_t x,std::uint32_t y,
  std::uint8_t tolerance,ColorValue color,std::stop_token stop={}) try {
  if(stop.stop_requested())return error(ErrorCode::Cancelled,"original-fill.cancelled");
  const auto w=s.spec.pixelSize.width,h=s.spec.pixelSize.height;
- if(!w||!h||w>4096||h>4096||w*h>4*1024*1024)
+ if(!w||!h||w>8192||h>8192||w*h>20000000)
   return error(ErrorCode::BudgetExceeded,"original-fill.desktop-limit");
  if(s.spec.colorSpec.format!=PixelFormat{ColorMode::RGB,Depth::U8,true})
   return error(ErrorCode::UnsupportedFeature,"original-fill.rgba8-required");
+ // Incremental scratch estimate, not process RSS: reference 4N + bucket RGBA
+ // 4N + visited N; allow doubled run/geometry vector capacities. Excludes
+ // caller snapshot, validation, history/apply copies and subsequent rendering.
+ const auto scratch=9*w*h+2*FillBudget{}.maxRuns*sizeof(FillRun)
+     +4*FillBudget{}.maxRuns*sizeof(InputSample);
+ if(scratch>256ull*1024*1024)return error(ErrorCode::BudgetExceeded,"original-fill.scratch-limit");
  auto valid=validateSnapshot(s);if(!valid)return valid.error();
  const auto& root=s.nodes->at(Document::rootId());
  if(root.children!=std::vector<NodeId>{target,source}||s.nodes->size()!=3||source==target)
@@ -35,7 +41,12 @@ inline Result<Command> originalLineartFillCommand(const DocumentSnapshot& s,
  if(seed[3]&&seed[0]!=255)return error(ErrorCode::InvalidInput,"original-fill.white-or-transparent-seed");
  TileData reference;reference.width=std::uint32_t(w);reference.height=std::uint32_t(h);
  reference.rowStride=w*4;reference.format=s.spec.colorSpec.format;reference.profileId=s.spec.colorSpec.profileId;
- reference.bytes.assign(raw.value().begin(),raw.value().end());
+ reference.bytes.resize(raw.value().size());
+ for(std::size_t at=0;at<raw.value().size();at+=65536){
+  if(stop.stop_requested())return error(ErrorCode::Cancelled,"original-fill.cancelled");
+  const auto count=std::min<std::size_t>(65536,raw.value().size()-at);
+  std::copy_n(raw.value().begin()+at,count,reference.bytes.begin()+at);
+ }
  return bucketFillCommand(s,target,event,reference,x,y,tolerance,color,stop);
 }catch(const std::bad_alloc&){return error(ErrorCode::BudgetExceeded,"original-fill.allocation");}
 inline Result<Command> originalLineartFillCommand(const DocumentSnapshot& s,

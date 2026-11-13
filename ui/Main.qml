@@ -20,7 +20,9 @@ ApplicationWindow {
     FileDialog { id: oraExportDialog; title: qsTr("导出叶图层 ORA（组展开、蒙版烘焙；新文件名）"); fileMode: FileDialog.SaveFile; defaultSuffix: "ora"; nameFilters: ["OpenRaster (*.ora)"]; onAccepted: studio.workflow.exportNative(selectedFile, "ora") }
     FileDialog { id: psdDialog; title: qsTr("导出笔迹分层 PSD（请选择新文件名）"); fileMode: FileDialog.SaveFile; defaultSuffix: "psd"; nameFilters: ["Photoshop (*.psd)"]; onAccepted: studio.workflow.exportPsd(selectedFile) }
     FileDialog { id: relinkDialog; title: qsTr("选择与原始文件哈希一致的图片"); nameFilters: ["PNG/JPEG (*.png *.jpg *.jpeg)"]; onAccepted: studio.workflow.relinkSource(selectedFile) }
+    Dialog { id: fillPendingDialog; title: qsTr("填色尚未提交"); modal: true; standardButtons: Dialog.Ok; Label { text: qsTr("请等待填色完成并保存，或点击取消填色后再关闭。"); wrapMode: Text.Wrap } }
     onClosing: function(event) {
+        if (studio.fillBusy) { event.accepted = false; fillPendingDialog.open(); return }
         if (studio.dirty && !approvedClose) { event.accepted = false; closeDialog.open() }
     }
     header: ToolBar {
@@ -271,7 +273,8 @@ ApplicationWindow {
             }
             Button { objectName: "importLineartButton"; text: qsTr("空白工程 · 嵌入原线稿"); enabled: !studio.busy; onClicked: lineartDialog.open() }
             CheckBox { objectName: "lineartBucketTool"; text: qsTr("原线稿填色桶（鼠标点击）"); checked: nativeCanvas.bucketTool; onToggled: nativeCanvas.bucketTool = checked }
-            Label { text: qsTr("仅同尺寸黑白灰 PNG、4 Mi 像素以内；原图锁定，色块独立。大海报尚未接通，不缩图。"); color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Label { text: qsTr("同尺寸黑白灰 PNG，最多 2000 万像素；原图锁定、色块独立、后台填色，不缩图。导入仍为同步操作。"); color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Button { objectName: "cancelLineartFill"; text: qsTr("取消正在计算的色块"); visible: studio.fillBusy; onClicked: studio.cancelFill() }
             Label { objectName: "lineartFillNotice"; text: studio.fillNotice; color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Label { text: studio.layerNotice; color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true; visible: text.length > 0 }
             Label { text: qsTr("画笔 · 原生笔迹"); color: "#f5f5f7"; font.pixelSize: 18 }

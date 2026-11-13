@@ -82,9 +82,12 @@ Result<Command> bucketFillCommand(const DocumentSnapshot& s, NodeId layer, Id ev
     }
     try {
         std::vector<Rgba8> rgba(reference.bytes.size()/4);
-        for (std::size_t i=0;i<rgba.size();++i)
+        for (std::size_t i=0;i<rgba.size();++i) {
+            if (i%16384==0 && stop.stop_requested())
+                return error(ErrorCode::Cancelled,"bucket.reference-cancelled");
             rgba[i]={reference.bytes[4*i],reference.bytes[4*i+1],
                      reference.bytes[4*i+2],reference.bytes[4*i+3]};
+        }
         auto filled=floodFill(rgba,reference.width,reference.height,x,y,tolerance,{},stop);
         if (!filled) return filled.error();
         if(underInkPixels){

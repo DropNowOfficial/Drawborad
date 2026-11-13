@@ -5,6 +5,8 @@
 #include <QTimer>
 #include <QUrl>
 #include <QColor>
+#include <QThreadPool>
+#include <stop_token>
 #include <QVariantList>
 namespace drawborad {
 class WorkflowController;
@@ -23,6 +25,7 @@ class QtBridge : public QObject {
     Q_PROPERTY(QVariantList layers READ layers NOTIFY changed)
     Q_PROPERTY(QString activeLayerId READ activeLayerId NOTIFY changed)
     Q_PROPERTY(bool canAddLayer READ canAddLayer NOTIFY changed)
+    Q_PROPERTY(bool fillBusy READ fillBusy NOTIFY changed)
     Q_PROPERTY(QString fillNotice READ fillNotice NOTIFY changed)
     Q_PROPERTY(QString layerNotice READ layerNotice NOTIFY changed)
     Q_PROPERTY(int eventCount READ eventCount NOTIFY changed)
@@ -38,6 +41,9 @@ class QtBridge : public QObject {
     QUrl referenceUrl_;
     QString referenceFeedback_;
     QString fillNotice_;
+    QThreadPool fillPool_;
+    std::stop_source fillStop_;
+    bool fillBusy_{false};
     std::optional<NodeId> activeLayer_;
     std::uint64_t canvasGeneration_{};
     WorkflowController* workflow_{};
@@ -46,6 +52,9 @@ class QtBridge : public QObject {
     void resetLayerSelection();
   public:
     explicit QtBridge(QObject* parent = nullptr);
+    ~QtBridge() override;
+    bool fillBusy() const { return fillBusy_; }
+    Q_INVOKABLE void cancelFill();
     QString message() const;
     QString dimensions() const;
     bool hasDocument() const { return bool(app_.snapshot()); }

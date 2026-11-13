@@ -22,6 +22,7 @@
 using namespace drawborad;
 void settlePreview(CanvasItem& c){QTest::qWait(50);QElapsedTimer t;t.start();while(c.previewing()&&t.elapsed()<15000)QTest::qWait(5);assert(!c.previewing());QTest::qWait(20);}
 void settle(CanvasItem& c){QElapsedTimer t;t.start();while(c.rendering()&&t.elapsed()<15000)QTest::qWait(5);assert(!c.rendering());QTest::qWait(20);}
+void settleFill(QtBridge& b){QElapsedTimer t;t.start();while(b.fillBusy()&&t.elapsed()<30000)QTest::qWait(5);assert(!b.fillBusy());}
 int main(int argc,char**argv){
  QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);QGuiApplication app(argc,argv);
  NewDocumentRequest r;r.dimensions={128,128,Unit::Px,300};auto spec=validateDocument(r,{});assert(spec);auto d=Document::create(spec.value(),Id::fromNumber(1));assert(d);
@@ -98,17 +99,31 @@ int main(int argc,char**argv){
  for(int y=4;y<60;y++)for(int x=4;x<60;x++)if(x==4||x==32||x==59||y==4||y==59)line.setPixelColor(x,y,Qt::black);
  auto linePath=dir.filePath("line.png");assert(line.save(linePath));
  assert(fillBridge.importLineartUrl(QUrl::fromLocalFile(linePath)));auto embedded=*fillBridge.canvasSnapshot();assert(embedded.nodes->size()==3);
- assert(fillBridge.fillLineartAt(10,10,QColor("#ff0000")));auto filled=*fillBridge.canvasSnapshot();
+ assert(fillBridge.fillLineartAt(10,10,QColor("#ff0000")));settleFill(fillBridge);auto filled=*fillBridge.canvasSnapshot();
  for(const auto&[hash,res]:*embedded.resources)assert(*filled.resources->at(hash).bytes==*res.bytes);
- assert(fillBridge.fillLineartAt(10,10,QColor("#0000ff")));assert(fillBridge.undoDrawing());assert(fillBridge.canvasSnapshot()->sameContent(filled));assert(fillBridge.undoDrawing());assert(fillBridge.canvasSnapshot()->sameContent(embedded));
- assert(!fillBridge.fillLineartAt(4,4,Qt::red));assert(fillBridge.canvasSnapshot()->sameContent(embedded));
+ assert(fillBridge.fillLineartAt(10,10,QColor("#0000ff")));settleFill(fillBridge);assert(fillBridge.undoDrawing());assert(fillBridge.canvasSnapshot()->sameContent(filled));assert(fillBridge.undoDrawing());assert(fillBridge.canvasSnapshot()->sameContent(embedded));
+ assert(fillBridge.fillLineartAt(4,4,Qt::red));settleFill(fillBridge);assert(fillBridge.canvasSnapshot()->sameContent(embedded));
  assert(fillBridge.undoDrawing());assert(fillBridge.canvasSnapshot()->sameContent(emptyFill));assert(fillBridge.redoDrawing());assert(fillBridge.canvasSnapshot()->sameContent(embedded));
  assert(!fillBridge.importLineartUrl(QUrl::fromLocalFile(linePath)));assert(fillBridge.canvasSnapshot()->sameContent(embedded));
  CanvasItem fillCanvas(uiWindow->contentItem());fillCanvas.setWidth(256);fillCanvas.setHeight(256);fillCanvas.setProperty("bridge",QVariant::fromValue(static_cast<QObject*>(&fillBridge)));settle(fillCanvas);fillCanvas.setBucketTool(true);
  auto fillRect=fillCanvas.documentRect();QPointF fillPoint=fillRect.topLeft()+QPointF(fillRect.width()*10/64,fillRect.height()*10/64);
- QMouseEvent fillPress(QEvent::MouseButtonPress,fillPoint,fillPoint,Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);QCoreApplication::sendEvent(&fillCanvas,&fillPress);settle(fillCanvas);assert(fillBridge.eventCount()==1);assert(!fillCanvas.strokePreviewActive());
+ QMouseEvent fillPress(QEvent::MouseButtonPress,fillPoint,fillPoint,Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);QCoreApplication::sendEvent(&fillCanvas,&fillPress);settleFill(fillBridge);settle(fillCanvas);assert(fillBridge.eventCount()==1);assert(!fillCanvas.strokePreviewActive());
  QtBridge customFill;customFill.createDocument(64,64,300);assert(customFill.addLayer());auto customBefore=*customFill.canvasSnapshot();assert(!customFill.importLineartUrl(QUrl::fromLocalFile(linePath)));assert(customFill.canvasSnapshot()->sameContent(customBefore));
  QtBridge largeFill;largeFill.createDocument(1725,2625,300);auto largeBefore=*largeFill.canvasSnapshot();assert(!largeFill.importLineartUrl(QUrl::fromLocalFile(linePath)));assert(largeFill.canvasSnapshot()->sameContent(largeBefore));
+ for(const QSize nativeSize:{QSize(1725,2625),QSize(3300,5100)}){
+  QtBridge big;big.createDocument(nativeSize.width(),nativeSize.height(),300);
+  QImage native(nativeSize,QImage::Format_RGBA8888);native.fill(Qt::white);
+  for(int y=0;y<native.height();y++)native.setPixelColor(native.width()/2,y,Qt::black);
+  const auto nativePath=dir.filePath(QString("line-%1.png").arg(native.width()));assert(native.save(nativePath));
+  assert(big.importLineartUrl(QUrl::fromLocalFile(nativePath)));const auto original=*big.canvasSnapshot();
+  int beats=0;QTimer heartbeat;heartbeat.setInterval(1);QObject::connect(&heartbeat,&QTimer::timeout,[&]{if(big.fillBusy())++beats;});heartbeat.start();
+  assert(big.fillLineartAt(10,10,Qt::red));assert(big.fillBusy());big.setReplayCount(0);assert(!big.replaying());const auto forbidden=dir.filePath("pending-must-not-save.draw");big.saveUrl(QUrl::fromLocalFile(forbidden));assert(!QFile::exists(forbidden));
+  QTest::qWait(5);big.cancelFill();settleFill(big);assert(big.canvasSnapshot()->sameContent(original));
+  assert(big.fillLineartAt(10,10,Qt::red));assert(!big.fillLineartAt(20,20,Qt::blue));settleFill(big);heartbeat.stop();assert(beats>0);assert(big.eventCount()==1);
+  const auto completed=*big.canvasSnapshot();for(const auto&[hash,res]:*original.resources)assert(*completed.resources->at(hash).bytes==*res.bytes);
+  for(const auto& p:completed.eventIndex->back().geometry)assert(p.x<=native.width()/2 && p.y<native.height());
+  const auto safe=dir.filePath(QString("large-fill-%1.draw").arg(native.width()));big.saveUrl(QUrl::fromLocalFile(safe));assert(QFile::exists(safe));assert(big.undoDrawing());assert(big.canvasSnapshot()->sameContent(original));big.openUrl(QUrl::fromLocalFile(safe));assert(big.canvasSnapshot()->sameContent(completed));
+ }
  assert(uiWindow->findChild<QObject*>("lineartBucketTool"));assert(uiWindow->findChild<QObject*>("importLineartButton"));
  std::cout<<"PASS real Qt software/QML: imported pixels, native paint, pan/zoom, visible error recovery; 3300x5100 seam-free display, paint, save/reopen\n";
 }
