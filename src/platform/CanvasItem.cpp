@@ -59,7 +59,7 @@ Result<StrokeEvent> compileDesktopGesture(const DocumentSnapshot& source,std::sp
 }
 }
 QVariantList CanvasItem::brushFootprint() const {
- QVariantList out;if(!brushPointer_||brushPointer_->x()<0||brushPointer_->y()<0||brushPointer_->x()>=width()||brushPointer_->y()>=height()||!bridge_||!isEnabled()||!isVisible()||bridge_->busy()||bridge_->replaying()||rendering()||!renderError().isEmpty()||!stroke_.empty()||panGesture_||bucketTool_||hollowTool_||hollowDragTool_||closeGapTool_)return out;
+ QVariantList out;if(myPaintTool_||!brushPointer_||brushPointer_->x()<0||brushPointer_->y()<0||brushPointer_->x()>=width()||brushPointer_->y()>=height()||!bridge_||!isEnabled()||!isVisible()||bridge_->busy()||bridge_->replaying()||rendering()||!renderError().isEmpty()||!stroke_.empty()||panGesture_||bucketTool_||hollowTool_||hollowDragTool_||closeGapTool_)return out;
  const auto snap=bridge_->canvasSnapshot();if(!snap||snap->spec.colorSpec.format.mode!=ColorMode::RGB||!paintTarget(*snap)||!itemToDocument(*brushPointer_,*snap))return out;
  const auto rect=documentRect();const double scale=rect.width()/double(snap->spec.pixelSize.width),a=brushSettings_.width*scale*.5,b=a/(chiselInk_?3:1),angle=chiselInk_?chiselAngle_*3.14159265358979323846/8:0;
  if(!std::isfinite(a)||a<=0)return out;
@@ -68,24 +68,30 @@ QVariantList CanvasItem::brushFootprint() const {
 void CanvasItem::hoverEnterEvent(QHoverEvent*e){if(!e->pointingDevice()||(e->pointingDevice()->type()!=QInputDevice::DeviceType::Mouse&&e->pointingDevice()->type()!=QInputDevice::DeviceType::TouchPad))brushPointer_.reset();else brushPointer_=e->position();emit footprintChanged();e->accept();}
 void CanvasItem::hoverMoveEvent(QHoverEvent*e){if(!e->pointingDevice()||(e->pointingDevice()->type()!=QInputDevice::DeviceType::Mouse&&e->pointingDevice()->type()!=QInputDevice::DeviceType::TouchPad))brushPointer_.reset();else brushPointer_=e->position();emit footprintChanged();e->accept();}
 void CanvasItem::hoverLeaveEvent(QHoverEvent*e){brushPointer_.reset();emit footprintChanged();e->accept();}
+bool CanvasItem::configureMyPaint(bool value,const QString& preset,double scale){
+ if((value&&(!bridge_||!bridge_->myPaintAvailable()))||(bridge_&&bridge_->busy())||!std::isfinite(scale)||scale<.25||scale>8||(preset!="pointy_ink"&&preset!="dry_brush"))return false;
+ cancelStroke();myPaintTool_=value;myPaintPreset_=preset;myPaintScale_=scale;
+ if(value){dryInk_=false;smoothInk_=false;chiselInk_=false;controlledEraser_=false;bucketTool_=false;hollowTool_=false;hollowDragTool_=false;hollowLassoTool_=false;closeGapTool_=false;}
+ brushNotice_=value?tr("MyPaint：拖动期间不显示替代墨迹，松笔后真实预览再接受。radius scale 是预设倍率，不是像素宽度；倾斜不支持。"):QString{};emit brushSettingsChanged();return true;
+}
 bool CanvasItem::configureControlledEraser(bool value){
  if(value&&brushSettings_.width>128){brushNotice_=tr("连续橡皮宽度上限128原像素。");emit brushSettingsChanged();return false;}
- if(value!=controlledEraser_){cancelStroke();}controlledEraser_=value;
- if(value){dryInk_=false;smoothInk_=false;chiselInk_=false;setBucketTool(false);setHollowTool(false);setHollowDragTool(false);setCloseGapTool(false);}
+ if(gestureMyPaint_||value!=controlledEraser_){cancelStroke();}controlledEraser_=value;
+ if(value){myPaintTool_=false;dryInk_=false;smoothInk_=false;chiselInk_=false;setBucketTool(false);setHollowTool(false);setHollowDragTool(false);setCloseGapTool(false);}
  brushNotice_=value?tr("只擦当前独立手绘层的透明度，原稿/其他层不动；已用于填色的边界会拒绝。格式22须另存新文件。"):QString{};emit brushSettingsChanged();return true;
 }
 bool CanvasItem::configureDryInk(bool value){
  if(value&&brushSettings_.width>128){brushNotice_=tr("干墨宽度上限128原像素，请先调小宽度。");emit brushSettingsChanged();return false;}
- if(value!=dryInk_||(value&&(smoothInk_||chiselInk_||controlledEraser_))){cancelStroke();}dryInk_=value;if(value){smoothInk_=false;chiselInk_=false;controlledEraser_=false;}brushNotice_.clear();emit brushSettingsChanged();return true;
+ if(gestureMyPaint_||value!=dryInk_||(value&&(smoothInk_||chiselInk_||controlledEraser_))){cancelStroke();}dryInk_=value;if(value){myPaintTool_=false;smoothInk_=false;chiselInk_=false;controlledEraser_=false;}brushNotice_.clear();emit brushSettingsChanged();return true;
 }
 bool CanvasItem::configureSmoothInk(bool value){
  if(value&&brushSettings_.width>128){brushNotice_=tr("连续实墨宽度上限128原像素，请先调小宽度。");emit brushSettingsChanged();return false;}
- if(value!=smoothInk_||(value&&(dryInk_||chiselInk_||controlledEraser_))){cancelStroke();}smoothInk_=value;if(value){dryInk_=false;chiselInk_=false;controlledEraser_=false;}brushNotice_.clear();emit brushSettingsChanged();return true;
+ if(gestureMyPaint_||value!=smoothInk_||(value&&(dryInk_||chiselInk_||controlledEraser_))){cancelStroke();}smoothInk_=value;if(value){myPaintTool_=false;dryInk_=false;chiselInk_=false;controlledEraser_=false;}brushNotice_.clear();emit brushSettingsChanged();return true;
 }
 bool CanvasItem::configureChiselInk(bool value,int angle){
  if(angle<0||angle>7||(value&&brushSettings_.width>128)){brushNotice_=tr("连续扁笔尖角度需0..7、宽度≤128原像素。");emit brushSettingsChanged();return false;}
- if(value!=chiselInk_||angle!=chiselAngle_||(value&&(dryInk_||smoothInk_||controlledEraser_)))cancelStroke();
- chiselInk_=value;chiselAngle_=angle;if(value){dryInk_=false;smoothInk_=false;controlledEraser_=false;}
+ if(gestureMyPaint_||value!=chiselInk_||angle!=chiselAngle_||(value&&(dryInk_||smoothInk_||controlledEraser_)))cancelStroke();
+ chiselInk_=value;chiselAngle_=angle;if(value){myPaintTool_=false;dryInk_=false;smoothInk_=false;controlledEraser_=false;}
  brushNotice_=value?tr("固定3:1椭圆笔尖，不跟随数位笔倾角；新笔迹使用格式21，请另存新文件名保留旧工程。"):QString{};emit brushSettingsChanged();return true;
 }
 bool CanvasItem::configureBrush(double width,QColor color,double opacity,double hardness,double taper){
@@ -136,7 +142,7 @@ void CanvasItem::refreshSnapshot() {
     if(dryCommitPending_)cancelStroke();
     cancelHollowDrag();
     // A changed document/replay invalidates an in-progress input gesture.
-    previewTimer_.stop();stroke_.clear();strokeTarget_.reset();tabletStroke_=false;
+    previewTimer_.stop();stroke_.clear();strokeTarget_.reset();tabletStroke_=false;gestureMyPaint_=false;
     renderStop_.request_stop();renderPool_.clear();renderStop_=std::stop_source{};
     const auto token=renderStop_.get_token();std::uint64_t generation;
     {
@@ -268,6 +274,15 @@ void CanvasItem::beginSample(InputSample sample, bool tablet, bool eraser) {
     const auto snapshot = bridge_->canvasSnapshot();
     if (!snapshot) return;
     if(snapshot->spec.colorSpec.format.mode!=ColorMode::RGB){brushNotice_=QStringLiteral("RGB brush controls cannot paint a CMYK document without color conversion.");emit brushSettingsChanged();return;}
+    if(myPaintTool_) {
+        if(!bridge_->myPaintAvailable()||eraser_){brushNotice_=tr("MyPaint 后端不可用或当前是橡皮输入，本笔未提交。");emit brushSettingsChanged();return;}
+        gestureMyPaint_=true;gestureMyPaintPreset_=myPaintPreset_;gestureMyPaintScale_=myPaintScale_;
+        gestureColor_=brushColor_;gestureBrush_=brushSettings_;
+        strokeTarget_=StrokeTarget{snapshot->documentId,{}, {},bridge_->canvasGeneration()};
+        stroke_.push_back(sample);setFocus(true,Qt::MouseFocusReason);
+        brushNotice_=tr("正在记录原始坐标/压力/时间；没有同引擎实时墨迹，松笔后计算真实预览。鼠标压力模拟、倾斜忽略。");emit brushSettingsChanged();emit renderErrorChanged();return;
+    }
+    gestureMyPaint_=false;
     const auto target = paintTarget(*snapshot);
     if (!target){if(controlledEraser_){brushNotice_=tr("橡皮没有可用的当前手绘层，未改动工程。");emit brushSettingsChanged();}return;}
     if(controlledEraser_&&bridge_->isSelectedBoundary(target->second)){brushNotice_=tr("当前层已选作填色边界，请先取消边界选择；原稿未改。");emit brushSettingsChanged();return;}
@@ -280,6 +295,10 @@ void CanvasItem::beginSample(InputSample sample, bool tablet, bool eraser) {
 }
 void CanvasItem::appendSample(InputSample s){
  if(stroke_.empty())return;
+ if(gestureMyPaint_){
+  if(stroke_.size()>=1024||s.timestampUs<stroke_.back().timestampUs||s.timestampUs-stroke_.front().timestampUs>60000000){cancelStroke();brushNotice_=tr("MyPaint 单笔超过1024点/60秒或时间倒退，整笔取消，不截点。");emit brushSettingsChanged();return;}
+  stroke_.push_back(s);emit renderErrorChanged();return;
+ }
  if((((gestureDryInk_||gestureSmoothInk_||gestureChiselInk_)&&!eraser_)||gestureControlledEraser_)&&stroke_.size()>=4096){cancelStroke();brushNotice_=tr("笔迹超过4096输入点，整笔取消，未截点或改动原稿。");emit brushSettingsChanged();return;}
  stroke_.push_back(s);
  {std::lock_guard lock(snapshotMutex_);++previewInputSequence_;previewInputPending_=true;}
@@ -295,9 +314,10 @@ void CanvasItem::clearPreview(){
     {std::lock_guard lock(snapshotMutex_);++renderGeneration_;completedDryReady_=false;completedDryEvent_.reset();completedDryError_.clear();completedFrame_={};displayFrame_=committedFrame_;previewing_=false;previewInputPending_=false;}
     emit renderErrorChanged();update();
 }
-void CanvasItem::cancelStroke(){cancelHollowDrag();if(stroke_.empty()&&!previewing()&&!previewTimer_.isActive()&&!dryCommitPending_)return;const bool wasPending=dryCommitPending_;dryCommitPending_=false;dryCommitTimer_.stop();{std::lock_guard lock(snapshotMutex_);completedDryReady_=false;completedDryEvent_.reset();completedDryError_.clear();}stroke_.clear();strokeTarget_.reset();tabletStroke_=false;clearPreview();if(wasPending){if(bridge_)bridge_->setStrokeCommitBusy(false);brushNotice_=tr("已取消笔迹验收，这笔未写入工程。");emit brushSettingsChanged();}}
+void CanvasItem::cancelStroke(){cancelHollowDrag();if(stroke_.empty()&&!previewing()&&!previewTimer_.isActive()&&!dryCommitPending_)return;const bool wasPending=dryCommitPending_;dryCommitPending_=false;dryCommitTimer_.stop();{std::lock_guard lock(snapshotMutex_);completedDryReady_=false;completedDryEvent_.reset();completedDryError_.clear();}stroke_.clear();strokeTarget_.reset();tabletStroke_=false;gestureMyPaint_=false;clearPreview();if(wasPending){if(bridge_)bridge_->setStrokeCommitBusy(false);brushNotice_=tr("已取消笔迹验收，这笔未写入工程。");emit brushSettingsChanged();}}
 void CanvasItem::mouseUngrabEvent(){if(!dryCommitPending_)cancelStroke();}
 void CanvasItem::requestPreview() try{
+    if(gestureMyPaint_)return;
     if(!bridge_||bridge_->busy()||bridge_->replaying()||stroke_.empty()||!strokeTarget_||rendering()){clearPreview();renderStop_=std::stop_source{};return;}
     const auto source=bridge_->canvasSnapshot();if(!source){clearPreview();renderStop_=std::stop_source{};return;}
     const auto settings=currentGestureSettings(*source);const auto samples=stroke_;const auto taper=tabletStroke_?0:gestureTaper_;const auto eraser=eraser_;const auto dryInk=gestureDryInk_;const auto smoothInk=gestureSmoothInk_;const auto chiselInk=gestureChiselInk_;const auto chiselAngle=gestureChiselAngle_;const auto controlledEraser=gestureControlledEraser_;const auto gestureId=gestureId_;
@@ -330,6 +350,14 @@ void CanvasItem::requestPreview() try{
 }catch(const std::bad_alloc&){clearPreview();renderStop_=std::stop_source{};brushNotice_=QStringLiteral("Preview allocation failed; stroke input retained until release.");emit brushSettingsChanged();}
 void CanvasItem::finishStroke(){
     if(!bridge_||bridge_->busy()||bridge_->replaying()||stroke_.empty()||rendering()||!renderError().isEmpty()){cancelStroke();return;}std::optional<DocumentSnapshot> snap;{std::lock_guard lock(snapshotMutex_);snap=snapshot_;}
+    if(gestureMyPaint_){
+        if(!snap||!strokeTarget_||strokeTarget_->document!=snap->documentId||strokeTarget_->generation!=bridge_->canvasGeneration()){cancelStroke();return;}
+        auto samples=std::move(stroke_);const auto color=gestureColor_;const auto opacity=gestureBrush_.opacity;
+        const auto preset=gestureMyPaintPreset_;const auto scale=gestureMyPaintScale_;const bool mouse=!tabletStroke_;
+        stroke_.clear();strokeTarget_.reset();gestureMyPaint_=false;tabletStroke_=false;clearPreview();emit renderErrorChanged();
+        const bool started=bridge_->previewMyPaintGesture(std::move(samples),color,opacity,preset,scale,mouse);
+        brushNotice_=started?tr("已收笔，MyPaint 正在真实验收；未接受前原稿不变。"):tr("MyPaint 未启动，工程未改。");emit brushSettingsChanged();return;
+    }
     if(!snap||!strokeTarget_||strokeTarget_->document!=snap->documentId||
        strokeTarget_->generation!=bridge_->canvasGeneration()||
        !nativeLayerPaintable(*snap,strokeTarget_->layer)||
@@ -391,16 +419,16 @@ void CanvasItem::finishDryCommit() try {
     else if(event){auto done=bridge_->commitStroke(*event);brushNotice_=done?QString{}:tr("笔迹未提交：")+QString::fromStdString(done.error().messageKey);}
     emit renderErrorChanged();emit brushSettingsChanged();update();
 }catch(const std::bad_alloc&){dryCommitTimer_.stop();dryCommitPending_=false;if(bridge_)bridge_->setStrokeCommitBusy(false);brushNotice_=tr("笔迹提交内存不足，请核对工程状态。");emit brushSettingsChanged();}
-void CanvasItem::setCloseGapTool(bool value){cancelStroke();closeGapTool_=value;if(value){controlledEraser_=false;hollowTool_=false;bucketTool_=false;hollowDragTool_=false;hollowLassoTool_=false;}emit brushSettingsChanged();emit viewChanged();}
+void CanvasItem::setCloseGapTool(bool value){cancelStroke();closeGapTool_=value;if(value){myPaintTool_=false;controlledEraser_=false;hollowTool_=false;bucketTool_=false;hollowDragTool_=false;hollowLassoTool_=false;}emit brushSettingsChanged();emit viewChanged();}
 QVariantList CanvasItem::closeGapGuide() const {QVariantList out;if(!closeGapTool_||!hollowDrag_)return out;const auto snap=bridge_?bridge_->canvasSnapshot():std::nullopt;if(!snap)return out;const auto r=documentRect();for(const auto p:{hollowDrag_->start,hollowDrag_->current})out.push_back(QVariant::fromValue(QPointF(r.x()+(std::floor(p.x())+.5)*r.width()/snap->spec.pixelSize.width,r.y()+(std::floor(p.y())+.5)*r.height()/snap->spec.pixelSize.height)));return out;}
 void CanvasItem::setHollowDragTool(bool value){
  cancelStroke();closeGapTool_=false;hollowDragTool_=value;hollowLassoTool_=false;
- if(value){controlledEraser_=false;hollowTool_=true;bucketTool_=false;}
+ if(value){myPaintTool_=false;controlledEraser_=false;hollowTool_=true;bucketTool_=false;}
  emit brushSettingsChanged();emit viewChanged();
 }
 void CanvasItem::setHollowLassoTool(bool value){
  cancelStroke();closeGapTool_=false;hollowDragTool_=value;hollowLassoTool_=value;
- if(value){controlledEraser_=false;hollowTool_=true;bucketTool_=false;}
+ if(value){myPaintTool_=false;controlledEraser_=false;hollowTool_=true;bucketTool_=false;}
  emit brushSettingsChanged();emit viewChanged();
 }
 QVariantList CanvasItem::hollowLassoPoints() const {

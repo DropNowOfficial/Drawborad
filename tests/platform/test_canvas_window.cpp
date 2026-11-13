@@ -1,3 +1,7 @@
+#include <QFocusEvent>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
 #include "core/MyPaintCroppedRaster.h"
 #include "storage/ProjectStore.h"
 #include <QLineF>
@@ -44,6 +48,41 @@ int main(int argc,char**argv){
 #ifndef DRAWBORAD_HAS_QT_SOLID_BAKE
  {QtBridge off;const auto before=off.canvasSnapshot();assert(!off.solidBakeAvailable()&&!off.previewCubicSolidBake()&&!off.solidBakePreviewPending());assert(off.canvasSnapshot().has_value()==before.has_value());}
 #endif
+#ifndef DRAWBORAD_HAS_MYPAINT_DESKTOP
+ {QtBridge off;assert(!off.myPaintAvailable());assert(!off.previewMyPaintGesture({},Qt::black,1,"pointy_ink",1,true));}
+#endif
+ if(qEnvironmentVariableIsSet("DRAWBORAD_MYPAINT_UI_TEST")) {
+#ifdef DRAWBORAD_HAS_MYPAINT_DESKTOP
+  const auto previousHandler=qInstallMessageHandler([](QtMsgType,const QMessageLogContext&,const QString& message){if(message.contains("Binding loop")||message.contains("ReferenceError")||message.contains("TypeError"))++cubicBindingDiagnostics;std::cerr<<message.toStdString()<<"\n";});
+  qmlRegisterType<CanvasItem>("Drawborad.Native",1,0,"NativeCanvas");QtBridge b;QQmlApplicationEngine engine;engine.addImageProvider("original-reference",new OriginalReferenceProvider(b));engine.rootContext()->setContextProperty("studio",&b);engine.load(QUrl::fromLocalFile(QStringLiteral(DRAWBORAD_SOURCE_DIR "/ui/Main.qml")));assert(!engine.rootObjects().isEmpty());auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().front());assert(window);auto* canvas=window->findChild<CanvasItem*>("nativeCanvas");assert(canvas);QTest::qWait(150);b.createDocument(700,360,300,true);settle(*canvas);assert(b.myPaintAvailable());
+  auto click=[&](const char* name){auto* item=window->findChild<QQuickItem*>(name);assert(item&&item->isVisible()&&item->isEnabled());for(auto* a=item->parentItem();a;a=a->parentItem())if(a->inherits("QQuickFlickable")){auto* content=qvariant_cast<QQuickItem*>(a->property("contentItem"));assert(content);a->setProperty("contentY",item->mapToItem(content,{0,0}).y()-12);break;}QTest::qWait(40);auto at=item->mapToScene({item->width()/2,item->height()/2}).toPoint();assert(at.y()>0&&at.y()<window->height());QTest::mouseClick(window,Qt::LeftButton,{},at);};
+  click("myPaintSwitch");assert(canvas->myPaintTool()&&!canvas->dryInk()&&!canvas->smoothInk());assert(canvas->configureBrush(12,Qt::black,.75,1,.4));const auto blank=*b.canvasSnapshot();
+  const auto point=[&](double x,double y){const auto r=canvas->documentRect();return r.topLeft()+QPointF(r.width()*x/700,r.height()*y/360);};
+  QPointingDevice pen("synthetic MyPaint pressure pen",123,QInputDevice::DeviceType::Stylus,QPointingDevice::PointerType::Pen,QInputDevice::Capability::Position|QInputDevice::Capability::Pressure|QInputDevice::Capability::XTilt,1,1);
+  const auto tablet=[&](QEvent::Type type,double x,double y,double pressure,ulong tick){const auto p=point(x,y);QTabletEvent e(type,&pen,p,p,pressure,15,0,0,0,0,Qt::NoModifier,type==QEvent::TabletMove?Qt::NoButton:Qt::LeftButton,type==QEvent::TabletRelease?Qt::NoButton:Qt::LeftButton);e.setTimestamp(tick);QCoreApplication::sendEvent(canvas,&e);};
+  tablet(QEvent::TabletPress,100,170,.2,10000);for(int i=1;i<40;++i)tablet(QEvent::TabletMove,100+i*10,170+20*std::sin(i/6.),.2+.7*std::sin(3.141592653589793*i/40),10000+i*12);
+  assert(canvas->strokePreviewActive()&&!canvas->previewing()&&!b.fillBusy()&&b.canvasSnapshot()->sameContent(blank));QTest::qWait(40);assert(!canvas->previewing());tablet(QEvent::TabletRelease,500,170,.1,10480);assert(b.fillBusy());settleFill(b);if(!b.fillPending())std::cerr<<b.fillNotice().toStdString()<<"\n";assert(b.myPaintPreviewPending()&&!b.cubicPreviewPending());settle(*canvas);assert(canvas->renderError().isEmpty()&&b.canvasSnapshot()->sameContent(blank));
+  auto* presetBox=window->findChild<QQuickItem*>("myPaintPresetBox");auto* scaleSlider=window->findChild<QQuickItem*>("myPaintScaleSlider");assert(presetBox&&scaleSlider&&!presetBox->isEnabled()&&!scaleSlider->isEnabled());
+  const auto frozenPreset=canvas->myPaintPreset();const auto frozenScale=canvas->myPaintRadiusScale();assert(!canvas->configureMyPaint(true,"dry_brush",2));
+  presetBox->setProperty("currentIndex",1);assert(QMetaObject::invokeMethod(presetBox,"activated",Q_ARG(int,1)));scaleSlider->setProperty("value",2.);assert(QMetaObject::invokeMethod(scaleSlider,"moved"));QTest::qWait(10);
+  assert(canvas->myPaintPreset()==frozenPreset&&canvas->myPaintRadiusScale()==frozenScale&&presetBox->property("currentIndex").toInt()==0&&scaleSlider->property("value").toDouble()==frozenScale);
+  const auto preview=*b.displaySnapshot();NodeId stroke{};for(const auto& [id,node]:*preview.nodes)if(croppedRaster::isStage(node.stage))stroke=id;assert(!stroke.empty());auto view=croppedRaster::parse(preview,stroke);assert(view);const auto& bytes=*preview.resources->at(view.value().manifest).bytes;auto meta=QJsonDocument::fromJson(QByteArray(reinterpret_cast<const char*>(bytes.data()),int(bytes.size()))).object();auto samples=meta["original_global_points"].toArray();assert(samples.size()==41&&samples[0].toObject()["pressure"].toDouble()==.2&&samples[40].toObject()["pressure"].toDouble()==.1&&samples[40].toObject()["time_ms"].toDouble()==480);assert(meta["tilt_ignored"].toBool()&&!meta["mouse_pressure_simulated"].toBool());
+  QTemporaryDir dir;assert(dir.isValid());b.saveUrl(QUrl::fromLocalFile(dir.path()+"/pending.draw"));assert(!QFile::exists(dir.path()+"/pending.draw"));
+  click("acceptMyPaintButton");settle(*canvas);const auto accepted=*b.canvasSnapshot();assert(accepted.eventIndex->empty()&&accepted.nodes->contains(stroke)&&b.myPaintStatus().contains("31/32"));assert(b.undoDrawing()&&b.canvasSnapshot()->sameContent(blank));assert(b.redoDrawing()&&b.canvasSnapshot()->sameContent(accepted));settle(*canvas);
+  // A second real mouse gesture works even with the first locked raster stroke selected.
+  assert(canvas->configureMyPaint(true,"dry_brush",1));
+  const auto mouse=[&](QEvent::Type type,double x,double y,ulong tick){auto p=point(x,y);QMouseEvent e(type,p,p,type==QEvent::MouseMove?Qt::NoButton:Qt::LeftButton,type==QEvent::MouseButtonRelease?Qt::NoButton:Qt::LeftButton,Qt::NoModifier);e.setTimestamp(tick);QCoreApplication::sendEvent(canvas,&e);};
+  mouse(QEvent::MouseButtonPress,100,240,20000);for(int i=1;i<25;++i)mouse(QEvent::MouseMove,100+i*15,240,20000+i*12);mouse(QEvent::MouseButtonRelease,475,240,20300);assert(b.fillBusy());settleFill(b);assert(b.myPaintPreviewPending());settle(*canvas);const auto secondPreview=*b.displaySnapshot();bool mouseChecked=false;for(const auto& [id,node]:*secondPreview.nodes)if(!accepted.nodes->contains(id)&&croppedRaster::isStage(node.stage)){auto v=croppedRaster::parse(secondPreview,id);assert(v);const auto& data=*secondPreview.resources->at(v.value().manifest).bytes;auto m=QJsonDocument::fromJson(QByteArray(reinterpret_cast<const char*>(data.data()),int(data.size()))).object();assert(m["mouse_pressure_simulated"].toBool());for(const auto& p:m["original_global_points"].toArray())assert(p.toObject()["pressure"].toDouble()==1);mouseChecked=true;}assert(mouseChecked);click("cancelMyPaintButton");settle(*canvas);assert(b.canvasSnapshot()->sameContent(accepted));
+  b.saveUrl(QUrl::fromLocalFile(dir.path()+"/mypaint.draw"));assert(QFile::exists(dir.path()+"/mypaint.draw"));b.createDocument(64,64,300,true);b.openUrl(QUrl::fromLocalFile(dir.path()+"/mypaint.draw"));settle(*canvas);assert(b.canvasSnapshot()->sameContent(accepted)&&canvas->renderError().isEmpty());auto* workflow=qobject_cast<WorkflowController*>(b.workflow());assert(workflow&&workflow->exportNative(QUrl::fromLocalFile(dir.path()+"/mypaint.png"),"png")&&workflow->exportNative(QUrl::fromLocalFile(dir.path()+"/mypaint.ora"),"ora"));QImage png(dir.path()+"/mypaint.png");assert(png.size()==QSize(700,360));bool ink=false;for(int y=0;y<360;++y)for(int x=0;x<700;++x)ink|=png.pixelColor(x,y).red()<200;assert(ink);
+  mouse(QEvent::MouseButtonPress,100,240,30000);mouse(QEvent::MouseMove,180,240,30100);QKeyEvent escape(QEvent::KeyPress,Qt::Key_Escape,Qt::NoModifier);QCoreApplication::sendEvent(canvas,&escape);assert(!canvas->strokePreviewActive()&&!b.fillPending()&&!b.fillBusy()&&b.canvasSnapshot()->sameContent(accepted));
+  mouse(QEvent::MouseButtonPress,100,240,40000);mouse(QEvent::MouseMove,180,240,40100);assert(canvas->strokePreviewActive());assert(canvas->configureDryInk(false));assert(!canvas->strokePreviewActive()&&b.canvasSnapshot()->sameContent(accepted));
+  assert(canvas->configureMyPaint(true,"pointy_ink",1));mouse(QEvent::MouseButtonPress,100,240,50000);mouse(QEvent::MouseMove,180,240,50100);QFocusEvent focusOut(QEvent::FocusOut);QCoreApplication::sendEvent(canvas,&focusOut);assert(!canvas->strokePreviewActive()&&!b.fillBusy()&&b.canvasSnapshot()->sameContent(accepted));
+  mouse(QEvent::MouseButtonPress,100,240,60000);mouse(QEvent::MouseMove,180,240,60100);mouse(QEvent::MouseButtonRelease,220,240,60200);assert(b.fillBusy());b.cancelFill();settleFill(b);settle(*canvas);assert(!b.fillPending()&&b.canvasSnapshot()->sameContent(accepted));
+  assert(cubicBindingDiagnostics==0);qInstallMessageHandler(previousHandler);std::cout<<"PASS actual QML MyPaint input pressure/time, no substitute live ink, true worker preview/accept/cancel/Undo/save/reopen/export and repeated mouse gesture; experimental limits remain\n";return 0;
+#else
+  assert(false&&"MyPaint UI test requires operator enabled backend");
+#endif
+ }
  if(qEnvironmentVariableIsSet("DRAWBORAD_SOLID_BAKE_UI_TEST")) {
 #ifdef DRAWBORAD_HAS_QT_SOLID_BAKE
   const auto previousHandler=qInstallMessageHandler([](QtMsgType,const QMessageLogContext&,const QString& message){if(message.contains("Binding loop")||message.contains("ReferenceError")||message.contains("TypeError"))++cubicBindingDiagnostics;std::cerr<<message.toStdString()<<"\n";});

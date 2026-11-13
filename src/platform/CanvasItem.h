@@ -43,6 +43,9 @@ class CanvasItem : public QQuickItem {
     Q_PROPERTY(double brushWidth READ brushWidth NOTIFY brushSettingsChanged)
     Q_PROPERTY(double brushOpacity READ brushOpacity NOTIFY brushSettingsChanged)
     Q_PROPERTY(double brushHardness READ brushHardness NOTIFY brushSettingsChanged)
+    Q_PROPERTY(bool myPaintTool READ myPaintTool NOTIFY brushSettingsChanged)
+    Q_PROPERTY(QString myPaintPreset READ myPaintPreset NOTIFY brushSettingsChanged)
+    Q_PROPERTY(double myPaintRadiusScale READ myPaintRadiusScale NOTIFY brushSettingsChanged)
     Q_PROPERTY(double mouseTaper READ mouseTaper NOTIFY brushSettingsChanged)
     Q_PROPERTY(bool dryInk READ dryInk NOTIFY brushSettingsChanged)
     Q_PROPERTY(bool smoothInk READ smoothInk NOTIFY brushSettingsChanged)
@@ -77,6 +80,9 @@ class CanvasItem : public QQuickItem {
     void cancelHollowDrag();
     bool updateHollowDrag(QPointF);
     QRectF hollowDragRect() const;
+    bool myPaintTool_{false},gestureMyPaint_{false};
+    QString myPaintPreset_{"pointy_ink"},gestureMyPaintPreset_;
+    double myPaintScale_{1},gestureMyPaintScale_{1};
     double mouseTaper_{0},gestureTaper_{0};
     QString brushNotice_;
     QPointer<QtBridge> bridge_;
@@ -169,9 +175,9 @@ class CanvasItem : public QQuickItem {
     void setHollowBounds(QRectF value) { const auto eq=[](double a,double b){return a==b||(std::isnan(a)&&std::isnan(b));};if(eq(value.x(),hollowBounds_.x())&&eq(value.y(),hollowBounds_.y())&&eq(value.width(),hollowBounds_.width())&&eq(value.height(),hollowBounds_.height()))return;hollowPolygon_.clear();hollowBounds_=value;emit hollowBoundsChanged();emit viewChanged(); }
     QRectF hollowItemRect() const;
     bool hollowTool() const { return hollowTool_; }
-    void setHollowTool(bool value) { cancelStroke();hollowTool_=value;if(value){controlledEraser_=false;bucketTool_=false;closeGapTool_=false;}else {hollowDragTool_=false;hollowLassoTool_=false;}emit brushSettingsChanged(); }
+    void setHollowTool(bool value) { cancelStroke();hollowTool_=value;if(value){myPaintTool_=false;controlledEraser_=false;bucketTool_=false;closeGapTool_=false;}else {hollowDragTool_=false;hollowLassoTool_=false;}emit brushSettingsChanged(); }
     bool bucketTool() const { return bucketTool_; }
-    void setBucketTool(bool value) { cancelStroke();bucketTool_=value;if(value){controlledEraser_=false;closeGapTool_=false;hollowTool_=false;hollowDragTool_=false;hollowLassoTool_=false;}emit brushSettingsChanged(); }
+    void setBucketTool(bool value) { cancelStroke();bucketTool_=value;if(value){myPaintTool_=false;controlledEraser_=false;closeGapTool_=false;hollowTool_=false;hollowDragTool_=false;hollowLassoTool_=false;}emit brushSettingsChanged(); }
     explicit CanvasItem(QQuickItem* parent = nullptr);
     ~CanvasItem() override;
     bool rendering() const;
@@ -181,6 +187,10 @@ class CanvasItem : public QQuickItem {
     double brushWidth()const{return brushSettings_.width;}
     double brushOpacity()const{return brushSettings_.opacity;}
     double brushHardness()const{return brushSettings_.hardness;}
+    bool myPaintTool()const{return myPaintTool_;}
+    QString myPaintPreset()const{return myPaintPreset_;}
+    double myPaintRadiusScale()const{return myPaintScale_;}
+    Q_INVOKABLE bool configureMyPaint(bool,const QString&,double);
     double mouseTaper()const{return mouseTaper_;}
     bool dryInk()const{return dryInk_;}
     Q_INVOKABLE bool configureDryInk(bool);

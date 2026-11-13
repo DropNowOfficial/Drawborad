@@ -1,3 +1,6 @@
+#ifdef DRAWBORAD_HAS_MYPAINT_DESKTOP
+#include "platform/MyPaintRasterCommand.h"
+#endif
 #ifdef DRAWBORAD_HAS_QT_SOLID_BAKE
 #include "platform/QtSolidRasterCommand.h"
 #endif
@@ -93,11 +96,11 @@ bool QtBridge::acceptFill(){
     const bool closedInk=pendingClosedInk_;pendingClosedInk_=false;
     auto command=std::move(*pendingFill_);pendingFill_.reset();pendingFillPreview_.reset();pendingFillSource_.reset();
     std::optional<NodeId> paintedLayer;for(const auto& op:command.operations)if(const auto* p=std::get_if<Paint>(&op))paintedLayer=p->event.layerId;
-    if(kind==PreviewKind::CubicSolidBake)for(const auto& op:command.operations)if(const auto* n=std::get_if<AddNode>(&op))paintedLayer=n->node.id;
+    if(kind==PreviewKind::CubicSolidBake||kind==PreviewKind::MyPaintStroke)for(const auto& op:command.operations)if(const auto* n=std::get_if<AddNode>(&op))if(n->node.kind==NodeKind::Layer)paintedLayer=n->node.id;
     const auto retained=activeLayer_;const bool keepDetail=retained&&current->nodes->contains(*retained)&&current->nodes->at(*retained).stage==FinishingLayerStage&&nativeLayerPaintable(*current,*retained);
     const bool localEdit=command.operations.size()==1&&std::holds_alternative<AdjustStrokeSamples>(command.operations.front());
-    auto committed=app_.apply(command);if(committed&&paintedLayer&&(!keepDetail||kind==PreviewKind::CubicSolidBake))activeLayer_=paintedLayer;if(committed && kind!=PreviewKind::Existing){cubicSource_.reset();cubicEvent_.reset();cubicLayer_.reset();emit cubicControlsChanged();}
-    fillNotice_=committed?(kind==PreviewKind::CubicSolidBake?tr("已添加独立像素层，可撤销和保存；此层控制点不再可编辑，原轮廓及原稿未改。首次建议另存文件保留原版。"):((kind==PreviewKind::CubicPathCreate||kind==PreviewKind::CubicPathEdit)?tr("已接受共享锚点轮廓；可撤销。首次请另存新文件，旧版不能读取24格式。闭合不保证可填色；后续填色可能锁定轮廓编辑。"):kind!=PreviewKind::Existing?tr("已接受原生四控点曲线；可撤销。首次保存请另存新文件，旧版不能读取23格式。"):closeStroke?tr("已追加所选笔迹的短首尾连接；原样本及其他笔迹未改，可撤销。端点合成外观会变化；过细或低压线仍可能不能填色。"):withdrawal?tr("已撤回最近已记录的完整闭合填色组；原图及其他笔迹保留，可撤销恢复。若保存提示格式不同，请另存新文件名，保留原文件。"):localEdit?tr("已接受原笔迹的局部修整；未新增笔迹或图层，颜色和时间不变，可撤销和保存。"):closedInk?tr("已接受闭合墨块内区填充及来源记录；原轮廓和其他层内容未改，可撤销。请首次另存新文件名，旧版不能打开；仅支持已核验记录组的受限撤回。半透明上层合成可能改变。"):tr("已接受区域操作，独立图层已更新；原线稿未改，可撤销和保存。"))):QString::fromStdString(committed.error().messageKey);emit changed();return bool(committed);
+    auto committed=app_.apply(command);if(committed&&paintedLayer&&(!keepDetail||kind==PreviewKind::CubicSolidBake||kind==PreviewKind::MyPaintStroke))activeLayer_=paintedLayer;if(committed && kind!=PreviewKind::Existing){cubicSource_.reset();cubicEvent_.reset();cubicLayer_.reset();emit cubicControlsChanged();}
+    fillNotice_=committed?(kind==PreviewKind::MyPaintStroke?tr("已接受 MyPaint 独立笔层，可撤销和保存；每笔为锁定像素层，不会自动合并。32笔/128MiB仅实验限制，不是完整长时绘画能力。"):kind==PreviewKind::CubicSolidBake?tr("已添加独立像素层，可撤销和保存；此层控制点不再可编辑，原轮廓及原稿未改。首次建议另存文件保留原版。"):((kind==PreviewKind::CubicPathCreate||kind==PreviewKind::CubicPathEdit)?tr("已接受共享锚点轮廓；可撤销。首次请另存新文件，旧版不能读取24格式。闭合不保证可填色；后续填色可能锁定轮廓编辑。"):kind!=PreviewKind::Existing?tr("已接受原生四控点曲线；可撤销。首次保存请另存新文件，旧版不能读取23格式。"):closeStroke?tr("已追加所选笔迹的短首尾连接；原样本及其他笔迹未改，可撤销。端点合成外观会变化；过细或低压线仍可能不能填色。"):withdrawal?tr("已撤回最近已记录的完整闭合填色组；原图及其他笔迹保留，可撤销恢复。若保存提示格式不同，请另存新文件名，保留原文件。"):localEdit?tr("已接受原笔迹的局部修整；未新增笔迹或图层，颜色和时间不变，可撤销和保存。"):closedInk?tr("已接受闭合墨块内区填充及来源记录；原轮廓和其他层内容未改，可撤销。请首次另存新文件名，旧版不能打开；仅支持已核验记录组的受限撤回。半透明上层合成可能改变。"):tr("已接受区域操作，独立图层已更新；原线稿未改，可撤销和保存。"))):QString::fromStdString(committed.error().messageKey);emit changed();return bool(committed);
 }
 QVariantList QtBridge::cubicControls() const {
     QVariantList out;if(!cubicSource_)return out;
@@ -183,6 +186,72 @@ bool QtBridge::previewCubic() try {
         std::lock_guard lock(localEditMutex_);localEditCompletion_=std::move(done);
     });return true;
 }catch(const std::bad_alloc&){fillBusy_=false;fillNotice_=tr("曲线预览内存不足，草稿保留。");emit changed();return false;}
+bool QtBridge::myPaintAvailable() const {
+#ifdef DRAWBORAD_HAS_MYPAINT_DESKTOP
+    if(!myPaintRuntimeReady_) {
+        const MyPaintRuntime runtime{QStringLiteral(DRAWBORAD_MYPAINT_PYTHON),QStringLiteral(DRAWBORAD_MYPAINT_SOURCE_DIR "/cloud/mypaint_worker.py"),QStringLiteral(DRAWBORAD_MYPAINT_SOURCE_DIR "/cloud/mypaint_data/pins.json")};
+        auto result=validateMyPaintRuntime(runtime);myPaintRuntimeReady_=bool(result);
+        if(!result)myPaintRuntimeFailure_=QString::fromStdString(result.error().messageKey);
+    }
+    return *myPaintRuntimeReady_;
+#else
+    return false;
+#endif
+}
+QString QtBridge::myPaintStatus() const {
+    if(!myPaintAvailable())return tr("MyPaint 未启用或固定 Linux 运行库不可用；不会自动安装或用其他笔刷冒充。")+myPaintRuntimeFailure_;
+#ifdef DRAWBORAD_HAS_MYPAINT_DESKTOP
+    const auto s=app_.snapshot();if(!s)return tr("请先建立工程。");
+    if(!myPaintCountSource_||myPaintCountSource_->documentId!=s->documentId||myPaintCountSource_->revision!=s->revision||myPaintCountSource_->nodes!=s->nodes||myPaintCountSource_->resources!=s->resources) {
+        auto count=desktopMyPaintStrokeCount(*s);myPaintCountValid_=bool(count);myPaintCount_=count?count.value():0;myPaintCountSource_=*s;
+    }
+    if(!myPaintCountValid_)return tr("当前工程无法通过 MyPaint 笔层预算检查，未改动原稿。");
+    return tr("松笔后精确预览；鼠标固定模拟压力，笔压/时间有效、倾斜未使用。独立笔层剩余 %1/32；文档资源128MiB、单笔ROI≤1M像素，超限拒绝不缩图。实验阶段，尚非完整长时绘画。").arg(myPaintCount_>=32?0:32-myPaintCount_);
+#else
+    return {};
+#endif
+}
+bool QtBridge::previewMyPaintGesture(std::vector<InputSample> samples,const QColor& selected,double opacity,const QString& preset,double scale,bool mouseSimulated) try {
+#ifndef DRAWBORAD_HAS_MYPAINT_DESKTOP
+    (void)samples;(void)selected;(void)opacity;(void)preset;(void)scale;(void)mouseSimulated;
+    fillNotice_=tr("当前构建没有 MyPaint 桌面后端，笔迹未提交。");emit changed();return false;
+#else
+    if(!myPaintAvailable()||busy()||replaying()||workflow_->pending()||!selected.isValid())return false;
+    const auto snapshot=app_.snapshot();if(!snapshot)return false;const auto source=*snapshot;
+    MyPaintGesture gesture;gesture.samples=std::move(samples);gesture.preset=preset;gesture.radiusScale=scale;gesture.opacity=opacity;gesture.mouseSimulated=mouseSimulated;
+    gesture.color.profileId=source.spec.colorSpec.profileId;gesture.color.channels={selected.redF(),selected.greenF(),selected.blueF(),0};gesture.color.alpha=selected.alphaF();
+    auto folder=uuid();const auto& root=source.nodes->at(Document::rootId());
+    if(!root.children.empty()){const auto id=root.children.back();if(source.nodes->at(id).stage=="drawborad.mypaint.folder.v1")folder=id;}
+    const auto layer=uuid();const auto generation=canvasGeneration_;
+    const MyPaintRuntime runtime{QStringLiteral(DRAWBORAD_MYPAINT_PYTHON),QStringLiteral(DRAWBORAD_MYPAINT_SOURCE_DIR "/cloud/mypaint_worker.py"),QStringLiteral(DRAWBORAD_MYPAINT_SOURCE_DIR "/cloud/mypaint_data/pins.json")};
+    fillPool_.setMaxThreadCount(1);fillStop_=std::stop_source{};const auto stop=fillStop_.get_token();
+    {std::lock_guard lock(localEditMutex_);localEditCompletion_.reset();}
+    fillBusy_=true;fillNotice_=tr("正在用固定 MyPaint 引擎验收本笔；可取消，尚未写入工程。");emit changed();
+    fillPool_.start([this,source,gesture=std::move(gesture),folder,layer,runtime,generation,stop]{
+        LocalEditCompletion done{std::nullopt,source,std::nullopt,{},stop,generation};done.kind=PreviewKind::MyPaintStroke;
+        try {
+            auto built=buildMyPaintRasterCommand(source,source.revision,gesture,layer,folder,runtime,stop);
+            if(!built) {
+                const auto& key=built.error().messageKey;
+                if(key=="mypaint.desktop-32-stroke-limit")done.failure=tr("已到32个独立笔层实验上限；没有自动合并或删笔，请另存分段工程，原稿保留。");
+                else if(key=="mypaint.document-resource-budget")done.failure=tr("当前实验文档资源超过128MiB，笔迹未提交，不缩图或自动合并。");
+                else if(key=="mypaint.worker-rejected")done.failure=tr("固定引擎拒绝此笔：可能单笔ROI过大、无可见墨迹或运行库不支持；原稿未改，不替换笔刷。");
+                else if(key=="mypaint.folder-not-top-neutral"||key=="mypaint.root-not-neutral")done.failure=tr("笔迹文件夹必须位于顶层且可见、未锁定、无额外混合或变换；未改原稿。");
+                else done.failure=QString::fromStdString(key);
+            } else {
+                auto candidate=Document::fromSnapshot(source);
+                if(!candidate)done.failure=QString::fromStdString(candidate.error().messageKey);
+                else {auto applied=candidate.value().apply(built.value().command,built.value().baseRevision);
+                    if(!applied)done.failure=QString::fromStdString(applied.error().messageKey);
+                    else {auto preview=candidate.value().snapshot();auto frame=renderMergedDocument(preview,{preview.revision},{},stop);
+                        if(!frame)done.failure=QString::fromStdString(frame.error().messageKey);
+                        else {done.command=std::move(built.value().command);done.preview=std::move(preview);}}}
+            }
+        }catch(const std::bad_alloc&){done.failure=QStringLiteral("mypaint.preview-allocation");}
+        std::lock_guard lock(localEditMutex_);localEditCompletion_=std::move(done);
+    });return true;
+#endif
+}catch(const std::bad_alloc&){fillBusy_=false;fillNotice_=tr("MyPaint 预览内存不足，本笔未提交。");emit changed();return false;}
 bool QtBridge::solidBakeAvailable() const {
 #ifdef DRAWBORAD_HAS_QT_SOLID_BAKE
     return true;
@@ -399,10 +468,10 @@ void QtBridge::finishLocalStrokeEdit() try {
     fillBusy_=false;const auto current=app_.snapshot();
     if(done->stop.stop_requested()){fillNotice_=tr("操作已取消，原工程未修改。");emit changed();return;}
     if(!current||replaying()||current->documentId!=done->source.documentId||current->revision!=done->source.revision||canvasGeneration_!=done->generation){fillNotice_=tr("工程已改变，旧操作结果已丢弃。");emit changed();return;}
-    if(!done->failure.isEmpty()||!done->command||!done->preview){fillNotice_=(done->kind!=PreviewKind::Existing?tr("曲线预览被拒绝，草稿保留，工程未改："):done->closeStroke?tr("闭合被拒绝，原工程未改："):done->withdrawal?tr("撤回被拒绝，原工程未改："):done->closedInk?tr("闭合墨块填充被拒绝，原工程未改："):tr("局部修整未提交，工程未改："))+done->failure;emit changed();return;}
+    if(!done->failure.isEmpty()||!done->command||!done->preview){fillNotice_=(done->kind==PreviewKind::MyPaintStroke?tr("MyPaint 未提交，原稿未改："):done->kind!=PreviewKind::Existing?tr("曲线预览被拒绝，草稿保留，工程未改："):done->closeStroke?tr("闭合被拒绝，原工程未改："):done->withdrawal?tr("撤回被拒绝，原工程未改："):done->closedInk?tr("闭合墨块填充被拒绝，原工程未改："):tr("局部修整未提交，工程未改："))+done->failure;emit changed();return;}
     pendingKind_=done->kind;
     pendingFill_=std::move(done->command);pendingFillSource_=std::move(done->source);pendingFillPreview_=std::move(done->preview);pendingFillGeneration_=done->generation;pendingClosedInk_=done->closedInk;pendingWithdrawal_=done->withdrawal;pendingCloseStroke_=done->closeStroke;
-    fillNotice_=done->kind==PreviewKind::CubicSolidBake?tr("独立像素层真实合成预览，尚未提交；接受后此层控制点不再可编辑，原轮廓与原图不变。可返回调柄或取消。"):done->kind!=PreviewKind::Existing?tr("原生曲线精确预览，尚未提交。可接受、返回调柄或放弃；保留原控制点，不转成采样折线。"):done->closeStroke?tr("短缺口闭合预览，尚未提交：只追加所选笔迹首尾之间的直线连接，不挪动或简化原样本。连接≤32原像素且≤路径5%，自交拒绝。请看端点形状后接受或取消；闭合不保证低压/过细线可填色。"):done->withdrawal?tr("撤回预览尚未提交：删除最近已记录闭合填色组的全部底色成员，保留原线稿和其后独立手绘；半透明合成可能改变。接受时须同步重算，可能短暂等待。若移除最后记录，须另存新文件名保留原20格式文件。请明确接受或取消。"):done->closedInk?tr("闭合墨块预览，尚未提交：以所选单笔墨色填几何内区，原轮廓及其他层内容不变；半透明上层可透出底色。接受后记录来源并采用新格式，首次须另存全新文件名，旧版不能打开；来源边界/成员受保护，仅支持已核验记录组的受限撤回。请接受或取消。"):tr("局部修整预览，尚未提交：仅沿原笔迹弧长附近调整位置/压力，未新增图层；范围外样本、颜色及时间不变。请接受或取消。");emit changed();
+    fillNotice_=done->kind==PreviewKind::MyPaintStroke?tr("MyPaint 松笔后真实预览，尚未写入工程；请接受独立笔层或取消。压力/时间参与绘制，倾斜未使用；鼠标压力为模拟值。"):done->kind==PreviewKind::CubicSolidBake?tr("独立像素层真实合成预览，尚未提交；接受后此层控制点不再可编辑，原轮廓与原图不变。可返回调柄或取消。"):done->kind!=PreviewKind::Existing?tr("原生曲线精确预览，尚未提交。可接受、返回调柄或放弃；保留原控制点，不转成采样折线。"):done->closeStroke?tr("短缺口闭合预览，尚未提交：只追加所选笔迹首尾之间的直线连接，不挪动或简化原样本。连接≤32原像素且≤路径5%，自交拒绝。请看端点形状后接受或取消；闭合不保证低压/过细线可填色。"):done->withdrawal?tr("撤回预览尚未提交：删除最近已记录闭合填色组的全部底色成员，保留原线稿和其后独立手绘；半透明合成可能改变。接受时须同步重算，可能短暂等待。若移除最后记录，须另存新文件名保留原20格式文件。请明确接受或取消。"):done->closedInk?tr("闭合墨块预览，尚未提交：以所选单笔墨色填几何内区，原轮廓及其他层内容不变；半透明上层可透出底色。接受后记录来源并采用新格式，首次须另存全新文件名，旧版不能打开；来源边界/成员受保护，仅支持已核验记录组的受限撤回。请接受或取消。"):tr("局部修整预览，尚未提交：仅沿原笔迹弧长附近调整位置/压力，未新增图层；范围外样本、颜色及时间不变。请接受或取消。");emit changed();
 }catch(const std::bad_alloc&){fillBusy_=false;pendingCloseStroke_=false;pendingWithdrawal_=false;pendingClosedInk_=false;pendingFill_.reset();pendingFillSource_.reset();pendingFillPreview_.reset();fillNotice_=tr("预览内存不足，未提交工程。");emit changed();}
 bool QtBridge::dirty() const {return cubicDraftActive() || app_.dirty() || workflow_->pending() || fillPending();}
 int QtBridge::eventCount() const {const auto s=app_.snapshot();return s?int(std::min<std::size_t>(s->eventIndex->size(),std::size_t(INT_MAX))):0;}
@@ -836,7 +905,7 @@ void QtBridge::openUrl(const QUrl& p){
     if(done){selectedBoundary_.reset();replayCount_=-1;referenceUrl_=QUrl{};referenceFeedback_=tr("Reference previews are not stored in .draw projects. Reimport the source image to compare.");++canvasGeneration_;resetLayerSelection();workflow_->restore(*app_.snapshot());}
     emit changed();
 }
-void QtBridge::saveUrl(const QUrl& p){if(cubicDraftActive()){fillNotice_=tr("曲线草稿尚未接受，本次未保存；请预览并接受，或明确取消草稿。");emit changed();return;}if(strokeCommitBusy_){fillNotice_=tr("笔迹仍在验收；请等待完成或取消后再保存。");emit changed();return;}if(fillBusy_ || fillPending()){fillNotice_=tr("填色尚未提交，本次未保存；请等待完成或取消后重试。");emit changed();return;}if(!p.isLocalFile())return;if(workflow_->pending()){workflow_->fail(tr("请先接受审阅蒙版，再保存工程。未接受的修改仍然保留；也可取消关闭或明确放弃。" ));return;}auto done=app_.save(std::filesystem::path(p.toLocalFile().toStdWString()));(void)done;emit changed();}
+void QtBridge::saveUrl(const QUrl& p){if(cubicDraftActive()){fillNotice_=tr("曲线草稿尚未接受，本次未保存；请预览并接受，或明确取消草稿。");emit changed();return;}if(strokeCommitBusy_){fillNotice_=tr("笔迹仍在验收；请等待完成或取消后再保存。");emit changed();return;}if(fillBusy_ || fillPending()){fillNotice_=tr("当前预览尚未提交，本次未保存；请等待完成或取消后重试。");emit changed();return;}if(!p.isLocalFile())return;if(workflow_->pending()){workflow_->fail(tr("请先接受审阅蒙版，再保存工程。未接受的修改仍然保留；也可取消关闭或明确放弃。" ));return;}auto done=app_.save(std::filesystem::path(p.toLocalFile().toStdWString()));(void)done;emit changed();}
 void QtBridge::probeWorker(){if(busy()||!app_.snapshot())return;auto s=*app_.snapshot();auto bytes=encodeDelta(DocumentSnapshot{},s);auto hash=stateHash(s);if(!bytes||!hash)return;JobRequest q;q.id=uuid();q.nonce=uuid();q.task="native.smoke";q.inputSnapshot={s.documentId,s.revision,hash.value()};q.snapshotBytes=std::move(bytes.value());q.resources={q.id,ResourceDevice::CPU,16*1024*1024,0,0,false};auto id=broker_.submit(q);if(id){running_=id.value();workerMessage_=tr("Connecting native worker...");}else workerMessage_=QString::fromStdString(id.error().messageKey);emit changed();}
 void QtBridge::cancelWorker(){if(workflow_->busy())workflow_->cancel();if(running_){broker_.cancel(*running_);workerMessage_=tr("Cancelling worker...");emit changed();}}
 }

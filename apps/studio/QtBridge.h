@@ -36,6 +36,9 @@ class QtBridge : public QObject {
     Q_PROPERTY(QVariantList editableStrokes READ editableStrokes NOTIFY changed)
     Q_PROPERTY(QString selectedEditStroke READ selectedEditStroke NOTIFY changed)
     Q_PROPERTY(QVariantList localStrokePoints READ localStrokePoints NOTIFY changed)
+    Q_PROPERTY(bool myPaintAvailable READ myPaintAvailable NOTIFY changed)
+    Q_PROPERTY(QString myPaintStatus READ myPaintStatus NOTIFY changed)
+    Q_PROPERTY(bool myPaintPreviewPending READ myPaintPreviewPending NOTIFY changed)
     Q_PROPERTY(bool solidBakeAvailable READ solidBakeAvailable CONSTANT)
     Q_PROPERTY(bool solidBakePreviewPending READ solidBakePreviewPending NOTIFY changed)
     Q_PROPERTY(bool cubicPreviewPending READ cubicPreviewPending NOTIFY changed)
@@ -70,7 +73,7 @@ class QtBridge : public QObject {
     mutable std::shared_ptr<const Bytes> referenceCacheBytes_;
     mutable QString referenceCacheKey_, referenceCacheInfo_;
     void refreshOriginalReference() const;
-    enum class PreviewKind { Existing, CubicCreate, CubicEdit, CubicPathCreate, CubicPathEdit, CubicSolidBake };
+    enum class PreviewKind { Existing, CubicCreate, CubicEdit, CubicPathCreate, CubicPathEdit, CubicSolidBake, MyPaintStroke };
     struct LocalEditCompletion {
         std::optional<Command> command;
         DocumentSnapshot source;
@@ -97,6 +100,11 @@ class QtBridge : public QObject {
     bool pendingWithdrawal_{false};
     bool pendingCloseStroke_{false};
     PreviewKind pendingKind_{PreviewKind::Existing};
+    mutable std::optional<bool> myPaintRuntimeReady_;
+    mutable QString myPaintRuntimeFailure_;
+    mutable std::optional<DocumentSnapshot> myPaintCountSource_;
+    mutable unsigned myPaintCount_{};
+    mutable bool myPaintCountValid_{};
     mutable std::optional<DocumentSnapshot> cubicMenuSource_;
     mutable std::optional<NodeId> cubicMenuLayer_;
     mutable QVariantList cubicMenu_;
@@ -124,10 +132,14 @@ class QtBridge : public QObject {
     bool initializeCanvas(double width, double height, double ppi, bool whitePaper = false);
     void resetLayerSelection();
   public:
+    bool myPaintAvailable() const;
+    QString myPaintStatus() const;
+    bool myPaintPreviewPending() const { return pendingFill_.has_value()&&pendingKind_==PreviewKind::MyPaintStroke; }
+    bool previewMyPaintGesture(std::vector<InputSample>,const QColor&,double opacity,const QString& preset,double radiusScale,bool mouseSimulated);
     bool solidBakeAvailable() const;
     bool solidBakePreviewPending() const { return pendingFill_.has_value() && pendingKind_==PreviewKind::CubicSolidBake; }
     Q_INVOKABLE bool previewCubicSolidBake();
-    bool cubicPreviewPending() const { return pendingFill_.has_value() && pendingKind_!=PreviewKind::Existing; }
+    bool cubicPreviewPending() const { return pendingFill_.has_value() && pendingKind_!=PreviewKind::Existing && pendingKind_!=PreviewKind::MyPaintStroke; }
     bool cubicDraftActive() const { return cubicSource_.has_value(); }
     bool cubicPathDraft() const { return cubicSource_.has_value() && cubicPath_; }
     bool cubicPathClosed() const { return cubicPathDraft() && cubicPathClosed_; }
