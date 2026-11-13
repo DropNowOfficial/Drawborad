@@ -2,6 +2,7 @@
 #include "CanvasFrame.h"
 #include "brush/PressureTaper.h"
 #include "brush/DryInkStroke.h"
+#include "brush/FreehandStroke.h"
 #include "brush/MixedLineartStack.h"
 #include "brush/ClipPolygonSelection.h"
 #ifdef DRAWBORAD_HAS_QT
@@ -40,7 +41,8 @@ CanvasItem::~CanvasItem(){cancelStroke();renderStop_.request_stop();renderPool_.
 bool CanvasItem::previewing() const {std::lock_guard lock(snapshotMutex_);return previewing_||previewInputPending_;}
 bool CanvasItem::rendering() const {std::lock_guard lock(snapshotMutex_);return rendering_;}
 namespace {
-Result<StrokeEvent> compileDesktopGesture(const DocumentSnapshot& source,std::span<const InputSample> points,const BrushSettings& settings,bool eraser,bool dryInk,Id id,std::stop_token stop={}) {
+Result<StrokeEvent> compileDesktopGesture(const DocumentSnapshot& source,std::span<const InputSample> points,const BrushSettings& settings,bool eraser,bool dryInk,bool smoothInk,Id id,std::stop_token stop={}) {
+ if(smoothInk&&!eraser){auto command=smoothInkStrokeCommand(source,settings.layerId,id,points,settings.width,settings.color,settings.opacity,stop);if(!command)return command.error();return std::get<Paint>(command.value().operations.front()).event;}
  if(dryInk&&!eraser){auto command=dryInkStrokeCommand(source,settings.layerId,id,points,settings.width,settings.color,settings.opacity,stop);if(!command)return command.error();return std::get<Paint>(command.value().operations.front()).event;}
  const auto layer=source.nodes->find(settings.layerId);const bool rootDetail=layer!=source.nodes->end()&&layer->second.stage==FinishingLayerStage&&layer->second.parent==Document::rootId()&&layer->second.objectId.empty()&&nativeLayerPaintable(source,settings.layerId);
  BrushEngine engine;auto event=engine.compile(points,settings,eraser,rootDetail);
@@ -50,10 +52,14 @@ Result<StrokeEvent> compileDesktopGesture(const DocumentSnapshot& source,std::sp
 }
 bool CanvasItem::configureDryInk(bool value){
  if(value&&brushSettings_.width>128){brushNotice_=tr("干墨宽度上限128原像素，请先调小宽度。");emit brushSettingsChanged();return false;}
- if(value!=dryInk_){cancelStroke();}dryInk_=value;brushNotice_.clear();emit brushSettingsChanged();return true;
+ if(value!=dryInk_||(value&&smoothInk_)){cancelStroke();}dryInk_=value;if(value)smoothInk_=false;brushNotice_.clear();emit brushSettingsChanged();return true;
+}
+bool CanvasItem::configureSmoothInk(bool value){
+ if(value&&brushSettings_.width>128){brushNotice_=tr("连续实墨宽度上限128原像素，请先调小宽度。");emit brushSettingsChanged();return false;}
+ if(value!=smoothInk_||(value&&dryInk_)){cancelStroke();}smoothInk_=value;if(value)dryInk_=false;brushNotice_.clear();emit brushSettingsChanged();return true;
 }
 bool CanvasItem::configureBrush(double width,QColor color,double opacity,double hardness,double taper){
-    if(!std::isfinite(width)||width<.5||width>512||(dryInk_&&width>128)||!color.isValid()||!std::isfinite(opacity)||opacity<.01||opacity>1||!std::isfinite(hardness)||hardness<0||hardness>1||!std::isfinite(taper)||taper<0||taper>.5)return false;
+    if(!std::isfinite(width)||width<.5||width>512||((dryInk_||smoothInk_)&&width>128)||!color.isValid()||!std::isfinite(opacity)||opacity<.01||opacity>1||!std::isfinite(hardness)||hardness<0||hardness>1||!std::isfinite(taper)||taper<0||taper>.5)return false;
     brushSettings_.width=width;brushSettings_.opacity=opacity;brushSettings_.hardness=hardness;brushColor_=color;mouseTaper_=taper;brushNotice_.clear();emit brushSettingsChanged();return true;
 }
 QObject* CanvasItem::studio() const { return bridge_; }
@@ -212,13 +218,13 @@ void CanvasItem::beginSample(InputSample sample, bool tablet, bool eraser) {
     strokeTarget_ = StrokeTarget{snapshot->documentId, target->first, target->second, bridge_->canvasGeneration()};
     brushNotice_.clear();emit brushSettingsChanged();
     renderStop_=std::stop_source{};
-    gestureBrush_=brushSettings_;gestureBrush_.seed=sample.timestampUs;gestureColor_=brushColor_;gestureTaper_=mouseTaper_;gestureDryInk_=dryInk_;
+    gestureBrush_=brushSettings_;gestureBrush_.seed=sample.timestampUs;gestureColor_=brushColor_;gestureTaper_=mouseTaper_;gestureDryInk_=dryInk_;gestureSmoothInk_=smoothInk_;
     const auto gestureBytes=QUuid::createUuid().toRfc4122();std::copy_n(reinterpret_cast<const std::uint8_t*>(gestureBytes.constData()),16,gestureId_.bytes.begin());
     stroke_.push_back(sample);{std::lock_guard lock(snapshotMutex_);++previewInputSequence_;previewInputPending_=true;}setFocus(true,Qt::MouseFocusReason);previewTimer_.start();emit renderErrorChanged();
 }
 void CanvasItem::appendSample(InputSample s){
  if(stroke_.empty())return;
- if(gestureDryInk_&&!eraser_&&stroke_.size()>=4096){cancelStroke();brushNotice_=tr("干墨超过4096输入点，整笔取消，未截点或改动原稿。");emit brushSettingsChanged();return;}
+ if((gestureDryInk_||gestureSmoothInk_)&&!eraser_&&stroke_.size()>=4096){cancelStroke();brushNotice_=tr("笔迹超过4096输入点，整笔取消，未截点或改动原稿。");emit brushSettingsChanged();return;}
  stroke_.push_back(s);
  {std::lock_guard lock(snapshotMutex_);++previewInputSequence_;previewInputPending_=true;}
  if(!previewTimer_.isActive())previewTimer_.start();
@@ -238,18 +244,18 @@ void CanvasItem::mouseUngrabEvent(){if(!dryCommitPending_)cancelStroke();}
 void CanvasItem::requestPreview() try{
     if(!bridge_||bridge_->busy()||bridge_->replaying()||stroke_.empty()||!strokeTarget_||rendering()){clearPreview();renderStop_=std::stop_source{};return;}
     const auto source=bridge_->canvasSnapshot();if(!source){clearPreview();renderStop_=std::stop_source{};return;}
-    const auto settings=currentGestureSettings(*source);const auto samples=stroke_;const auto taper=tabletStroke_?0:gestureTaper_;const auto eraser=eraser_;const auto dryInk=gestureDryInk_;const auto gestureId=gestureId_;
+    const auto settings=currentGestureSettings(*source);const auto samples=stroke_;const auto taper=tabletStroke_?0:gestureTaper_;const auto eraser=eraser_;const auto dryInk=gestureDryInk_;const auto smoothInk=gestureSmoothInk_;const auto gestureId=gestureId_;
     // Do not starve a running preview during continuous input. Replace only queued
     // work, then display completed snapshots in order until the newest catches up.
     renderPool_.clear();const auto token=renderStop_.get_token();std::uint64_t generation,sequence,inputSequence;
     {std::lock_guard lock(snapshotMutex_);generation=renderGeneration_;sequence=++previewRequestSequence_;inputSequence=previewInputSequence_;previewing_=true;}
     emit renderErrorChanged();
-    renderPool_.start([this,source,settings,samples,taper,eraser,dryInk,gestureId,token,generation,sequence,inputSequence]{
+    renderPool_.start([this,source,settings,samples,taper,eraser,dryInk,smoothInk,gestureId,token,generation,sequence,inputSequence]{
         if(token.stop_requested())return;
         QImage frame;QString failure;
         try{
         auto input=samples;if(taper>0){auto tapered=taperMousePressure(input,taper,true);if(tapered)input=std::move(tapered.value());}
-        auto event=compileDesktopGesture(*source,input,settings,eraser,dryInk,gestureId,token);
+        auto event=compileDesktopGesture(*source,input,settings,eraser,dryInk,smoothInk,gestureId,token);
         if(event){
             auto document=Document::fromSnapshot(*source);auto bounds=strokeBounds(event.value());
             if(document&&bounds){auto applied=document.value().apply(Command{Paint{event.value(),bounds.value()}},source->revision);
@@ -273,13 +279,13 @@ void CanvasItem::finishStroke(){
        !nativeLayerPaintable(*snap,strokeTarget_->layer)||
        snap->nodes->at(strokeTarget_->layer).objectId!=strokeTarget_->object){cancelStroke();return;}
     BrushSettings b=currentGestureSettings(*snap);
-    if(!tabletStroke_&&gestureTaper_>0){auto tapered=taperMousePressure(stroke_,gestureTaper_,true);if(tapered)stroke_=std::move(tapered.value());else {if(gestureDryInk_&&!eraser_){cancelStroke();brushNotice_=tr("干墨收笔处理超限，原稿未变。");emit brushSettingsChanged();return;}brushNotice_=QStringLiteral("Stroke retained without mouse taper: input exceeds taper limits.");emit brushSettingsChanged();}}
+    if(!tabletStroke_&&gestureTaper_>0){auto tapered=taperMousePressure(stroke_,gestureTaper_,true);if(tapered)stroke_=std::move(tapered.value());else {if((gestureDryInk_||gestureSmoothInk_)&&!eraser_){cancelStroke();brushNotice_=tr("笔迹收笔处理超限，原稿未变。");emit brushSettingsChanged();return;}brushNotice_=QStringLiteral("Stroke retained without mouse taper: input exceeds taper limits.");emit brushSettingsChanged();}}
     clearPreview();
-    auto event=compileDesktopGesture(*snap,stroke_,b,eraser_,gestureDryInk_,gestureId_);
+    auto event=compileDesktopGesture(*snap,stroke_,b,eraser_,gestureDryInk_,gestureSmoothInk_,gestureId_);
     stroke_.clear();
     strokeTarget_.reset();
     emit renderErrorChanged();
-    if(event&&(event.value().engineVersion==12||(event.value().objectId.empty()&&snap->nodes->at(event.value().layerId).stage==FinishingLayerStage))){commitDryStrokeAsync(*snap,std::move(event.value()));return;}
+    if(event&&(event.value().engineVersion==12||event.value().engineVersion==19||(event.value().objectId.empty()&&snap->nodes->at(event.value().layerId).stage==FinishingLayerStage))){commitDryStrokeAsync(*snap,std::move(event.value()));return;}
     if (event) {
         auto committed=bridge_->commitStroke(event.value());
         if(!committed){brushNotice_=tr("笔迹未提交，工程未修改：")+QString::fromStdString(committed.error().messageKey);emit brushSettingsChanged();}

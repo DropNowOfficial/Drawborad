@@ -40,10 +40,11 @@ class CanvasItem : public QQuickItem {
     Q_PROPERTY(double brushHardness READ brushHardness NOTIFY brushSettingsChanged)
     Q_PROPERTY(double mouseTaper READ mouseTaper NOTIFY brushSettingsChanged)
     Q_PROPERTY(bool dryInk READ dryInk NOTIFY brushSettingsChanged)
+    Q_PROPERTY(bool smoothInk READ smoothInk NOTIFY brushSettingsChanged)
     Q_PROPERTY(QColor brushColor READ brushColor NOTIFY brushSettingsChanged)
     Q_PROPERTY(QString brushNotice READ brushNotice NOTIFY brushSettingsChanged)
     BrushSettings brushSettings_,gestureBrush_;
-    bool dryInk_{false},gestureDryInk_{false},dryCommitPending_{false};
+    bool dryInk_{false},gestureDryInk_{false},smoothInk_{false},gestureSmoothInk_{false},dryCommitPending_{false};
     void commitDryStrokeAsync(DocumentSnapshot,StrokeEvent);
     void finishDryCommit();
     QTimer dryCommitTimer_;
@@ -163,6 +164,8 @@ class CanvasItem : public QQuickItem {
     double mouseTaper()const{return mouseTaper_;}
     bool dryInk()const{return dryInk_;}
     Q_INVOKABLE bool configureDryInk(bool);
+    bool smoothInk()const{return smoothInk_;}
+    Q_INVOKABLE bool configureSmoothInk(bool);
     Q_INVOKABLE void cancelPendingStroke(){cancelStroke();}
     QColor brushColor()const{return brushColor_;}
     QString brushNotice()const{return brushNotice_;}

@@ -343,7 +343,9 @@ ApplicationWindow {
             Label { text: qsTr("画笔 · 原生笔迹"); color: "#f5f5f7"; font.pixelSize: 18 }
             Label { text: qsTr("宽度：") + nativeCanvas.brushWidth.toFixed(1) + " px"; color: "#bcbcc4" }
             Button { text: qsTr("取消笔迹验收，保留原稿"); visible: studio.strokeCommitBusy; onClicked: nativeCanvas.cancelPendingStroke(); Layout.fillWidth: true }
-            Switch { objectName: "dryInkSwitch"; text: qsTr("干墨纤维笔触（非整图滤镜）"); checked: nativeCanvas.dryInk; onToggled: { if (!nativeCanvas.configureDryInk(checked)) checked = nativeCanvas.dryInk } }
+            Switch { objectName: "smoothInkSwitch"; text: qsTr("连续实墨（抗锯齿轮廓）"); checked: nativeCanvas.smoothInk; onToggled: { nativeCanvas.configureSmoothInk(checked); checked = Qt.binding(function() { return nativeCanvas.smoothInk }) } }
+            Label { text: qsTr("连续圆形实墨，笔压控制宽度；固定实边、≤128原像素。与干墨互斥，切换取消未提交笔画；不自动磨皮或重画原图。橡皮仍用原模式。"); visible: nativeCanvas.smoothInk; wrapMode: Text.Wrap; color: "#dbba98"; Layout.fillWidth: true }
+            Switch { objectName: "dryInkSwitch"; text: qsTr("干墨纤维笔触（非整图滤镜）"); checked: nativeCanvas.dryInk; onToggled: { nativeCanvas.configureDryInk(checked); checked = Qt.binding(function() { return nativeCanvas.dryInk }) } }
             Label { text: qsTr("干墨固定硬边，压力控制宽度/断墨；≤128原像素，每笔≤4096输入点。橡皮仍用原橡皮模式。切换模式取消未提交笔画；不是原画笔触自动还原。"); visible: nativeCanvas.dryInk; wrapMode: Text.Wrap; color: "#dbba98"; Layout.fillWidth: true }
             Slider { objectName: "brushWidthSlider"; from: 0.5; to: 128; stepSize: 0.5; value: nativeCanvas.brushWidth; Layout.fillWidth: true; onMoved: nativeCanvas.configureBrush(value,nativeCanvas.brushColor,nativeCanvas.brushOpacity,nativeCanvas.brushHardness,nativeCanvas.mouseTaper) }
             RowLayout {
@@ -353,7 +355,7 @@ ApplicationWindow {
             Label { text: qsTr("不透明度：") + Math.round(nativeCanvas.brushOpacity*100) + "%"; color: "#bcbcc4" }
             Slider { objectName: "brushOpacitySlider"; from: 0.01; to: 1; value: nativeCanvas.brushOpacity; Layout.fillWidth: true; onMoved: nativeCanvas.configureBrush(nativeCanvas.brushWidth,nativeCanvas.brushColor,value,nativeCanvas.brushHardness,nativeCanvas.mouseTaper) }
             Label { text: qsTr("硬度：") + Math.round(nativeCanvas.brushHardness*100) + "%"; color: "#bcbcc4" }
-            Slider { objectName: "brushHardnessSlider"; enabled: !nativeCanvas.dryInk; from: 0; to: 1; value: nativeCanvas.brushHardness; Layout.fillWidth: true; onMoved: nativeCanvas.configureBrush(nativeCanvas.brushWidth,nativeCanvas.brushColor,nativeCanvas.brushOpacity,value,nativeCanvas.mouseTaper) }
+            Slider { objectName: "brushHardnessSlider"; enabled: !nativeCanvas.dryInk && !nativeCanvas.smoothInk; from: 0; to: 1; value: nativeCanvas.brushHardness; Layout.fillWidth: true; onMoved: nativeCanvas.configureBrush(nativeCanvas.brushWidth,nativeCanvas.brushColor,nativeCanvas.brushOpacity,value,nativeCanvas.mouseTaper) }
             Label { text: qsTr("鼠标收笔辅助：") + Math.round(nativeCanvas.mouseTaper*100) + "%"; color: "#bcbcc4" }
             Slider { objectName: "mouseTaperSlider"; from: 0; to: 0.5; stepSize: 0.05; value: nativeCanvas.mouseTaper; Layout.fillWidth: true; onMoved: nativeCanvas.configureBrush(nativeCanvas.brushWidth,nativeCanvas.brushColor,nativeCanvas.brushOpacity,nativeCanvas.brushHardness,value) }
             Label { text: qsTr("0 为关闭；辅助只改变鼠标笔画首尾压力，不替代数位笔真实压感。设置对下一笔生效。"); color: "#bcbcc4"; wrapMode: Text.Wrap; Layout.fillWidth: true }
