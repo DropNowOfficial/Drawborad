@@ -1,0 +1,9 @@
+# Hidden editable native paint-layer backups
+
+Goal: safely preserve a native coloring/hand-drawing layer before trying a new color or stroke edit. Existing low-level DuplicateNode copied only nodes, not native event geometry; using it alone would silently lose the requested painting. The new session/API/UI command `duplicate_paint_layer` explicitly clones events and assigns independent IDs while preserving geometry, pressure, seed, color, event order and layer compositing.
+
+The copy is placed beside its source and starts hidden. Current pixels are unchanged. Show the copy and hide the source before comparing versions; showing both can increase edge opacity. It is one undo step. Recoloring the visible copy does not modify the source. Source must be nonempty, visible, unlocked, plain native paint layer. Imported raster/MyPaint, masked, semantic-object or child-bearing layers are rejected, not flattened or mislabeled as editable strokes. No new file format is introduced. Large clones are preflighted while visible against existing render budgets, then hidden; limits are not raised.
+
+Validation: observed missing-command test failure before implementation. Real native tests cover cloned event IDs, hidden composite invariance, copy-only equality, independent recolor, one undo/redo, stale revision and locked-layer rejection, save/reopen. Real API whitelist and UI handler/locking/capability checks are tested. A private cover's two-event repair layer was duplicated and compared in hidden/copy-only/reopened states; private image, coordinates and .draw are not repository content.
+
+This supports safer painting workflows, not automatic art creation, semantic image reconstruction, natural-brush quality or recovery of new reference detail. It does not duplicate raster layers or solve the original artwork's fidelity limitations.

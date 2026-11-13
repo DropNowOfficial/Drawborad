@@ -316,7 +316,7 @@ def install_projects(app,config,authorized):
                 elif type(body['enabled'])!=bool or not node.get('stroke_mask'):fail(422,'invalid_input','Toggle requires an existing mask and boolean enabled')
                 params={k:v for k,v in body.items() if k!='type'}
                 return projects.state(projects.rpc(kind,**params))
-            fields={'recolor_layer':{'layer_id','color'},'recolor_stroke':{'stroke_id','color'},
+            fields={'duplicate_paint_layer':{'layer_id'},'recolor_layer':{'layer_id','color'},'recolor_stroke':{'stroke_id','color'},
                     'set_properties':{'node_id','visible','locked'},
                     'add_fill_layer':set(),
                     'bucket_fill':{'layer_id','x','y','tolerance','color','under_ink'},

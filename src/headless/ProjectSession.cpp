@@ -141,7 +141,7 @@ public:
                 {"start_us",number(e.startUs)},{"end_us",number(e.endUs)},
                 {"geometry_count",number(e.geometry.size())}});
         }
-        QJsonArray capabilities{"recolor_layer","recolor_stroke","set_properties","bucket_fill","add_fill_layer","draw_stroke","update_layer","undo","redo","save","save_copy","replay","png"};
+        QJsonArray capabilities{"duplicate_paint_layer","recolor_layer","recolor_stroke","set_properties","bucket_fill","add_fill_layer","draw_stroke","update_layer","undo","redo","save","save_copy","replay","png"};
         capabilities.append("smooth_ink");capabilities.append("ora");capabilities.append("append_brush_layer");capabilities.append("append_brush_crop");capabilities.append("append_brush_normal");capabilities.append("cropped_stroke_mask");capabilities.append("hidden_fill_boundary");
         return {{"document_id",idText(s.documentId)},{"revision",number(s.revision)},
             {"saved_revision",saved?QJsonValue(number(*saved)):QJsonValue(QJsonValue::Null)},
@@ -332,6 +332,27 @@ public:
                 need(found!=s.eventIndex->end(),"stroke.missing");
                 auto color=browserColor(s,p.value("color"));color.alpha=found->color.alpha;
                 command.operations.emplace_back(RecolorStroke{id,color});
+            } else if(type=="duplicate_paint_layer") {
+                const auto s=snapshot();const auto source=parseId(p.value("layer_id"));
+                need(nativeLayerPaintable(s,source),"duplicate-paint.unsupported-or-locked");
+                const auto& original=s.nodes->at(source);
+                need(original.objectId.empty() && original.maskId.empty() && original.children.empty(),"duplicate-paint.plain-layer-required");
+                auto node=original;node.id=newEventId();node.name="Copy - "+original.name;node.visible=true;
+                node.provenance.push_back(source);
+                const auto& siblings=s.nodes->at(original.parent).children;
+                const auto index=std::size_t(std::find(siblings.begin(),siblings.end(),source)-siblings.begin());
+                command.operations.emplace_back(AddNode{node,index+1});
+                std::size_t count=0;
+                for(const auto& originalEvent:*s.eventIndex)if(originalEvent.layerId==source){
+                    auto event=originalEvent;event.id=newEventId();event.layerId=node.id;event.parentRevision=s.revision;
+                    command.operations.emplace_back(Paint{std::move(event),node.bounds});++count;
+                }
+                need(count>0,"duplicate-paint.empty");
+                // Preflight while visible, then hide the backup. This checks the
+                // extra rendering work too, not just a cheap hidden-layer state.
+                auto candidate=checked(Document::fromSnapshot(s));checked(candidate.apply(command,s.revision));
+                checked(planMergedDocument(candidate.snapshot()));
+                SetProperties hidden;hidden.id=node.id;hidden.visible=false;command.operations.emplace_back(hidden);
             } else if(type=="recolor_layer") {
                 const auto s=snapshot();const auto layer=parseId(p.value("layer_id"));
                 need(nativeLayerPaintable(s,layer),"recolor-layer.unsupported-or-locked");
