@@ -286,7 +286,7 @@ add_test(NAME RC1.PackagingPolicy COMMAND ${Python3_EXECUTABLE}
 set_tests_properties(RC1.PackagingPolicy PROPERTIES TIMEOUT 30)
 get_property(_release_tests DIRECTORY PROPERTY TESTS)
 foreach(test_name IN LISTS _release_tests)
-  if(test_name MATCHES "^Qt\\.Solid(MaskCache|DraftPreview)$")
+  if(test_name MATCHES "^Qt\\.Solid(MaskCache|DraftPreview|RasterCommand)$")
     set_tests_properties("${test_name}" PROPERTIES LABELS "ExperimentalQtBackend")
   elseif(test_name MATCHES "^(F05.NativeTransport|F06|U01.Layers|R00.BuildFreshness)$")
     set_tests_properties("${test_name}" PROPERTIES LABELS "WindowsUI")
