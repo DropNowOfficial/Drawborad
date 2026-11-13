@@ -32,6 +32,7 @@ class QtBridge : public QObject {
     Q_PROPERTY(QString activeLayerId READ activeLayerId NOTIFY changed)
     Q_PROPERTY(bool canAddLayer READ canAddLayer NOTIFY changed)
     Q_PROPERTY(bool fillPending READ fillPending NOTIFY changed)
+    Q_PROPERTY(bool strokeCommitBusy READ strokeCommitBusy NOTIFY changed)
     Q_PROPERTY(bool fillBusy READ fillBusy NOTIFY changed)
     Q_PROPERTY(QString fillNotice READ fillNotice NOTIFY changed)
     Q_PROPERTY(QString layerNotice READ layerNotice NOTIFY changed)
@@ -58,6 +59,7 @@ class QtBridge : public QObject {
     QThreadPool fillPool_;
     std::stop_source fillStop_;
     bool fillBusy_{false};
+    bool strokeCommitBusy_{false};
     std::optional<Command> pendingFill_;
     std::optional<DocumentSnapshot> pendingFillPreview_,pendingFillSource_;
     std::uint64_t pendingFillGeneration_{};
@@ -79,6 +81,8 @@ class QtBridge : public QObject {
     bool fillPending() const { return pendingFill_.has_value(); }
     Q_INVOKABLE bool acceptFill();
     std::optional<DocumentSnapshot> displaySnapshot() const { return pendingFillPreview_?pendingFillPreview_:app_.snapshot(); }
+    bool strokeCommitBusy() const { return strokeCommitBusy_; }
+    void setStrokeCommitBusy(bool value) { if(value!=strokeCommitBusy_){strokeCommitBusy_=value;emit changed();} }
     bool fillBusy() const { return fillBusy_; }
     Q_INVOKABLE void cancelFill();
     QString message() const;

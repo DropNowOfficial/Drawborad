@@ -49,9 +49,9 @@ ApplicationWindow {
     FileDialog { id: oraExportDialog; title: qsTr("导出叶图层 ORA（组展开、蒙版烘焙；新文件名）"); fileMode: FileDialog.SaveFile; defaultSuffix: "ora"; nameFilters: ["OpenRaster (*.ora)"]; onAccepted: studio.workflow.exportNative(selectedFile, "ora") }
     FileDialog { id: psdDialog; title: qsTr("导出笔迹分层 PSD（请选择新文件名）"); fileMode: FileDialog.SaveFile; defaultSuffix: "psd"; nameFilters: ["Photoshop (*.psd)"]; onAccepted: studio.workflow.exportPsd(selectedFile) }
     FileDialog { id: relinkDialog; title: qsTr("选择与原始文件哈希一致的图片"); nameFilters: ["PNG/JPEG (*.png *.jpg *.jpeg)"]; onAccepted: studio.workflow.relinkSource(selectedFile) }
-    Dialog { id: fillPendingDialog; title: qsTr("填色尚未提交"); modal: true; standardButtons: Dialog.Ok; Label { text: qsTr("请等待填色完成并保存，或点击取消填色后再关闭。"); wrapMode: Text.Wrap } }
+    Dialog { id: fillPendingDialog; title: qsTr("填色尚未提交"); modal: true; standardButtons: Dialog.Ok; Label { text: qsTr("请等待笔迹/填色完成并保存，或取消未提交操作后再关闭。"); wrapMode: Text.Wrap } }
     onClosing: function(event) {
-        if (studio.fillBusy || studio.fillPending) { event.accepted = false; fillPendingDialog.open(); return }
+        if (studio.strokeCommitBusy || studio.fillBusy || studio.fillPending) { event.accepted = false; fillPendingDialog.open(); return }
         if (studio.dirty && !approvedClose) { event.accepted = false; closeDialog.open() }
     }
     header: ToolBar {
@@ -337,6 +337,9 @@ ApplicationWindow {
             Label { text: studio.layerNotice; color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true; visible: text.length > 0 }
             Label { text: qsTr("画笔 · 原生笔迹"); color: "#f5f5f7"; font.pixelSize: 18 }
             Label { text: qsTr("宽度：") + nativeCanvas.brushWidth.toFixed(1) + " px"; color: "#bcbcc4" }
+            Button { text: qsTr("取消干墨验收，保留原稿"); visible: studio.strokeCommitBusy; onClicked: nativeCanvas.cancelPendingStroke(); Layout.fillWidth: true }
+            Switch { objectName: "dryInkSwitch"; text: qsTr("干墨纤维笔触（非整图滤镜）"); checked: nativeCanvas.dryInk; onToggled: { if (!nativeCanvas.configureDryInk(checked)) checked = nativeCanvas.dryInk } }
+            Label { text: qsTr("干墨固定硬边，压力控制宽度/断墨；≤128原像素，每笔≤4096输入点。橡皮仍用原橡皮模式。切换模式取消未提交笔画；不是原画笔触自动还原。"); visible: nativeCanvas.dryInk; wrapMode: Text.Wrap; color: "#dbba98"; Layout.fillWidth: true }
             Slider { objectName: "brushWidthSlider"; from: 0.5; to: 128; stepSize: 0.5; value: nativeCanvas.brushWidth; Layout.fillWidth: true; onMoved: nativeCanvas.configureBrush(value,nativeCanvas.brushColor,nativeCanvas.brushOpacity,nativeCanvas.brushHardness,nativeCanvas.mouseTaper) }
             RowLayout {
                 Rectangle { width: 24; height: 24; color: nativeCanvas.brushColor; border.color: "#aaaaaa" }
@@ -345,7 +348,7 @@ ApplicationWindow {
             Label { text: qsTr("不透明度：") + Math.round(nativeCanvas.brushOpacity*100) + "%"; color: "#bcbcc4" }
             Slider { objectName: "brushOpacitySlider"; from: 0.01; to: 1; value: nativeCanvas.brushOpacity; Layout.fillWidth: true; onMoved: nativeCanvas.configureBrush(nativeCanvas.brushWidth,nativeCanvas.brushColor,value,nativeCanvas.brushHardness,nativeCanvas.mouseTaper) }
             Label { text: qsTr("硬度：") + Math.round(nativeCanvas.brushHardness*100) + "%"; color: "#bcbcc4" }
-            Slider { objectName: "brushHardnessSlider"; from: 0; to: 1; value: nativeCanvas.brushHardness; Layout.fillWidth: true; onMoved: nativeCanvas.configureBrush(nativeCanvas.brushWidth,nativeCanvas.brushColor,nativeCanvas.brushOpacity,value,nativeCanvas.mouseTaper) }
+            Slider { objectName: "brushHardnessSlider"; enabled: !nativeCanvas.dryInk; from: 0; to: 1; value: nativeCanvas.brushHardness; Layout.fillWidth: true; onMoved: nativeCanvas.configureBrush(nativeCanvas.brushWidth,nativeCanvas.brushColor,nativeCanvas.brushOpacity,value,nativeCanvas.mouseTaper) }
             Label { text: qsTr("鼠标收笔辅助：") + Math.round(nativeCanvas.mouseTaper*100) + "%"; color: "#bcbcc4" }
             Slider { objectName: "mouseTaperSlider"; from: 0; to: 0.5; stepSize: 0.05; value: nativeCanvas.mouseTaper; Layout.fillWidth: true; onMoved: nativeCanvas.configureBrush(nativeCanvas.brushWidth,nativeCanvas.brushColor,nativeCanvas.brushOpacity,nativeCanvas.brushHardness,value) }
             Label { text: qsTr("0 为关闭；辅助只改变鼠标笔画首尾压力，不替代数位笔真实压感。设置对下一笔生效。"); color: "#bcbcc4"; wrapMode: Text.Wrap; Layout.fillWidth: true }

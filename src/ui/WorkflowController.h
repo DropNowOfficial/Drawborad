@@ -95,7 +95,7 @@ class WorkflowController : public QObject {
   public:
     explicit WorkflowController(QtBridge&);
     ~WorkflowController() override;
-    bool busy() const {return running_.has_value() || semanticBusy_;}
+    bool busy() const;
     bool analyzing() const {return semanticBusy_ || (running_ && running_->task=="image.review.sam21");}
     bool pending() const {return pending_;}
     bool hasReview() const {return review_.has_value();}

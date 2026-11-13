@@ -1,6 +1,7 @@
 #include "CanvasItem.h"
 #include "CanvasFrame.h"
 #include "brush/PressureTaper.h"
+#include "brush/DryInkStroke.h"
 #include "brush/ClipPolygonSelection.h"
 #ifdef DRAWBORAD_HAS_QT
 #include "apps/studio/QtBridge.h"
@@ -27,17 +28,28 @@
 namespace drawborad {
 CanvasItem::CanvasItem(QQuickItem* parent) : QQuickItem(parent) {
     previewTimer_.setSingleShot(true);previewTimer_.setInterval(33);connect(&previewTimer_,&QTimer::timeout,this,&CanvasItem::requestPreview);
+    dryCommitTimer_.setInterval(25);connect(&dryCommitTimer_,&QTimer::timeout,this,&CanvasItem::finishDryCommit);
     brushSettings_.width=12;brushSettings_.spacing=.2;
     renderPool_.setMaxThreadCount(1);
     setFlag(ItemHasContents, true);
     setAcceptedMouseButtons(Qt::LeftButton | Qt::MiddleButton);
     setClip(true);
 }
-CanvasItem::~CanvasItem(){renderStop_.request_stop();renderPool_.clear();renderPool_.waitForDone();}
+CanvasItem::~CanvasItem(){cancelStroke();renderStop_.request_stop();renderPool_.clear();renderPool_.waitForDone();}
 bool CanvasItem::previewing() const {std::lock_guard lock(snapshotMutex_);return previewing_||previewInputPending_;}
 bool CanvasItem::rendering() const {std::lock_guard lock(snapshotMutex_);return rendering_;}
+namespace {
+Result<StrokeEvent> compileDesktopGesture(const DocumentSnapshot& source,std::span<const InputSample> points,const BrushSettings& settings,bool eraser,bool dryInk,Id id,std::stop_token stop={}) {
+ if(dryInk&&!eraser){auto command=dryInkStrokeCommand(source,settings.layerId,id,points,settings.width,settings.color,settings.opacity,stop);if(!command)return command.error();return std::get<Paint>(command.value().operations.front()).event;}
+ BrushEngine engine;auto event=engine.compile(points,settings,eraser);if(event)event.value().id=id;return event;
+}
+}
+bool CanvasItem::configureDryInk(bool value){
+ if(value&&brushSettings_.width>128){brushNotice_=tr("干墨宽度上限128原像素，请先调小宽度。");emit brushSettingsChanged();return false;}
+ if(value!=dryInk_){cancelStroke();}dryInk_=value;brushNotice_.clear();emit brushSettingsChanged();return true;
+}
 bool CanvasItem::configureBrush(double width,QColor color,double opacity,double hardness,double taper){
-    if(!std::isfinite(width)||width<.5||width>512||!color.isValid()||!std::isfinite(opacity)||opacity<.01||opacity>1||!std::isfinite(hardness)||hardness<0||hardness>1||!std::isfinite(taper)||taper<0||taper>.5)return false;
+    if(!std::isfinite(width)||width<.5||width>512||(dryInk_&&width>128)||!color.isValid()||!std::isfinite(opacity)||opacity<.01||opacity>1||!std::isfinite(hardness)||hardness<0||hardness>1||!std::isfinite(taper)||taper<0||taper>.5)return false;
     brushSettings_.width=width;brushSettings_.opacity=opacity;brushSettings_.hardness=hardness;brushColor_=color;mouseTaper_=taper;brushNotice_.clear();emit brushSettingsChanged();return true;
 }
 QObject* CanvasItem::studio() const { return bridge_; }
@@ -54,7 +66,7 @@ void CanvasItem::setStudio(QObject* value) {
 void CanvasItem::refreshSnapshot() {
     const auto next = bridge_ ? bridge_->displaySnapshot() : std::nullopt;
     const auto nextCount=bridge_&&!bridge_->fillPending()?std::uint64_t(bridge_->replayCount()):UINT64_MAX;
-    if(bridge_&&(bridge_->busy()||bridge_->replaying()))cancelStroke();
+    if(bridge_&&(bridge_->replaying()||(bridge_->busy()&&!(dryCommitPending_&&bridge_->strokeCommitBusy()))))cancelStroke();
     if (strokeTarget_ && (!bridge_ || !next || strokeTarget_->document != next->documentId ||
                           strokeTarget_->generation != bridge_->canvasGeneration())) {
         cancelStroke();
@@ -65,6 +77,7 @@ void CanvasItem::refreshSnapshot() {
             snapshot_->revision == next->revision && snapshot_->nodes == next->nodes &&
             snapshot_->eventIndex == next->eventIndex && replayCount_==nextCount) return;
     }
+    if(dryCommitPending_)cancelStroke();
     cancelHollowDrag();
     // A changed document/replay invalidates an in-progress input gesture.
     previewTimer_.stop();stroke_.clear();strokeTarget_.reset();tabletStroke_=false;
@@ -195,11 +208,13 @@ void CanvasItem::beginSample(InputSample sample, bool tablet, bool eraser) {
     strokeTarget_ = StrokeTarget{snapshot->documentId, target->first, target->second, bridge_->canvasGeneration()};
     brushNotice_.clear();emit brushSettingsChanged();
     renderStop_=std::stop_source{};
-    gestureBrush_=brushSettings_;gestureBrush_.seed=sample.timestampUs;gestureColor_=brushColor_;gestureTaper_=mouseTaper_;
+    gestureBrush_=brushSettings_;gestureBrush_.seed=sample.timestampUs;gestureColor_=brushColor_;gestureTaper_=mouseTaper_;gestureDryInk_=dryInk_;
+    const auto gestureBytes=QUuid::createUuid().toRfc4122();std::copy_n(reinterpret_cast<const std::uint8_t*>(gestureBytes.constData()),16,gestureId_.bytes.begin());
     stroke_.push_back(sample);{std::lock_guard lock(snapshotMutex_);++previewInputSequence_;previewInputPending_=true;}setFocus(true,Qt::MouseFocusReason);previewTimer_.start();emit renderErrorChanged();
 }
 void CanvasItem::appendSample(InputSample s){
  if(stroke_.empty())return;
+ if(gestureDryInk_&&!eraser_&&stroke_.size()>=4096){cancelStroke();brushNotice_=tr("干墨超过4096输入点，整笔取消，未截点或改动原稿。");emit brushSettingsChanged();return;}
  stroke_.push_back(s);
  {std::lock_guard lock(snapshotMutex_);++previewInputSequence_;previewInputPending_=true;}
  if(!previewTimer_.isActive())previewTimer_.start();
@@ -211,33 +226,32 @@ BrushSettings CanvasItem::currentGestureSettings(const DocumentSnapshot& snapsho
 }
 void CanvasItem::clearPreview(){
     previewTimer_.stop();renderStop_.request_stop();renderPool_.clear();
-    {std::lock_guard lock(snapshotMutex_);++renderGeneration_;completedFrame_={};displayFrame_=committedFrame_;previewing_=false;previewInputPending_=false;}
+    {std::lock_guard lock(snapshotMutex_);++renderGeneration_;completedDryReady_=false;completedDryEvent_.reset();completedDryError_.clear();completedFrame_={};displayFrame_=committedFrame_;previewing_=false;previewInputPending_=false;}
     emit renderErrorChanged();update();
 }
-void CanvasItem::cancelStroke(){cancelHollowDrag();if(stroke_.empty()&&!previewing()&&!previewTimer_.isActive())return;stroke_.clear();strokeTarget_.reset();tabletStroke_=false;clearPreview();}
-void CanvasItem::mouseUngrabEvent(){cancelStroke();}
+void CanvasItem::cancelStroke(){cancelHollowDrag();if(stroke_.empty()&&!previewing()&&!previewTimer_.isActive()&&!dryCommitPending_)return;const bool wasPending=dryCommitPending_;dryCommitPending_=false;dryCommitTimer_.stop();{std::lock_guard lock(snapshotMutex_);completedDryReady_=false;completedDryEvent_.reset();completedDryError_.clear();}stroke_.clear();strokeTarget_.reset();tabletStroke_=false;clearPreview();if(wasPending){if(bridge_)bridge_->setStrokeCommitBusy(false);brushNotice_=tr("已取消干墨验收，这笔未写入工程。");emit brushSettingsChanged();}}
+void CanvasItem::mouseUngrabEvent(){if(!dryCommitPending_)cancelStroke();}
 void CanvasItem::requestPreview() try{
     if(!bridge_||bridge_->busy()||bridge_->replaying()||stroke_.empty()||!strokeTarget_||rendering()){clearPreview();renderStop_=std::stop_source{};return;}
     const auto source=bridge_->canvasSnapshot();if(!source){clearPreview();renderStop_=std::stop_source{};return;}
-    const auto settings=currentGestureSettings(*source);const auto samples=stroke_;const auto taper=tabletStroke_?0:gestureTaper_;const auto eraser=eraser_;
+    const auto settings=currentGestureSettings(*source);const auto samples=stroke_;const auto taper=tabletStroke_?0:gestureTaper_;const auto eraser=eraser_;const auto dryInk=gestureDryInk_;const auto gestureId=gestureId_;
     // Do not starve a running preview during continuous input. Replace only queued
     // work, then display completed snapshots in order until the newest catches up.
     renderPool_.clear();const auto token=renderStop_.get_token();std::uint64_t generation,sequence,inputSequence;
     {std::lock_guard lock(snapshotMutex_);generation=renderGeneration_;sequence=++previewRequestSequence_;inputSequence=previewInputSequence_;previewing_=true;}
     emit renderErrorChanged();
-    renderPool_.start([this,source,settings,samples,taper,eraser,token,generation,sequence,inputSequence]{
+    renderPool_.start([this,source,settings,samples,taper,eraser,dryInk,gestureId,token,generation,sequence,inputSequence]{
         if(token.stop_requested())return;
         QImage frame;QString failure;
         try{
         auto input=samples;if(taper>0){auto tapered=taperMousePressure(input,taper,true);if(tapered)input=std::move(tapered.value());}
-        BrushEngine engine;auto event=engine.compile(input,settings,eraser);
+        auto event=compileDesktopGesture(*source,input,settings,eraser,dryInk,gestureId,token);
         if(event){
-            auto bytes=QUuid::createUuid().toRfc4122();std::copy_n(reinterpret_cast<const std::uint8_t*>(bytes.constData()),16,event.value().id.bytes.begin());
             auto document=Document::fromSnapshot(*source);auto bounds=strokeBounds(event.value());
             if(document&&bounds){auto applied=document.value().apply(Command{Paint{event.value(),bounds.value()}},source->revision);
                 if(applied&&!token.stop_requested()){auto rendered=renderCanvasFrame(document.value().snapshot(),UINT64_MAX,{},token);if(rendered)frame=rendered.value().convertToFormat(QImage::Format_RGBA8888_Premultiplied);else failure=QString::fromStdString(rendered.error().messageKey);}
             }
-        }
+        }else failure=QString::fromStdString(event.error().messageKey);
         }catch(const std::bad_alloc&){failure=QStringLiteral("preview.allocation");}
         if(token.stop_requested())return;
         if(frame.isNull()&&failure.isEmpty())failure=QStringLiteral("Preview unavailable; committed document unchanged.");
@@ -255,22 +269,52 @@ void CanvasItem::finishStroke(){
        !nativeLayerPaintable(*snap,strokeTarget_->layer)||
        snap->nodes->at(strokeTarget_->layer).objectId!=strokeTarget_->object){cancelStroke();return;}
     BrushSettings b=currentGestureSettings(*snap);
-    if(!tabletStroke_&&gestureTaper_>0){auto tapered=taperMousePressure(stroke_,gestureTaper_,true);if(tapered)stroke_=std::move(tapered.value());else {brushNotice_=QStringLiteral("Stroke retained without mouse taper: input exceeds taper limits.");emit brushSettingsChanged();}}
+    if(!tabletStroke_&&gestureTaper_>0){auto tapered=taperMousePressure(stroke_,gestureTaper_,true);if(tapered)stroke_=std::move(tapered.value());else {if(gestureDryInk_&&!eraser_){cancelStroke();brushNotice_=tr("干墨收笔处理超限，原稿未变。");emit brushSettingsChanged();return;}brushNotice_=QStringLiteral("Stroke retained without mouse taper: input exceeds taper limits.");emit brushSettingsChanged();}}
     clearPreview();
-    auto event=brush_.compile(stroke_,b,eraser_);
+    auto event=compileDesktopGesture(*snap,stroke_,b,eraser_,gestureDryInk_,gestureId_);
     stroke_.clear();
     strokeTarget_.reset();
     emit renderErrorChanged();
+    if(event&&event.value().engineVersion==12){commitDryStrokeAsync(*snap,std::move(event.value()));return;}
     if (event) {
-        // The engine's deterministic ID can repeat for equal-length input. A new
-        // user gesture needs its own identity, including after reopening a file.
-        const auto bytes = QUuid::createUuid().toRfc4122();
-        std::copy_n(reinterpret_cast<const std::uint8_t*>(bytes.constData()), 16,
-                    event.value().id.bytes.begin());
         auto committed=bridge_->commitStroke(event.value());
         if(!committed){brushNotice_=tr("笔迹未提交，工程未修改：")+QString::fromStdString(committed.error().messageKey);emit brushSettingsChanged();}
     }else{brushNotice_=tr("笔迹未提交，工程未修改：")+QString::fromStdString(event.error().messageKey);emit brushSettingsChanged();}
 }
+void CanvasItem::commitDryStrokeAsync(DocumentSnapshot source,StrokeEvent event) try {
+    if(!bridge_)return;
+    renderStop_=std::stop_source{};const auto token=renderStop_.get_token();std::uint64_t generation;
+    {std::lock_guard lock(snapshotMutex_);generation=renderGeneration_;previewing_=true;}
+    dryCommitPending_=true;dryCommitDocument_=source.documentId;dryCommitRevision_=source.revision;dryCommitGeneration_=bridge_->canvasGeneration();bridge_->setStrokeCommitBusy(true);dryCommitTimer_.start();
+    brushNotice_=tr("正在验收干墨笔迹；通过后才写入工程。Esc 可取消。");emit brushSettingsChanged();emit renderErrorChanged();
+    renderPool_.start([this,source=std::move(source),event=std::move(event),token,generation]() mutable {
+        QString failure;
+        try {
+            auto document=Document::fromSnapshot(source);auto bounds=strokeBounds(event);
+            if(!document)failure=QString::fromStdString(document.error().messageKey);
+            else if(!bounds)failure=QString::fromStdString(bounds.error().messageKey);
+            else {auto applied=document.value().apply(Command{Paint{event,bounds.value()}},source.revision);
+                if(!applied)failure=QString::fromStdString(applied.error().messageKey);
+                else {auto frame=renderCanvasFrame(document.value().snapshot(),UINT64_MAX,{},token);if(!frame)failure=QString::fromStdString(frame.error().messageKey);}
+            }
+        }catch(const std::bad_alloc&){failure=QStringLiteral("dry-ink.commit-allocation");}
+        if(token.stop_requested())return;
+        // Move into a bounded mailbox. No allocation/callback posting outside
+        // the worker exception boundary; an existing GUI timer drains this.
+        {std::lock_guard lock(snapshotMutex_);if(generation!=renderGeneration_)return;completedDryEvent_=std::move(event);completedDryError_=std::move(failure);completedDryReady_=true;}
+
+    });
+}catch(const std::bad_alloc&){cancelStroke();brushNotice_=tr("干墨验收内存不足，原稿未变。");emit brushSettingsChanged();}
+void CanvasItem::finishDryCommit() try {
+    std::optional<StrokeEvent> event;QString failure;
+    {std::lock_guard lock(snapshotMutex_);if(!completedDryReady_||!dryCommitPending_)return;event=std::move(completedDryEvent_);failure=std::move(completedDryError_);completedDryReady_=false;previewing_=false;}
+    dryCommitTimer_.stop();dryCommitPending_=false;if(!bridge_)return;
+    bridge_->setStrokeCommitBusy(false);const auto actual=bridge_->canvasSnapshot();
+    if(!actual||actual->documentId!=dryCommitDocument_||actual->revision!=dryCommitRevision_||bridge_->canvasGeneration()!=dryCommitGeneration_){brushNotice_=tr("工程已改变，未提交旧干墨笔迹。");}
+    else if(!failure.isEmpty()){brushNotice_=tr("干墨验收失败，原稿未变：")+failure;}
+    else if(event){auto done=bridge_->commitStroke(*event);brushNotice_=done?QString{}:tr("干墨未提交：")+QString::fromStdString(done.error().messageKey);}
+    emit renderErrorChanged();emit brushSettingsChanged();update();
+}catch(const std::bad_alloc&){dryCommitTimer_.stop();dryCommitPending_=false;if(bridge_)bridge_->setStrokeCommitBusy(false);brushNotice_=tr("干墨提交内存不足，请核对工程状态。");emit brushSettingsChanged();}
 void CanvasItem::setCloseGapTool(bool value){cancelStroke();closeGapTool_=value;if(value){hollowTool_=false;bucketTool_=false;hollowDragTool_=false;hollowLassoTool_=false;}emit brushSettingsChanged();emit viewChanged();}
 QVariantList CanvasItem::closeGapGuide() const {QVariantList out;if(!closeGapTool_||!hollowDrag_)return out;const auto snap=bridge_?bridge_->canvasSnapshot():std::nullopt;if(!snap)return out;const auto r=documentRect();for(const auto p:{hollowDrag_->start,hollowDrag_->current})out.push_back(QVariant::fromValue(QPointF(r.x()+(std::floor(p.x())+.5)*r.width()/snap->spec.pixelSize.width,r.y()+(std::floor(p.y())+.5)*r.height()/snap->spec.pixelSize.height)));return out;}
 void CanvasItem::setHollowDragTool(bool value){
