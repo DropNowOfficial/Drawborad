@@ -2,6 +2,7 @@
 #include "AlphaImportPolicy.h"
 #include "brush/OriginalLineartFill.h"
 #include "brush/FillRegionReview.h"
+#include "brush/HollowInkCommand.h"
 #include "ui/MergedDocument.h"
 #include <QFile>
 #include <QColorSpace>
@@ -61,13 +62,13 @@ QtBridge::QtBridge(QObject* parent)
     poll_.start();
 }
 QtBridge::~QtBridge(){fillStop_.request_stop();fillPool_.clear();fillPool_.waitForDone();}
-void QtBridge::cancelFill(){if(fillPending()){pendingFill_.reset();pendingFillPreview_.reset();pendingFillSource_.reset();fillNotice_=tr("审阅已取消，原工程未修改。");emit changed();return;}if(fillBusy_){fillStop_.request_stop();fillNotice_=tr("正在取消填色；原图及已提交内容不变。");emit changed();}}
+void QtBridge::cancelFill(){if(fillPending()){pendingFill_.reset();pendingFillPreview_.reset();pendingFillSource_.reset();fillNotice_=tr("审阅已取消，原工程未修改。");emit changed();return;}if(fillBusy_){fillStop_.request_stop();fillNotice_=tr("正在取消区域操作；原图及已提交内容不变。");emit changed();}}
 bool QtBridge::acceptFill(){
     if(!pendingFill_ || !pendingFillSource_)return false;
     const auto current=app_.snapshot();const auto source=*pendingFillSource_;
     if(!current || current->documentId!=source.documentId || current->revision!=source.revision || canvasGeneration_!=pendingFillGeneration_ || replaying()){cancelFill();fillNotice_=tr("工程发生变化，审阅结果未提交。");emit changed();return false;}
     auto command=std::move(*pendingFill_);pendingFill_.reset();pendingFillPreview_.reset();pendingFillSource_.reset();
-    auto committed=app_.apply(command);fillNotice_=committed?tr("已接受色块，独立图层已更新；原线稿未改，可撤销和保存。"):QString::fromStdString(committed.error().messageKey);emit changed();return bool(committed);
+    auto committed=app_.apply(command);fillNotice_=committed?tr("已接受区域操作，独立图层已更新；原线稿未改，可撤销和保存。"):QString::fromStdString(committed.error().messageKey);emit changed();return bool(committed);
 }
 bool QtBridge::dirty() const {return app_.dirty() || workflow_->pending() || fillPending();}
 int QtBridge::eventCount() const {const auto s=app_.snapshot();return s?int(std::min<std::size_t>(s->eventIndex->size(),std::size_t(INT_MAX))):0;}
@@ -186,10 +187,11 @@ bool QtBridge::setLayerVisible(const QString& text, bool visible) {
     emit changed();
     return bool(result);
 }
-bool QtBridge::initializeCanvas(double w, double h, double ppi) {
+bool QtBridge::initializeCanvas(double w, double h, double ppi, bool whitePaper) {
     if(busy())return false;
     NewDocumentRequest request;
     request.dimensions = {w, h, Unit::Px, ppi};
+    if(whitePaper){request.transparent=false;request.paperColor.channels={1,1,1,0};request.paperColor.alpha=1;}
     if (!app_.newDocument(request)) return false;
     const auto snapshot = app_.snapshot();
     if (!snapshot) return false;
@@ -214,8 +216,8 @@ bool QtBridge::initializeCanvas(double w, double h, double ppi) {
     if (created) { replayCount_=-1; activeLayer_ = layerId; ++canvasGeneration_; }
     return bool(created);
 }
-void QtBridge::createDocument(double w, double h, double ppi) {
-    const bool created = initializeCanvas(w, h, ppi);
+void QtBridge::createDocument(double w, double h, double ppi, bool whitePaper) {
+    const bool created = initializeCanvas(w, h, ppi, whitePaper);
     if (created) {
         workflow_->reset();
         referenceUrl_ = QUrl{};
@@ -319,17 +321,32 @@ bool QtBridge::importLineartUrl(const QUrl& url) try {
     auto result=app_.apply(command);if(!result)return fail(QString::fromStdString(result.error().messageKey));
     activeLayer_=fill;++canvasGeneration_;referenceUrl_=QUrl{};fillNotice_=tr("原 PNG 已嵌入并锁定；色块写入独立底层。仅按原线稿取样，不重绘、不自动补洞。");emit changed();return true;
 }catch(const std::bad_alloc&){fillNotice_=tr("内存不足，线稿未导入。");emit changed();return false;}
-bool QtBridge::fillLineartAt(double x,double y,const QColor& color) try {
+bool QtBridge::fillLineartAt(double x,double y,const QColor& color,bool hollow) try {
     auto s=app_.snapshot();
     const auto fail=[&](const QString& reason){fillNotice_=reason;emit changed();return false;};
     if(!s || busy() || replaying() || workflow_->pending() || !activeLayer_ || !color.isValid() || !std::isfinite(x) || !std::isfinite(y) || x<0 || y<0 || x>=double(s->spec.pixelSize.width) || y>=double(s->spec.pixelSize.height))return fail(tr("填色未执行：请选可编辑色层并结束当前操作。"));
     NodeId source;for(const auto&[id,node]:*s->nodes)if(node.stage==LineartStage){if(!source.empty())return fail(tr("目前只支持一个原线稿图层。"));source=id;}
+    if(hollow && s->spec.background.transparent)return fail(tr("局部挖空是白纸覆盖；请新建时选择白纸。透明工程未修改。"));
     ColorValue paint;paint.activeChannels=3;paint.profileId=s->spec.colorSpec.profileId;paint.channels={color.redF(),color.greenF(),color.blueF(),0};paint.alpha=color.alphaF();
     fillPool_.setMaxThreadCount(1);fillStop_=std::stop_source{};const auto stop=fillStop_.get_token();
     const auto snapshot=*s;const auto target=*activeLayer_;const auto event=uuid();const auto generation=canvasGeneration_;
-    fillBusy_=true;fillNotice_=tr("正在按原尺寸线稿计算色块；尚未提交，可取消。请完成后再保存。");emit changed();
-    fillPool_.start([this,snapshot,source,target,event,x,y,paint,stop,generation]{
-        auto result=originalLineartFillCommand(snapshot,source,target,event,std::uint32_t(x),std::uint32_t(y),paint,stop);
+    fillBusy_=true;fillNotice_=tr("正在按原尺寸线稿计算区域；尚未提交，可取消。请接受预览后再保存。");emit changed();
+    fillPool_.start([this,snapshot,source,target,event,x,y,paint,stop,generation,hollow]{
+        Result<Command> result=error(ErrorCode::InvalidInput,"hollow.selection");
+        std::uint64_t selectedInk=0;
+        try{
+            if(!hollow)result=originalLineartFillCommand(snapshot,source,target,event,std::uint32_t(x),std::uint32_t(y),paint,stop);
+            else{
+                const auto w=snapshot.spec.pixelSize.width,h=snapshot.spec.pixelSize.height;auto raw=lineartRasterPixels(snapshot,source);
+                if(!raw)result=raw.error();else if(w>8192||h>8192||w*h>20000000)result=error(ErrorCode::BudgetExceeded,"hollow.canvas-limit");else{
+                    std::vector<Rgba8> pixels(std::size_t(w*h));bool cancelled=false;
+                    for(std::size_t i=0;i<pixels.size();i++){if(i%16384==0&&stop.stop_requested()){cancelled=true;break;}const auto p=raw.value().subspan(i*4,4);const auto v=std::uint8_t(p[3]&&p[0]<255?0:255);pixels[i]={v,v,v,255};}
+                    if(cancelled)result=error(ErrorCode::Cancelled,"hollow.cancelled");
+                    else if(pixels[std::size_t(y)*w+std::size_t(x)].r!=0)result=error(ErrorCode::InvalidInput,"hollow.click-ink-not-paper");
+                    else{auto selection=floodFill(pixels,std::uint32_t(w),std::uint32_t(h),std::uint32_t(x),std::uint32_t(y),0,{},stop);if(!selection)result=selection.error();else{selectedInk=selection.value().pixelCount;result=hollowInkOverlayCommand(snapshot,source,event,uuid(),selection.value(),1,stop);}}
+                }
+            }
+        }catch(const std::bad_alloc&){result=error(ErrorCode::BudgetExceeded,"hollow.selection-allocation");}
         std::optional<DocumentSnapshot> preview;FillRegionReview review;
         try { if(result){
             FillMask mask;for(const auto& op:result.value().operations)if(const auto* paint=std::get_if<Paint>(&op))for(std::size_t i=0;i+1<paint->event.geometry.size();i+=2){const auto& a=paint->event.geometry[i];const auto& b=paint->event.geometry[i+1];const auto length=std::uint32_t(b.x-a.x);mask.runs.push_back({std::uint32_t(a.y),std::uint32_t(a.x),length});mask.pixelCount+=length;}
@@ -340,16 +357,22 @@ bool QtBridge::fillLineartAt(double x,double y,const QColor& color) try {
             }
         }
         }catch(const std::bad_alloc&){preview.reset();result=error(ErrorCode::BudgetExceeded,"fill-review.allocation");}
-        QMetaObject::invokeMethod(this,[this,snapshot,result=std::move(result),preview,review,stop,generation]() mutable {
+        QMetaObject::invokeMethod(this,[this,snapshot,result=std::move(result),preview,review,stop,generation,hollow,selectedInk]() mutable {
             const auto current=app_.snapshot();fillBusy_=false;
-            if(stop.stop_requested()){fillNotice_=tr("填色已取消，工程未修改。");emit changed();return;}
+            if(stop.stop_requested()){fillNotice_=tr("区域操作已取消，工程未修改。");emit changed();return;}
             if(replaying() || !current || current->documentId!=snapshot.documentId || current->revision!=snapshot.revision || canvasGeneration_!=generation){fillNotice_=tr("原工程已变化，旧填色结果已丢弃。");emit changed();return;}
-            if(!result){fillNotice_=tr("未填色，工程未修改：")+QString::fromStdString(result.error().messageKey);emit changed();return;}
+            if(!result){
+                if(hollow && result.error().messageKey=="hollow.no-safe-interior")fillNotice_=tr("此处是细笔触或没有可安全挖空的内部，已保留，不会扩大选区。");
+                else if(hollow && result.error().messageKey=="hollow.source-must-be-top-locked-lineart")fillNotice_=tr("本版局部挖空暂限一个覆盖层；请先撤销上次挖空再选择，原稿未改。");
+                else fillNotice_=tr("区域操作未执行，工程未修改：")+QString::fromStdString(result.error().messageKey);
+                emit changed();return;
+            }
             pendingFill_=std::move(result.value());pendingFillSource_=snapshot;pendingFillPreview_=preview;pendingFillGeneration_=generation;
             fillNotice_=tr("未提交预览：%1 像素；范围 %2×%3；%4。内部建议点 (%5,%6)，离区域外像素中心的曼哈顿距离 %7。%8请对照画面后接受或取消。")
                 .arg(qulonglong(review.pixelCount)).arg(qlonglong(review.bounds.width)).arg(qlonglong(review.bounds.height))
                 .arg(review.touchesCanvasEdge?tr("连到画布边缘，警惕背景漏选"):tr("未连画布边缘"))
                 .arg(review.seedX).arg(review.seedY).arg(review.clearance).arg(review.tiny?tr("注意：极小色块，可能点中了碎岛。 "):QString{});
+            if(hollow)fillNotice_=tr("局部挖空未提交：选中墨块 %1 像素，仅清空安全内部 %2 像素。原轮廓、细笔触及其他区域保留；白纸覆盖，不是透明擦除。请对照预览后接受或取消。").arg(qulonglong(selectedInk)).arg(qulonglong(review.pixelCount));
             emit changed();
         },Qt::QueuedConnection);
     });

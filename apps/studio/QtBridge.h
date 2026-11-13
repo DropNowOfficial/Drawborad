@@ -52,7 +52,7 @@ class QtBridge : public QObject {
     std::uint64_t canvasGeneration_{};
     WorkflowController* workflow_{};
     int replayCount_{-1};
-    bool initializeCanvas(double width, double height, double ppi);
+    bool initializeCanvas(double width, double height, double ppi, bool whitePaper = false);
     void resetLayerSelection();
   public:
     explicit QtBridge(QObject* parent = nullptr);
@@ -86,9 +86,9 @@ class QtBridge : public QObject {
     std::optional<DocumentSnapshot> canvasSnapshot() const { return app_.snapshot(); }
     QString fillNotice() const { return fillNotice_; }
     Q_INVOKABLE bool importLineartUrl(const QUrl&);
-    bool fillLineartAt(double x, double y, const QColor&);
+    bool fillLineartAt(double x, double y, const QColor&, bool hollow = false);
     Result<void> commitStroke(const StrokeEvent&);
-    Q_INVOKABLE void createDocument(double width, double height, double ppi);
+    Q_INVOKABLE void createDocument(double width, double height, double ppi, bool whitePaper = false);
     Q_INVOKABLE bool addLayer();
     Q_INVOKABLE bool selectLayer(const QString&);
     Q_INVOKABLE bool setLayerVisible(const QString&, bool);
