@@ -67,6 +67,7 @@ ApplicationWindow {
                 TabButton { text: qsTr("绘制结果") }
             }
             NativeCanvas { id: nativeCanvas; objectName: "nativeCanvas"; anchors.fill: parent; anchors.margins: 24; anchors.topMargin: workspaceTabs.visible ? 64 : 24; visible: studio.hasDocument && !reviewPanel.visible; bridge: studio }
+            Rectangle { objectName: "hollowBoundsOverlay"; x: nativeCanvas.x + nativeCanvas.hollowItemRect.x; y: nativeCanvas.y + nativeCanvas.hollowItemRect.y; width: nativeCanvas.hollowItemRect.width; height: nativeCanvas.hollowItemRect.height; visible: nativeCanvas.visible && nativeCanvas.hollowTool && nativeCanvas.hollowBounded; color: "transparent"; border.color: "#ffcf70"; border.width: 2; z: 2 }
             Label { objectName: "fillPreviewStatus"; anchors.top: nativeCanvas.top; anchors.horizontalCenter: nativeCanvas.horizontalCenter; visible: studio.fillPending; text: qsTr("区域操作预览 · 尚未提交 · 请接受或取消"); color: "#ffcf70"; z: 3 }
             Label { objectName: "strokePreviewStatus"; anchors.bottom: nativeCanvas.bottom; anchors.horizontalCenter: nativeCanvas.horizontalCenter; visible: nativeCanvas.strokePreviewActive; text: nativeCanvas.previewing ? qsTr("笔迹预览更新中 · 尚未提交") : qsTr("未提交预览 · 松手提交，Esc 取消"); color: "#ffffff"; padding: 6; background: Rectangle { color: "#c0202428" } }
             Label { objectName: "canvasRendering"; anchors.centerIn: nativeCanvas; visible: nativeCanvas.visible && nativeCanvas.rendering; text: qsTr("Rendering document…"); color: "#bcbcc4" }
@@ -278,8 +279,18 @@ ApplicationWindow {
             Label { text: qsTr("同尺寸黑白灰 PNG，最多 2000 万像素；原图锁定、色块独立、后台填色，不缩图。导入仍为同步操作。"); color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Button { objectName: "cancelLineartFill"; text: qsTr("取消当前区域操作"); visible: studio.fillBusy || studio.fillPending; onClicked: studio.cancelFill() }
             Button { objectName: "acceptLineartFill"; text: qsTr("接受当前区域预览"); visible: studio.fillPending; enabled: !nativeCanvas.rendering && nativeCanvas.renderError.length === 0; onClicked: studio.acceptFill() }
-            CheckBox { objectName: "hollowInkTool"; text: qsTr("局部挖空（白纸，点墨块）"); checked: nativeCanvas.hollowTool; onToggled: nativeCanvas.hollowTool = checked }
+            CheckBox { objectName: "hollowInkTool"; enabled: !studio.busy; text: qsTr("局部挖空（白纸，点墨块）"); checked: nativeCanvas.hollowTool; onToggled: nativeCanvas.hollowTool = checked }
             Label { text: qsTr("挖空只清除所选墨块内部，保留原轮廓和细笔触；可依次选择独立墨块，已挖区域不会重复覆盖；接受后切换填色桶填其内部。不是中心线化或整页抽线。"); color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            CheckBox { id: hollowLimit; objectName: "hollowLimit"; text: qsTr("限制挖空矩形（原图像素）"); enabled: !studio.busy; onToggled: nativeCanvas.hollowBounded = checked }
+            GridLayout {
+                columns: 2; Layout.fillWidth: true; enabled: !studio.busy
+                TextField { id: hollowX; objectName: "hollowX"; text: "0"; placeholderText: "X"; Layout.fillWidth: true }
+                TextField { id: hollowY; objectName: "hollowY"; text: "0"; placeholderText: "Y"; Layout.fillWidth: true }
+                TextField { id: hollowW; objectName: "hollowW"; text: "64"; placeholderText: qsTr("宽"); Layout.fillWidth: true }
+                TextField { id: hollowH; objectName: "hollowH"; text: "64"; placeholderText: qsTr("高"); Layout.fillWidth: true }
+            }
+            Binding { target: nativeCanvas; property: "hollowBounds"; value: Qt.rect(Number(hollowX.text.trim() || "NaN"),Number(hollowY.text.trim() || "NaN"),Number(hollowW.text.trim() || "NaN"),Number(hollowH.text.trim() || "NaN")) }
+            Label { text: qsTr("顺序 X、Y、宽、高。启用后点击矩形内的原墨块，仅处理相交部分，保留切口边缘。黄框是范围，不是待提交结果；仍须接受实际预览。不是套索。"); color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Label { objectName: "lineartFillNotice"; text: studio.fillNotice; color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Label { text: studio.layerNotice; color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true; visible: text.length > 0 }
             Label { text: qsTr("画笔 · 原生笔迹"); color: "#f5f5f7"; font.pixelSize: 18 }

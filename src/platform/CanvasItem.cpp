@@ -262,11 +262,17 @@ void CanvasItem::finishStroke(){
         if(!committed){brushNotice_=tr("笔迹未提交，工程未修改：")+QString::fromStdString(committed.error().messageKey);emit brushSettingsChanged();}
     }else{brushNotice_=tr("笔迹未提交，工程未修改：")+QString::fromStdString(event.error().messageKey);emit brushSettingsChanged();}
 }
+QRectF CanvasItem::hollowItemRect() const {
+ const auto snap=bridge_?bridge_->canvasSnapshot():std::nullopt;if(!snap)return {};
+ const auto r=hollowBounds_;const double values[]={r.x(),r.y(),r.width(),r.height()};for(auto v:values)if(!std::isfinite(v)||v<0||std::floor(v)!=v)return {};
+ const auto w=double(snap->spec.pixelSize.width),h=double(snap->spec.pixelSize.height);if(w<=0||h<=0||r.width()<1||r.height()<1||r.right()>w||r.bottom()>h)return {};
+ const auto d=documentRect();return {d.x()+r.x()*d.width()/w,d.y()+r.y()*d.height()/h,r.width()*d.width()/w,r.height()*d.height()/h};
+}
 void CanvasItem::mousePressEvent(QMouseEvent* e){
     if(e->button()==Qt::MiddleButton){panGesture_=e->position();e->accept();return;}
     if(bucketTool_ || hollowTool_){
         cancelStroke();const auto snap=bridge_?bridge_->canvasSnapshot():std::nullopt;
-        if(e->button()==Qt::LeftButton && snap && !rendering() && renderError().isEmpty())if(auto point=itemToDocument(e->position(),*snap)){auto color=brushColor_;color.setAlphaF(color.alphaF()*brushOpacity());bridge_->fillLineartAt(point->x,point->y,color,hollowTool_);}
+        if(e->button()==Qt::LeftButton && snap && !rendering() && renderError().isEmpty())if(auto point=itemToDocument(e->position(),*snap)){auto color=brushColor_;color.setAlphaF(color.alphaF()*brushOpacity());bridge_->fillLineartAt(point->x,point->y,color,hollowTool_,hollowTool_&&hollowBounded_?std::optional<QRectF>(hollowBounds_):std::nullopt);}
         e->accept();return;
     }
     const auto s=bridge_?bridge_->canvasSnapshot():std::nullopt;if(tabletStroke_||!s||!itemToDocument(e->position(),*s)){e->ignore();return;}beginSample(mouseSample(e),false,false);e->accept();

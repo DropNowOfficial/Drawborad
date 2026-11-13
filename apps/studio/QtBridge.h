@@ -5,6 +5,7 @@
 #include <QTimer>
 #include <QUrl>
 #include <QColor>
+#include <QRectF>
 #include <QThreadPool>
 #include <stop_token>
 #include <QVariantList>
@@ -86,7 +87,7 @@ class QtBridge : public QObject {
     std::optional<DocumentSnapshot> canvasSnapshot() const { return app_.snapshot(); }
     QString fillNotice() const { return fillNotice_; }
     Q_INVOKABLE bool importLineartUrl(const QUrl&);
-    bool fillLineartAt(double x, double y, const QColor&, bool hollow = false);
+    bool fillLineartAt(double x, double y, const QColor&, bool hollow = false, std::optional<QRectF> limit = std::nullopt);
     Result<void> commitStroke(const StrokeEvent&);
     Q_INVOKABLE void createDocument(double width, double height, double ppi, bool whitePaper = false);
     Q_INVOKABLE bool addLayer();

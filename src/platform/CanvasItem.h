@@ -18,6 +18,9 @@ class QtBridge;
 class CanvasItem : public QQuickItem {
     Q_OBJECT
     Q_PROPERTY(QObject* bridge READ studio WRITE setStudio NOTIFY studioChanged)
+    Q_PROPERTY(bool hollowBounded READ hollowBounded WRITE setHollowBounded NOTIFY brushSettingsChanged)
+    Q_PROPERTY(QRectF hollowBounds READ hollowBounds WRITE setHollowBounds NOTIFY brushSettingsChanged)
+    Q_PROPERTY(QRectF hollowItemRect READ hollowItemRect NOTIFY viewChanged)
     Q_PROPERTY(bool hollowTool READ hollowTool WRITE setHollowTool NOTIFY brushSettingsChanged)
     Q_PROPERTY(bool bucketTool READ bucketTool WRITE setBucketTool NOTIFY brushSettingsChanged)
     Q_PROPERTY(double zoom READ zoom NOTIFY viewChanged)
@@ -34,7 +37,8 @@ class CanvasItem : public QQuickItem {
     Q_PROPERTY(QString brushNotice READ brushNotice NOTIFY brushSettingsChanged)
     BrushSettings brushSettings_,gestureBrush_;
     QColor brushColor_{QColor::fromRgbF(.08,.08,.08)},gestureColor_;
-    bool bucketTool_{false},hollowTool_{false};
+    bool bucketTool_{false},hollowTool_{false},hollowBounded_{false};
+    QRectF hollowBounds_{0,0,64,64};
     double mouseTaper_{0},gestureTaper_{0};
     QString brushNotice_;
     QPointer<QtBridge> bridge_;
@@ -99,6 +103,11 @@ class CanvasItem : public QQuickItem {
     void viewChanged();
     void renderErrorChanged();
   public:
+    bool hollowBounded() const { return hollowBounded_; }
+    void setHollowBounded(bool value) { hollowBounded_=value;emit brushSettingsChanged();emit viewChanged(); }
+    QRectF hollowBounds() const { return hollowBounds_; }
+    void setHollowBounds(QRectF value) { hollowBounds_=value;emit brushSettingsChanged();emit viewChanged(); }
+    QRectF hollowItemRect() const;
     bool hollowTool() const { return hollowTool_; }
     void setHollowTool(bool value) { cancelStroke();hollowTool_=value;if(value)bucketTool_=false;emit brushSettingsChanged(); }
     bool bucketTool() const { return bucketTool_; }
