@@ -1,3 +1,5 @@
+#include "brush/HiddenBoundaryFill.h"
+#include "core/CroppedStrokeMask.h"
 #include "ProjectSession.h"
 #include "../../apps/studio/ApplicationController.h"
 #include "ui/PaintedDocument.h"
@@ -115,14 +117,20 @@ class Session {
     }
 public:
     QJsonObject state() {
-        const auto s=snapshot(); QJsonArray nodes,events;
+        const auto s=snapshot(); QJsonArray nodes,events,boundaries;
         for(const auto& [id,node]:*s.nodes) {
+            if(node.stage==hiddenBoundary::Stage){const auto b=checked(hiddenBoundary::parse(s,node));QJsonArray points;for(const auto&point:b.points)points.append(QJsonObject{{"x",point.x},{"y",point.y}});boundaries.append(QJsonObject{{"id",idText(id)},{"lineart_id",idText(b.lineart)},{"enabled",b.enabled},{"radius",b.radius},{"points",points}});}
             QJsonArray children;for(const auto child:node.children)children.append(idText(child));
+            QJsonValue strokeMask(QJsonValue::Null);
+            if(!node.maskId.empty() && cropMask::tagged(s.resources->at(node.maskId))){
+                const auto v=checked(cropMask::parse(s,s.resources->at(node.maskId)));
+                strokeMask=QJsonObject{{"enabled",v.enabled},{"rect",QJsonObject{{"x",double(v.rect.x)},{"y",double(v.rect.y)},{"width",double(v.rect.width)},{"height",double(v.rect.height)}}}};
+            }
             nodes.append(QJsonObject{{"id",idText(id)},{"parent_id",idText(node.parent)},
                 {"object_id",idText(node.objectId)},{"name",QString::fromStdString(node.name)},
                 {"kind",int(node.kind)},{"stage",QString::fromStdString(node.stage)},
                 {"source_kind",int(node.sourceKind)},{"blend",int(node.blend)},{"children",children},
-                {"visible",node.visible},{"locked",node.locked},{"opacity",node.opacity}});
+                {"visible",node.visible},{"locked",node.locked},{"opacity",node.opacity},{"mask_supported",cropMask::supported(s,id)},{"stroke_mask",strokeMask}});
         }
         for(const auto& e:*s.eventIndex) {
             QJsonArray channels;for(auto x:e.color.channels) channels.append(x);
@@ -133,10 +141,10 @@ public:
                 {"geometry_count",number(e.geometry.size())}});
         }
         QJsonArray capabilities{"recolor_stroke","set_properties","bucket_fill","add_fill_layer","draw_stroke","update_layer","undo","redo","save","save_copy","replay","png"};
-        capabilities.append("ora");capabilities.append("append_brush_layer");capabilities.append("append_brush_crop");
+        capabilities.append("ora");capabilities.append("append_brush_layer");capabilities.append("append_brush_crop");capabilities.append("append_brush_normal");capabilities.append("cropped_stroke_mask");capabilities.append("hidden_fill_boundary");
         return {{"document_id",idText(s.documentId)},{"revision",number(s.revision)},
             {"saved_revision",saved?QJsonValue(number(*saved)):QJsonValue(QJsonValue::Null)},
-            {"dirty",controller->dirty()},{"nodes",nodes},{"strokes",events},
+            {"dirty",controller->dirty()},{"hidden_boundaries",boundaries},{"nodes",nodes},{"strokes",events},
             {"stroke_count",number(s.eventIndex->size())},
             {"width",number(s.spec.pixelSize.width)},{"height",number(s.spec.pixelSize.height)},{"ppi",s.spec.ppi},
             {"capabilities",capabilities}};
@@ -145,6 +153,10 @@ public:
         if(method=="import_lineart" || method=="append_brush_layer" || method=="append_brush_crop") {
             const bool crop=method=="append_brush_crop";
             const bool append=method=="append_brush_layer" || crop;
+            const auto paintMode=p.value("paint_mode");
+            need(paintMode.isUndefined() || (paintMode.isString() && (paintMode.toString()=="multiply" || paintMode.toString()=="normal")),"brush-crop.paint-mode");
+            const bool normal=paintMode.toString()=="normal";
+            need(!normal || crop,"brush-crop.normal-requires-crop");
             if(append) {
                 revision(p);
                 if(parseId(p.value("expected_document_id"))!=snapshot().documentId)
@@ -176,6 +188,11 @@ public:
                 need(space.isValid() && space==QColorSpace(QColorSpace::SRgb),"lineart.non-srgb-profile-not-supported");
             }
             if(append) {
+                // Worker receipts describe geometry, not actual ink coverage.
+                // Reject invisible strokes before installing resources or changing revision.
+                bool hasInk=false;
+                for(std::size_t i=3;i<pixels.bytes.size();i+=4)if(pixels.bytes[i]){hasInk=true;break;}
+                need(hasInk,"brush-layer.no-visible-ink");
                 const auto current=snapshot();
                 if(!crop)need(pixels.width==current.spec.pixelSize.width && pixels.height==current.spec.pixelSize.height,"brush-layer.canvas-mismatch");
                 auto manifestBytes=checked(NativeFileIO{}.read(pathValue(p.value("manifest_path")),1024*1024));
@@ -210,12 +227,15 @@ public:
                         need(std::abs(scalar(l,"x")-(gx-double(x)))<1e-6 && std::abs(scalar(l,"y")-(gy-double(y)))<1e-6 && scalar(l,"pressure")==pressure && scalar(l,"time_ms")==time,"brush-crop.point-translation");last=time;
                     }
                     const auto worker=meta.value("worker_manifest").toObject();
+                    const auto recordedMode=worker.value("paint_mode");
+                    need(recordedMode.isUndefined() || (recordedMode.isString() && (recordedMode.toString()=="multiply" || recordedMode.toString()=="normal")),"brush-crop.manifest-paint-mode");
+                    need(normal ? recordedMode.toString()=="normal" : (recordedMode.isUndefined() || recordedMode.toString()=="multiply"),"brush-crop.paint-mode-mismatch");
                     need(worker.value("document_id").toString()==idText(current.documentId),"brush-crop.worker-document");
                     const auto guard=worker.value("actual_dab_guard").toObject();
                     const auto dabs=guard.value("checked_dabs");const double dabCount=dabs.toDouble(-1);
                     need(guard.value("passed")==QJsonValue(true) && dabs.isDouble() && std::isfinite(dabCount) && dabCount>=0 && dabCount<=10000000 && std::floor(dabCount)==dabCount,"brush-crop.guard-proof");
                     need(worker.value("points").toArray()==locals && worker.value("canvas").toArray()==size,"brush-crop.worker-inputs");
-                    auto command=checked(croppedRaster::make(std::move(pixels.bytes),std::move(imported.encodedSource),std::move(manifestBytes),roi,current.spec.pixelSize.width,current.spec.pixelSize.height,newEventId()));
+                    auto command=checked((normal?croppedRaster::makeNormal:croppedRaster::make)(std::move(pixels.bytes),std::move(imported.encodedSource),std::move(manifestBytes),roi,current.spec.pixelSize.width,current.spec.pixelSize.height,newEventId(),{}));
                     // Preflight before copying/applying the command. Shared resource IDs count once.
                     std::uint64_t total=0;constexpr std::uint64_t limit=256ull*1024*1024;
                     for(const auto& [id,res]:*current.resources) {
@@ -272,6 +292,36 @@ public:
         if(method=="close") {
             canReplace(p);controller=std::make_unique<ApplicationController>();saved.reset();path.clear();
             return {{"closed",true}};
+        }
+        if(method=="add_hidden_boundary" || method=="toggle_hidden_boundary" || method=="hidden_boundary_fill") {
+            revision(p);const auto s=snapshot();if(parseId(p.value("expected_document_id"))!=s.documentId)throw Failure{error(ErrorCode::StaleRevision,"session.document")};Command command;
+            if(method=="add_hidden_boundary"){
+                need(p.value("points").isArray()&&p.value("radius").isDouble(),"boundary.input");const auto values=p.value("points").toArray();need(values.size()>=2&&values.size()<=256,"boundary.points");std::vector<hiddenBoundary::Point> points;
+                for(const auto& value:values){need(value.isObject(),"boundary.point");const auto point=value.toObject();need(point.size()==2&&point.value("x").isDouble()&&point.value("y").isDouble(),"boundary.point");points.push_back({point.value("x").toDouble(),point.value("y").toDouble()});}
+                command=checked(hiddenBoundary::add(s,newEventId(),parseId(p.value("lineart_id")),points,p.value("radius").toDouble()));
+            }else if(method=="toggle_hidden_boundary"){
+                need(p.value("enabled").isBool(),"boundary.enabled");command=checked(hiddenBoundary::toggle(s,parseId(p.value("boundary_id")),p.value("enabled").toBool()));
+            }else{
+                const auto threshold=pixelInteger(p.value("source_luminance_threshold"));need(threshold<=255,"boundary.threshold");
+                command=checked(hiddenBoundaryFillCommand(s,parseId(p.value("lineart_id")),parseId(p.value("layer_id")),newEventId(),pixelInteger(p.value("x")),pixelInteger(p.value("y")),std::uint8_t(threshold),browserColor(s,p.value("color"))));
+            }
+            auto candidate=checked(Document::fromSnapshot(s));checked(candidate.apply(command,s.revision));checked(planMergedDocument(candidate.snapshot()));checked(controller->apply(command));return state();
+        }
+        if(method=="set_stroke_mask" || method=="toggle_stroke_mask") {
+            revision(p);const auto s=snapshot();
+            if(parseId(p.value("expected_document_id"))!=s.documentId)throw Failure{error(ErrorCode::StaleRevision,"session.document")};
+            const auto id=parseId(p.value("layer_id"));Command command;
+            if(method=="set_stroke_mask"){
+                need(p.value("rect").isObject(),"stroke-mask.rect");const auto rect=p.value("rect").toObject();
+                auto coordinate=[&](const char* key){const auto value=rect.value(key);need(value.isDouble()&&std::isfinite(value.toDouble())&&value.toDouble()>=0&&value.toDouble()<=8192&&std::floor(value.toDouble())==value.toDouble(),"stroke-mask.coordinate");return std::uint64_t(value.toDouble());};
+                const auto x=coordinate("x"),y=coordinate("y"),w=coordinate("width"),h=coordinate("height");
+                need(x<=8192&&y<=8192&&w<=8192&&h<=8192,"stroke-mask.bounds");
+                command=checked(cropMask::set(s,id,{std::int64_t(x),std::int64_t(y),w,h},true));
+            }else{
+                need(p.value("enabled").isBool(),"stroke-mask.enabled");command=checked(cropMask::toggle(s,id,p.value("enabled").toBool()));
+            }
+            auto candidate=checked(Document::fromSnapshot(s));checked(candidate.apply(command,s.revision));checked(planMergedDocument(candidate.snapshot()));
+            checked(controller->apply(command));return state();
         }
         if(method=="command") {
             revision(p);auto type=p.value("type").toString();Command command;

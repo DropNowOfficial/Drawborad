@@ -1,3 +1,4 @@
+#include "core/HiddenBoundary.h"
 #include "LayerStream.h"
 #include "view/LayerTree.h"
 #include <algorithm>
@@ -9,7 +10,7 @@ Result<NativeLayerStream> NativeLayerStream::create(const DocumentSnapshot& s,Ev
   // Hidden layers also cost rendering work in an editable layer archive.
   if(!s.nodes)return error(ErrorCode::CorruptData,"document.structure");
   if(s.nodes->size()>4096)return error(ErrorCode::BudgetExceeded,"merged.structure-limit");
-  auto visibleNodes=std::make_shared<NodeMap>(*s.nodes);for(auto& [id,n]:*visibleNodes){(void)id;n.visible=true;}
+  auto visibleNodes=std::make_shared<NodeMap>(*s.nodes);for(auto& [id,n]:*visibleNodes){(void)id;if(n.stage!=hiddenBoundary::Stage)n.visible=true;}
   auto all=s;all.nodes=visibleNodes;auto p=planMergedDocument(all,budget);if(!p)return p.error();
   NativeLayerStream stream;stream.snapshot_=s;stream.limit_=limit;
   auto views=croppedRaster::PreparedViews::prepare(s);if(!views)return views.error();stream.croppedViews_=std::move(views.value());
@@ -25,7 +26,7 @@ Result<ArchiveLayer> NativeLayerStream::read(std::size_t index,std::stop_token s
  try{
   const auto& s=snapshot_;const auto size=s.spec.pixelSize;const auto id=order_[index];
   ArchiveLayer out;auto& image=out.pixels;
-  if(!id.empty() && s.nodes->at(id).stage==croppedRaster::Stage) {
+  if(!id.empty() && croppedRaster::isStage(s.nodes->at(id).stage)) {
    const auto& node=s.nodes->at(id);const auto* crop=croppedViews_.find(s,id);
    if(!crop)return error(ErrorCode::CorruptData,"crop.prepared-view");
    out.name=node.name;out.visible=layerVisible(s,id);out.opacity=node.opacity;out.blend=node.blend;
@@ -45,7 +46,7 @@ Result<ArchiveLayer> NativeLayerStream::read(std::size_t index,std::stop_token s
    return out;
   }
   const auto& node=s.nodes->at(id);out.name=node.name;out.visible=layerVisible(s,id);out.opacity=node.opacity;out.blend=node.blend;
-  const bool cropped=node.stage==croppedRaster::Stage;
+  const bool cropped=croppedRaster::isStage(node.stage);
   const bool raster=node.stage==LineartStage || cropped;croppedRaster::View crop;
   std::span<const std::uint8_t> raw;
   if(cropped){const auto* v=croppedViews_.find(s,id);if(!v)return error(ErrorCode::CorruptData,"crop.prepared-view");crop=*v;}

@@ -55,6 +55,11 @@ def main(binary):
             assert 'error' in call('append_brush_layer', **missing_document)
             assert ok('state') == state
             before = state
+            empty = root / 'empty.png'
+            Image.new('RGBA', (64, 64), (25, 50, 75, 0)).save(empty)
+            rejected = call('append_brush_layer', **dict(args, path=str(empty)))
+            assert rejected.get('error', {}).get('message') == 'brush-layer.no-visible-ink', rejected
+            assert ok('state') == before, 'empty brush layer must not change the document'
             state = ok('append_brush_layer', **args)
             added = [n for n in state['nodes'] if n['id'] not in {x['id'] for x in before['nodes']}]
             assert len(added) == 1 and added[0]['locked'] and added[0]['blend'] == 1

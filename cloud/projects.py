@@ -2,6 +2,7 @@
 from contextlib import contextmanager, asynccontextmanager
 import fcntl
 import json
+import re
 import os
 from pathlib import Path
 import selectors
@@ -115,12 +116,27 @@ class Projects:
         ok,reason=(mypaint_worker.available_crop if 'append_brush_crop' in caps else mypaint_worker.available)(value.get('width'),value.get('height'))
         if 'append_brush_layer' not in caps and 'append_brush_crop' not in caps:ok=False;reason='Native MyPaint layer support is not available in this engine build.'
         if ok:caps.append('mypaint_ink')
+        presets=['pointy_ink'] if ok else []
+        if ok and 'append_brush_crop' in caps:
+            try:mypaint_worker.selected_pins('dry_brush');presets.append('dry_brush')
+            except (ValueError,OSError):pass
+        value['mypaint_presets']=presets
+        value['mypaint_radius_scale_range']=[.25,8] if ok and 'append_brush_crop' in caps else [1,1]
+        value['mypaint_paint_modes']=(['multiply','normal'] if ok and 'append_brush_crop' in caps and 'append_brush_normal' in caps else ['multiply'] if ok else [])
         value['capabilities']=caps;value['mypaint_status']=reason
         return value
 
     def mypaint_stroke(self,body,state):
         if 'mypaint_ink' not in state.get('capabilities',[]):fail(422,'unsupported',state.get('mypaint_status','MyPaint unavailable'))
         if body.get('expected_revision')!=state.get('revision'):fail(409,'stale_revision','Stale MyPaint revision')
+        preset=body.get('preset','pointy_ink')
+        if preset not in state.get('mypaint_presets',['pointy_ink']):fail(422,'unsupported','Selected MyPaint preset unavailable; nothing added')
+        try:scale=mypaint_worker.radius_scale(body.get('radius_scale',1))
+        except ValueError as e:fail(422,'invalid_input',str(e))
+        if scale!=1 and 'append_brush_crop' not in state.get('capabilities',[]):fail(422,'unsupported','Scaled MyPaint requires cropped native support')
+        paint_mode=body.get('paint_mode','multiply')
+        if paint_mode not in state.get('mypaint_paint_modes',['multiply']):fail(422,'unsupported','Selected MyPaint paint_mode unavailable; nothing added')
+        if paint_mode=='normal' and not {'append_brush_crop','append_brush_normal'}.issubset(state.get('capabilities',[])):fail(422,'unsupported','Normal paint requires native support; nothing added')
         document_id=state.get('document_id');project_id=self.active
         if not isinstance(document_id,str) or not document_id:fail(422,'unsupported','Native document identity unavailable')
         cancel=Event()
@@ -135,7 +151,9 @@ class Projects:
                     self.mypaint_cancel=None # Commit starts; cancellation no longer reports success.
                 current=self.rpc('state')
                 if self.active!=project_id or current.get('document_id')!=document_id or current.get('revision')!=body['expected_revision']:fail(409,'stale_revision','Document changed while MyPaint rendered; nothing added')
+                if paint_mode=='normal' and not {'append_brush_crop','append_brush_normal'}.issubset(current.get('capabilities',[])):fail(422,'unsupported','Normal paint support changed; nothing added')
                 params=dict(path=str(png),manifest_path=str(manifest),expected_revision=body['expected_revision'],expected_document_id=document_id)
+                if paint_mode=='normal':params['paint_mode']='normal'
                 method='append_brush_layer'
                 if 'append_brush_crop' in state.get('capabilities',[]):
                     crop=json.loads(manifest.read_text());params.update(origin_x=str(crop['origin'][0]),origin_y=str(crop['origin'][1]));method='append_brush_crop'
@@ -257,6 +275,47 @@ def install_projects(app,config,authorized):
             current=projects.select(pid)
             if body.get('type')=='draw_stroke' and body.get('brush')=='mypaint_ink':
                 return projects.mypaint_stroke(body,current)
+            if body.get('type') in {'add_hidden_boundary','toggle_hidden_boundary','hidden_boundary_fill'}:
+                kind=body['type']
+                extras={'add_hidden_boundary':{'lineart_id','points','radius'},'toggle_hidden_boundary':{'boundary_id','enabled'},'hidden_boundary_fill':{'lineart_id','layer_id','x','y','source_luminance_threshold','color'}}
+                if set(body)!=({'type','expected_revision','expected_document_id'}|extras[kind]):fail(422,'invalid_input','Missing or unknown hidden boundary fields')
+                if 'hidden_fill_boundary' not in current.get('capabilities',[]):fail(422,'unsupported','Native hidden boundary support unavailable')
+                if body['expected_document_id']!=current.get('document_id') or body['expected_revision']!=current.get('revision'):fail(409,'stale_document','Painting identity or revision changed')
+                width,height=int(current['width']),int(current['height'])
+                if kind!='toggle_hidden_boundary':
+                    if not any(n.get('id')==body['lineart_id'] and n.get('stage')=='drawborad.lineart.rgba.v1' for n in current.get('nodes',[])):fail(422,'invalid_input','Choose original imported lineart')
+                if kind=='add_hidden_boundary':
+                    import math
+                    points,radius=body['points'],body['radius']
+                    if type(radius) not in (int,float) or not math.isfinite(radius) or not .5<=radius<=4:fail(422,'invalid_input','Helper radius must be 0.5 to 4 pixels')
+                    if not isinstance(points,list) or not 2<=len(points)<=256:fail(422,'invalid_input','Helper requires 2 to 256 points')
+                    for point in points:
+                        if not isinstance(point,dict) or set(point)!={'x','y'} or any(type(v) not in (int,float) or not math.isfinite(v) for v in point.values()) or not 0<=point['x']<width or not 0<=point['y']<height:fail(422,'invalid_input','Helper coordinates must be inside canvas')
+                    boundaries=current.get('hidden_boundaries',[])
+                    if len(boundaries)>=32 or sum(len(b.get('points',[])) for b in boundaries)+len(points)>4096:fail(422,'invalid_input','Hidden boundary budget exceeded')
+                elif kind=='toggle_hidden_boundary':
+                    if type(body['enabled'])!=bool or not any(b.get('id')==body['boundary_id'] for b in current.get('hidden_boundaries',[])):fail(422,'invalid_input','Choose an existing boundary and boolean enabled')
+                else:
+                    if any(type(body[k])!=int for k in ('x','y','source_luminance_threshold')) or not 0<=body['x']<width or not 0<=body['y']<height or not 0<=body['source_luminance_threshold']<=255:fail(422,'invalid_input','Invalid fill seed or source luminance threshold')
+                    if not isinstance(body['color'],str) or not re.fullmatch(r'#[0-9a-fA-F]{6}',body['color']):fail(422,'invalid_input','Invalid fill color')
+                return projects.state(projects.rpc(kind,**{k:v for k,v in body.items() if k!='type'}))
+            if body.get('type') in {'set_stroke_mask','toggle_stroke_mask'}:
+                kind=body['type']
+                allowed={'type','layer_id','expected_revision','expected_document_id'}|({'rect'} if kind=='set_stroke_mask' else {'enabled'})
+                if set(body)!=allowed:fail(422,'invalid_input','Missing or unknown single-stroke mask fields')
+                if 'cropped_stroke_mask' not in current.get('capabilities',[]):fail(422,'unsupported','Native single-stroke masks unavailable; nothing changed')
+                node=next((n for n in current.get('nodes',[]) if n.get('id')==body.get('layer_id')),None)
+                if not node or node.get('mask_supported') is not True:fail(422,'unsupported','Select a supported cropped MyPaint stroke, not a group')
+                if body.get('expected_document_id')!=current.get('document_id'):fail(409,'stale_document','Painting identity changed; refresh before editing mask')
+                if body.get('expected_revision')!=current.get('revision'):fail(409,'stale_revision','Painting changed; refresh before editing mask')
+                if kind=='set_stroke_mask':
+                    rect=body['rect']
+                    if not isinstance(rect,dict) or set(rect)!={'x','y','width','height'} or any(type(v)!=int for v in rect.values()):fail(422,'invalid_input','Mask rectangle requires integer canvas coordinates')
+                    x,y,w,h=(rect[k] for k in ('x','y','width','height'))
+                    if x<0 or y<0 or w<=0 or h<=0 or x+w>int(current['width']) or y+h>int(current['height']):fail(422,'invalid_input','Mask rectangle must lie inside the canvas')
+                elif type(body['enabled'])!=bool or not node.get('stroke_mask'):fail(422,'invalid_input','Toggle requires an existing mask and boolean enabled')
+                params={k:v for k,v in body.items() if k!='type'}
+                return projects.state(projects.rpc(kind,**params))
             fields={'recolor_stroke':{'stroke_id','color'},
                     'set_properties':{'node_id','visible','locked'},
                     'add_fill_layer':set(),

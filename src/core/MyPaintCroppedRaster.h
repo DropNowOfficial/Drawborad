@@ -5,6 +5,8 @@
 #include <span>
 namespace drawborad::croppedRaster {
 inline constexpr char Stage[]="drawborad.mypaint.cropped.rgba.v1";
+inline constexpr char NormalStage[]="drawborad.mypaint.cropped.normal.rgba.v1";
+inline bool isStage(const std::string& stage){return stage==Stage || stage==NormalStage;}
 inline constexpr std::size_t HeaderBytes=96;
 struct Limits {std::uint64_t rawBytes=16*1024*1024,pngBytes=16*1024*1024,manifestBytes=1024*1024;};
 struct View {Rect bounds;std::span<const std::uint8_t> rgba;Hash png,manifest;};
@@ -14,26 +16,32 @@ inline void put(Bytes& b,std::uint64_t n,unsigned count){for(unsigned i=0;i<coun
 inline std::uint64_t get(const Bytes& b,std::size_t p,unsigned count){std::uint64_t n=0;for(unsigned i=0;i<count;++i)n|=std::uint64_t(b[p+i])<<(i*8);return n;}
 // PNG and manifest are immutable opaque source bytes here. Production entry must
 // decode PNG, validate JSON and verify pixels correspond before this constructor.
-inline Result<Command> make(Bytes rgba,Bytes png,Bytes manifest,Rect roi,std::uint64_t cw,std::uint64_t ch,NodeId id,Limits limits={}) try {
+inline Result<Command> makeImpl(Bytes rgba,Bytes png,Bytes manifest,Rect roi,std::uint64_t cw,std::uint64_t ch,NodeId id,Limits limits, bool normal) try {
  if(!limitsValid(limits)||!fits(roi,cw,ch)||id.empty())return error(ErrorCode::InvalidInput,"crop.layout");
  const auto pixels=roi.width*roi.height;
  if(pixels>(limits.rawBytes-HeaderBytes)/4 || rgba.size()!=pixels*4 || png.empty() || png.size()>limits.pngBytes || manifest.empty() || manifest.size()>limits.manifestBytes)return error(ErrorCode::BudgetExceeded,"crop.bytes");
  Resource p;p.kind=ResourceKind::Reference;p.id=sha256(png);p.bytes=std::make_shared<const Bytes>(std::move(png));
  Resource m;m.kind=ResourceKind::Reference;m.id=sha256(manifest);m.bytes=std::make_shared<const Bytes>(std::move(manifest));
- Bytes raw{'D','B','M','P','R','O','I','1'};raw.reserve(HeaderBytes+rgba.size());put(raw,roi.width,4);put(raw,roi.height,4);put(raw,std::uint64_t(roi.x),8);put(raw,std::uint64_t(roi.y),8);
+ Bytes raw{'D','B','M','P','R','O','I',std::uint8_t(normal?'2':'1')};raw.reserve(HeaderBytes+rgba.size());put(raw,roi.width,4);put(raw,roi.height,4);put(raw,std::uint64_t(roi.x),8);put(raw,std::uint64_t(roi.y),8);
  raw.insert(raw.end(),p.id.bytes.begin(),p.id.bytes.end());raw.insert(raw.end(),m.id.bytes.begin(),m.id.bytes.end());raw.insert(raw.end(),rgba.begin(),rgba.end());
  Resource r;r.kind=ResourceKind::Reference;r.id=sha256(raw);r.bytes=std::make_shared<const Bytes>(std::move(raw));r.dependencies={p.id,m.id};
- LayerNode n;n.id=id;n.parent=Document::rootId();n.name="MyPaint ink (experimental raster)";n.stage=Stage;n.sourceKind=SourceKind::ImportedRaster;n.sourceResource=r.id;n.bounds=roi;n.blend=BlendMode::Multiply;n.locked=true;
+ LayerNode n;n.id=id;n.parent=Document::rootId();n.name=normal?"MyPaint paint (Normal raster)":"MyPaint ink (experimental raster)";n.stage=normal?NormalStage:Stage;n.sourceKind=SourceKind::ImportedRaster;n.sourceResource=r.id;n.bounds=roi;n.blend=normal?BlendMode::Normal:BlendMode::Multiply;n.locked=true;
  Command c;c.operations={InstallResource{p},InstallResource{m},InstallResource{r},AddNode{n}};return c;
 }catch(const std::bad_alloc&){return error(ErrorCode::BudgetExceeded,"crop.allocation");}
+inline Result<Command> make(Bytes rgba,Bytes png,Bytes manifest,Rect roi,std::uint64_t cw,std::uint64_t ch,NodeId id,Limits limits={}) {
+ return makeImpl(std::move(rgba),std::move(png),std::move(manifest),roi,cw,ch,id,limits,false);
+}
+inline Result<Command> makeNormal(Bytes rgba,Bytes png,Bytes manifest,Rect roi,std::uint64_t cw,std::uint64_t ch,NodeId id,Limits limits={}) {
+ return makeImpl(std::move(rgba),std::move(png),std::move(manifest),roi,cw,ch,id,limits,true);
+}
 inline Result<View> parse(const DocumentSnapshot& s,NodeId id,Limits limits={}){
  if(!s.nodes||!s.resources||!limitsValid(limits))return error(ErrorCode::CorruptData,"crop.structure");
  auto ni=s.nodes->find(id);if(ni==s.nodes->end())return error(ErrorCode::InvalidInput,"crop.node");const auto& n=ni->second;
- if(n.kind!=NodeKind::Layer||n.stage!=Stage||n.sourceKind!=SourceKind::ImportedRaster||n.blend!=BlendMode::Multiply||!n.content.empty()||!n.children.empty()||n.transform!=LayerTransform{}||!fits(n.bounds,s.spec.pixelSize.width,s.spec.pixelSize.height))return error(ErrorCode::UnsupportedFeature,"crop.node-layout");
+ if(n.kind!=NodeKind::Layer||!isStage(n.stage)||n.sourceKind!=SourceKind::ImportedRaster||n.blend!=(n.stage==NormalStage?BlendMode::Normal:BlendMode::Multiply)||!n.content.empty()||!n.children.empty()||n.transform!=LayerTransform{}||!fits(n.bounds,s.spec.pixelSize.width,s.spec.pixelSize.height))return error(ErrorCode::UnsupportedFeature,"crop.node-layout");
  auto ri=s.resources->find(n.sourceResource);if(ri==s.resources->end())return error(ErrorCode::CorruptData,"crop.resource");const auto& r=ri->second;
  if(!r.bytes||r.kind!=ResourceKind::Reference||r.dependencies.size()!=2||r.bytes->size()<HeaderBytes||r.bytes->size()>limits.rawBytes)return error(ErrorCode::CorruptData,"crop.resource-layout");
  const auto& b=*r.bytes;
- constexpr std::uint8_t magic[]={'D','B','M','P','R','O','I','1'};
+ const std::uint8_t magic[]={'D','B','M','P','R','O','I',std::uint8_t(n.stage==NormalStage?'2':'1')};
  if(!std::equal(std::begin(magic),std::end(magic),b.begin())||get(b,8,4)!=n.bounds.width||get(b,12,4)!=n.bounds.height||get(b,16,8)!=std::uint64_t(n.bounds.x)||get(b,24,8)!=std::uint64_t(n.bounds.y)||b.size()!=HeaderBytes+n.bounds.width*n.bounds.height*4)return error(ErrorCode::CorruptData,"crop.header");
  if(r.id!=n.sourceResource||sha256(b)!=r.id)return error(ErrorCode::DigestMismatch,"crop.digest");
  for(std::size_t i=0;i<2;++i){const auto& hash=r.dependencies[i];if(!std::equal(hash.bytes.begin(),hash.bytes.end(),b.begin()+32+i*32))return error(ErrorCode::CorruptData,"crop.binding");
@@ -51,7 +59,7 @@ class PreparedViews {
  static Result<PreparedViews> prepare(const DocumentSnapshot& s){
   if(!s.nodes||!s.resources)return error(ErrorCode::CorruptData,"crop.structure");
   PreparedViews out;out.nodes_=s.nodes;out.resources_=s.resources;out.spec_=s.spec;
-  for(const auto& [id,node]:*s.nodes)if(node.stage==Stage){auto view=parse(s,id);if(!view)return view.error();out.views_.emplace(id,view.value());}
+  for(const auto& [id,node]:*s.nodes)if(isStage(node.stage)){auto view=parse(s,id);if(!view)return view.error();out.views_.emplace(id,view.value());}
   return out;
  }
  const View* find(const DocumentSnapshot& s,NodeId id)const{

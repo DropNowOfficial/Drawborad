@@ -60,6 +60,17 @@ def main(binary):
             assert 'error' in call('append_brush_crop', **missing_document)
             assert ok('state') == state
             before = state
+            # A valid worker manifest is not proof of nonzero final alpha.
+            empty = root / 'empty.png'
+            Image.new('RGBA', (8, 6), (25, 50, 75, 0)).save(empty)
+            empty_meta = json.loads(json.dumps(meta))
+            empty_meta['png_sha256'] = hashlib.sha256(empty.read_bytes()).hexdigest()
+            empty_meta['worker_manifest']['actual_dab_guard']['checked_dabs'] = 140
+            empty_manifest = root / 'empty-manifest.json'
+            empty_manifest.write_text(json.dumps(empty_meta))
+            rejected = call('append_brush_crop', **dict(args, path=str(empty), manifest_path=str(empty_manifest)))
+            assert rejected.get('error', {}).get('message') == 'brush-layer.no-visible-ink', rejected
+            assert ok('state') == before, 'empty crop must not add a layer or change revision'
             state = ok('append_brush_crop', **args)
             added = [n for n in state['nodes'] if n['id'] not in {x['id'] for x in before['nodes']}]
             assert len(added) == 1 and added[0]['locked'] and added[0]['blend'] == 1

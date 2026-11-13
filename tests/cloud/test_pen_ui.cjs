@@ -2,9 +2,9 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
 const html=fs.readFileSync('cloud/static/index.html','utf8');
 const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,{checked:false,value:'',style:{},hidden:true,getBoundingClientRect:()=>({left:10,top:20,width:200,height:200}),getContext:()=>({beginPath(){},moveTo(){},lineTo(){},stroke(){}}),setPointerCapture(){},hasPointerCapture:()=>false,releasePointerCapture(){}});return elements.get(id)};
 let calls=[],errors=[];
-const c=vm.createContext({by:get,window:{addEventListener(){}},nativePenReady:()=>true,nativeControls(){},nativeError:m=>errors.push(m),nativeRun:fn=>fn(),nativeShow:async x=>x,nativePost:async(p,b)=>calls.push(b)});
+const c=vm.createContext({by:get,window:{addEventListener(){}},nativePenReady:()=>true,nativeBoundaryCancel(){},nativeControls(){},nativeError:m=>errors.push(m),nativeRun:fn=>fn(),nativeShow:async x=>x,nativePost:async(p,b)=>calls.push(b)});
 vm.runInContext(html.match(/\/\/ PEN_HELPERS_BEGIN([\s\S]*?)\/\/ PEN_HELPERS_END/)[1],c);
-vm.runInContext("let nativePenDrag=null,nativeBusy=false;let nativeState={id:'p',revision:'9',width:'100',height:'50'};let nativeSelectedNodeId='layer';",c);
+vm.runInContext("let nativeBoundaryDrag=null,nativePenDrag=null,nativeBusy=false;let nativeState={id:'p',revision:'9',width:'100',height:'50'};let nativeSelectedNodeId='layer';",c);
 vm.runInContext(html.match(/\/\/ PEN_INPUT_BEGIN([\s\S]*?)\/\/ PEN_INPUT_END/)[1],c);
 get('nativePen').checked=true;get('nativePenWidth').value='0.25';get('nativeColor').value='#101020';
 const event=(x,y,extra={})=>({clientX:x,clientY:y,pointerId:1,button:0,preventDefault(){},...extra});

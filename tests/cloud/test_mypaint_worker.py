@@ -14,8 +14,11 @@ class WorkerTest(unittest.TestCase):
   for bad in ['1.0','1e3','-1',' 5',True]:
    with self.assertRaises(ValueError):m.dimensions(bad,128)
  def test_reject_fields_bounds_and_budget(self):
-  for key,value in [('width',5),('color','#ffffff'),('layer_id','f'*32)]:
+  for key,value in [('width',5),('layer_id','f'*32)]:
    with self.assertRaises(ValueError):m.validate_request(dict(self.body,**{key:value}),self.state)
+  self.assertEqual(m.validate_request(dict(self.body,color='#ffffff'),self.state),self.body['points'])
+  for color in ['#fff','#GG0000',None,True]:
+   with self.assertRaises(ValueError):m.validate_request(dict(self.body,color=color),self.state)
   bad=dict(self.body,points=[{'x':float('nan'),'y':0,'pressure':1,'time_ms':0}])
   with self.assertRaises(ValueError):m.validate_request(bad,self.state)
   self.assertFalse(m.available(2048,2048)[0])

@@ -23,7 +23,7 @@ const click=html.match(/by\('nativePreview'\)\.onclick=event=>\{[\s\S]*?\n\};/)[
 const add=html.match(/async function nativeAddFillLayer\(\)\{[\s\S]*?\n\}/);
 assert.ok(add,'new color layer handler must exist');
 assert.match(html, /id="nativeInkCover" type="checkbox" disabled>/, 'edge coverage defaults off');
-const elements={nativeInkCover:{checked:false},nativeBucket:{checked:true},nativeTolerance:{value:'0'},
+const elements={nativeBoundaryMode:{value:'off'},nativeEyedropper:{checked:false},nativeInkCover:{checked:false},nativeBucket:{checked:true},nativeTolerance:{value:'0'},
  nativeColor:{value:'#aabbcc'},nativePreview:{getBoundingClientRect:()=>rect}};
 let resolvePost,calls=[];
 Object.assign(context,{nativeState:state,nativeSelectedNodeId:'layer',nativeBusy:false,

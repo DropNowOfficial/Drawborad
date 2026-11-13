@@ -1,3 +1,5 @@
+#include "core/HiddenBoundary.h"
+#include "core/CroppedStrokeMask.h"
 #include "Commands.h"
 #include "MyPaintCroppedRaster.h"
 #include "BucketEvent.h"
@@ -44,6 +46,7 @@ Result<void> validateSnapshot(const DocumentSnapshot& s) {
         return error(ErrorCode::CorruptData, "document.spec");
     if (f.mode == ColorMode::CMYK && s.spec.colorSpec.profileId.empty())
         return error(ErrorCode::ProfileRequired, "color.cmyk-profile");
+    for(const auto& [hash,r]:*s.resources)if(cropMask::tagged(r)){auto mask=cropMask::parse(s,r);if(!mask)return mask.error();}
     std::set<NodeId> listed;
     for (auto& [id, n] : ns) {
         if (id.empty() || n.id != id || n.name.size() > 16384 || n.stage.size() > 256 ||
@@ -63,12 +66,14 @@ Result<void> validateSnapshot(const DocumentSnapshot& s) {
             return error(ErrorCode::InvalidInput, "node.object");
         if (n.sourceKind == SourceKind::Reconstructed && !n.sourceResource.empty())
             return error(ErrorCode::InvalidInput, "node.hidden-source");
+        if(n.stage!=hiddenBoundary::Stage){for(const auto hash:n.content)if(s.resources->contains(hash)&&hiddenBoundary::tagged(s.resources->at(hash)))return error(ErrorCode::UnsupportedFeature,"boundary.hidden-resource");if(s.resources->contains(n.sourceResource)&&hiddenBoundary::tagged(s.resources->at(n.sourceResource)))return error(ErrorCode::UnsupportedFeature,"boundary.hidden-resource");}
         for (auto h : n.content)
             if (!s.resources->contains(h))
                 return error(ErrorCode::CorruptData, "node.content-missing");
         if (!n.maskId.empty() && (!s.resources->contains(n.maskId) ||
                                   s.resources->at(n.maskId).kind != ResourceKind::Mask))
             return error(ErrorCode::CorruptData, "node.mask-missing");
+        if(!n.maskId.empty() && cropMask::tagged(s.resources->at(n.maskId)) && !croppedRaster::isStage(n.stage))return error(ErrorCode::UnsupportedFeature,"stroke-mask.target");
         if (!n.sourceResource.empty() && !s.resources->contains(n.sourceResource))
             return error(ErrorCode::CorruptData, "node.source-missing");
         for (auto c : n.children) {
@@ -156,13 +161,16 @@ Result<void> validateSnapshot(const DocumentSnapshot& s) {
             last = p.timestampUs;
         }
     }
+    std::size_t boundaryCount=0,boundaryPoints=0;
+    for(const auto&[id,node]:ns)if(node.stage==hiddenBoundary::Stage){auto v=hiddenBoundary::parse(s,node);if(!v)return v.error();boundaryPoints+=v.value().points.size();if(++boundaryCount>32||boundaryPoints>4096)return error(ErrorCode::BudgetExceeded,"boundary.document-limit");}
+    for(const auto&e:*s.eventIndex)if(ns.contains(e.layerId)&&ns.at(e.layerId).stage==hiddenBoundary::Stage)return error(ErrorCode::UnsupportedFeature,"boundary.paint-event");
     bool hasCropped=false;
-    for(const auto& [id,node]:ns)if(node.stage==croppedRaster::Stage){
+    for(const auto& [id,node]:ns)if(croppedRaster::isStage(node.stage)){
         hasCropped=true;auto parsed=croppedRaster::parse(s,id);if(!parsed)return parsed.error();
     }
     if(hasCropped && resourceBytes>MaxLargeDocumentResourceBytes)
         return error(ErrorCode::BudgetExceeded,"crop.document-resources");
-    for(const auto& e:*s.eventIndex)if(ns.contains(e.layerId) && ns.at(e.layerId).stage==croppedRaster::Stage)
+    for(const auto& e:*s.eventIndex)if(ns.contains(e.layerId) && croppedRaster::isStage(ns.at(e.layerId).stage))
         return error(ErrorCode::UnsupportedFeature,"crop.paint-events");
     return {};
 }

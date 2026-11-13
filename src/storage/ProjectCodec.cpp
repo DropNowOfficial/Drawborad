@@ -1,3 +1,5 @@
+#include "core/HiddenBoundary.h"
+#include "core/CroppedStrokeMask.h"
 #include "ProjectCodec.h"
 #include "Binary.h"
 #include "core/MyPaintCroppedRaster.h"
@@ -82,6 +84,9 @@ StrokeEvent event(Reader& r){
 }
 namespace {
 const char* requiredFormatHeader(const DocumentSnapshot& s){
+ if(std::any_of(s.resources->begin(),s.resources->end(),[](const auto& item){return hiddenBoundary::tagged(item.second);}))return "DRAW-DELTA-16";
+ if(std::any_of(s.resources->begin(),s.resources->end(),[](const auto& item){return cropMask::tagged(item.second);}))return "DRAW-DELTA-15";
+ if(std::any_of(s.nodes->begin(),s.nodes->end(),[](const auto& item){return item.second.stage==croppedRaster::NormalStage;}))return "DRAW-DELTA-14";
  if(std::any_of(s.nodes->begin(),s.nodes->end(),[](const auto& item){return item.second.stage==croppedRaster::Stage;}))return "DRAW-DELTA-13";
  if(std::any_of(s.eventIndex->begin(),s.eventIndex->end(),[](const auto& e){return e.engineVersion==12;}))return "DRAW-DELTA-12";
  if(std::any_of(s.resources->begin(),s.resources->end(),[](const auto& item){return item.second.bytes->size()>LegacyMaxResourceBytes;}))return "DRAW-DELTA-11";
@@ -100,7 +105,7 @@ Result<Bytes> encodeDelta(const DocumentSnapshot& before,const DocumentSnapshot&
 }
 Result<DocumentSnapshot> decodeDelta(std::span<const std::uint8_t> bytes,const DocumentSnapshot& base){
  if(bytes.size()>MaxProjectBytes)return error(ErrorCode::BudgetExceeded,"project.record-limit");
- try{Reader r{bytes};const auto format=r.text(32);if(format!="DRAW-DELTA-1"&&format!="DRAW-DELTA-8"&&format!="DRAW-DELTA-9"&&format!="DRAW-DELTA-10"&&format!="DRAW-DELTA-11"&&format!="DRAW-DELTA-12"&&format!="DRAW-DELTA-13"){if(format.starts_with("DRAW-DELTA-"))throw UnsupportedEngine{};throw binary::Invalid{};}auto prevId=r.id();auto prevRev=r.u64();auto prevHash=r.hash();if(prevId!=base.documentId||prevRev!=base.revision)return error(ErrorCode::StaleRevision,"journal.base");if(!base.documentId.empty()){auto h=stateHash(base);if(!h)return h.error();if(h.value()!=prevHash)return error(ErrorCode::DigestMismatch,"journal.base-hash");}
+ try{Reader r{bytes};const auto format=r.text(32);if(format!="DRAW-DELTA-1"&&format!="DRAW-DELTA-8"&&format!="DRAW-DELTA-9"&&format!="DRAW-DELTA-10"&&format!="DRAW-DELTA-11"&&format!="DRAW-DELTA-12"&&format!="DRAW-DELTA-13" && format!="DRAW-DELTA-14" && format!="DRAW-DELTA-15" && format!="DRAW-DELTA-16"){if(format.starts_with("DRAW-DELTA-"))throw UnsupportedEngine{};throw binary::Invalid{};}auto prevId=r.id();auto prevRev=r.u64();auto prevHash=r.hash();if(prevId!=base.documentId||prevRev!=base.revision)return error(ErrorCode::StaleRevision,"journal.base");if(!base.documentId.empty()){auto h=stateHash(base);if(!h)return h.error();if(h.value()!=prevHash)return error(ErrorCode::DigestMismatch,"journal.base-hash");}
  DocumentSnapshot out;out.documentId=r.id();out.revision=r.u64();out.spec=spec(r);if(!base.documentId.empty()&&(out.documentId!=base.documentId||out.revision<=base.revision))throw binary::Invalid{};
  auto ns=std::make_shared<NodeMap>(*base.nodes);for(auto id:ids(r))ns->erase(id);auto count=r.count(65536);while(count--){auto n=node(r);(*ns)[n.id]=std::move(n);}out.nodes=ns;
  auto rs=std::make_shared<ResourceMap>(*base.resources);for(auto h:hashes(r))rs->erase(h);count=r.count();while(count--){auto a=resource(r);(*rs)[a.id]=std::move(a);}out.resources=rs;bool append=r.boolean();auto ev=append?std::make_shared<EventList>(*base.eventIndex):std::make_shared<EventList>();count=r.count(2000000);if(ev->size()+count>2000000)throw binary::Invalid{};while(count--)ev->push_back(event(r));out.eventIndex=ev;if(!r.done())throw binary::Invalid{};auto v=validateSnapshot(out);if(!v)return v.error();if(format!=requiredFormatHeader(out))return error(ErrorCode::UnsupportedFeature,"project.format-feature-mismatch");return out;

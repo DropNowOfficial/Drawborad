@@ -17,8 +17,10 @@ class DabGuard:
     if not all(math.isfinite(v) for v in args):raise ValueError('Nonfinite actual dab')
     x,y,r=args[:3];aspect=args[9]
     if r<0 or aspect!=1:raise ValueError('Unsupported actual dab geometry')
-    extent=r+1.0 # actual radius already includes brush AA adjustment
-    if ((ox>0 and x-extent<0) or (oy>0 and y-extent<0) or (ox+w<fw and x+extent>w) or (oy+h<fh and y+extent>h)):
+    f32=lambda value:a.F(value).value
+    extent=f32(r+1.0) # surface float32 fringe and inclusive integer bbox
+    left=math.floor(f32(x-extent));right=math.floor(f32(x+extent));top=math.floor(f32(y-extent));bottom=math.floor(f32(y+extent))
+    if ((ox>0 and left<0) or (oy>0 and top<0) or (ox+w<fw and right>=w) or (oy+h<fh and bottom>=h)):
      raise ValueError('Actual dab exceeds internal ROI edge; entire stroke rejected')
     return self.delegate(surface,*args)
    except BaseException as exc:

@@ -98,3 +98,9 @@ A failure publishing the receipt after pins must fail the CI setup, not be treat
 as success. Package origin/signature verification belongs to the official apt
 installation step; dpkg inventory alone is not an authenticity proof. This is an
 explicit fresh CI configuration, not an automatic fallback for saved replay hashes.
+
+## Optional classic/dry_brush (local pending integration)
+
+`dry_brush.myb` preserves all settings of upstream `mypaint/mypaint-brushes` classic brush blob `2f3296d31c60f49020f02fbf54955d8ac9dda15b`. The saved file appends exactly one final LF to those upstream bytes (5655 vs5654 bytes), so its Git blob is `fd096bfea93da88dc3164b6ceffa26c8f352332f` and pinned SHA256 is `57786e87241e977e90873ab1d5a05bdf0228a299cda41b328b97ff01fccff6af`. Fresh upstream content and parsed JSON equality were checked; no preset values were changed and the pinned file is not silently rewritten. The bundled upstream `brushes-Licenses.dep5` assigns CC0 to `brushes/*`; this is not a claim that every file of the upstream repository is CC0.
+
+Default pointy remains unchanged. Dry has random radius/offset and tracking and therefore does not use pointy's static ROI bound. It requires cropped native support and a separately bounded proposed ROI, with every actual dab guarded; any interior escape rejects the complete stroke. A128px proposal padding is not a mathematical radius guarantee. No arbitrary preset path is accepted. Selected preset name/hash, actual inputs and guard outcome are retained with the immutable raster. Same-machine repetition has been checked; cross-platform random replay equality has not.

@@ -31,7 +31,7 @@ Result<MergedPlan> plan(const DocumentSnapshot& s,MergedBudget budget){
  if(!tileCount)return tileCount.error();
  // Snapshot validation, planner preparation and render preparation each scan once.
  // Account four scans conservatively; no per-tile hashing with prepared views.
- for(const auto& [id,node]:*s.nodes)if(node.stage==croppedRaster::Stage){
+ for(const auto& [id,node]:*s.nodes)if(croppedRaster::isStage(node.stage)){
   (void)id;const auto& raw=s.resources->at(node.sourceResource);std::uint64_t scanned=raw.bytes->size();
   for(const auto dep:raw.dependencies)if(!addWithin(scanned,s.resources->at(dep).bytes->size(),budget.maxRasterWork))return error(ErrorCode::BudgetExceeded,"merged.crop-validation-work");
   const auto repeats=checkedMultiply(scanned,4);
@@ -63,7 +63,7 @@ Result<MergedPlan> plan(const DocumentSnapshot& s,MergedBudget budget){
  for(const auto& [id,node]:*s.nodes)if(node.kind==NodeKind::Layer && layerVisible(s,id))
   if(!addWithin(work,pixels.value(),budget.maxRasterWork))return error(ErrorCode::BudgetExceeded,"merged.composite-work-limit");
  for(const auto& e:*s.eventIndex){
-  if(s.nodes->contains(e.layerId) && (s.nodes->at(e.layerId).stage==LineartStage || s.nodes->at(e.layerId).stage==croppedRaster::Stage))return error(ErrorCode::UnsupportedFeature,"lineart.paint-events");
+  if(s.nodes->contains(e.layerId) && (s.nodes->at(e.layerId).stage==LineartStage || croppedRaster::isStage(s.nodes->at(e.layerId).stage)))return error(ErrorCode::UnsupportedFeature,"lineart.paint-events");
   auto b=strokeBounds(e);if(!b)return b.error();
   const auto& r=b.value();
   const auto nx=std::uint64_t(tileAt(r.x+std::int64_t(r.width)-1)-tileAt(r.x)+1);
@@ -90,7 +90,7 @@ Result<MergedPlan> plan(const DocumentSnapshot& s,MergedBudget budget){
  }
  out.estimatedBytes=out.mergedBytes;
  // Index map nodes/vectors, candidate copies, bounds and node traversal allowance.
- const auto cropCount=std::count_if(s.nodes->begin(),s.nodes->end(),[](const auto& item){return item.second.stage==croppedRaster::Stage;});
+ const auto cropCount=std::count_if(s.nodes->begin(),s.nodes->end(),[](const auto& item){return croppedRaster::isStage(item.second.stage);});
  // Only cropped layers allocate entries in PreparedViews; legacy nodes retain
  // their original128-byte plan estimate. Do not charge every old layer for ROI.
  const auto indexBytes=out.indexEntries*256+s.eventIndex->size()*128+s.nodes->size()*128+std::uint64_t(cropCount)*256+65536;
@@ -122,7 +122,7 @@ Result<MergedDocument> renderMergedDocument(const DocumentSnapshot& s,EventLimit
    for(std::uint64_t y=0;y<size.height;y+=TileSide)for(std::uint64_t x=0;x<size.width;x+=TileSide){
     if(stop.stop_requested())return error(ErrorCode::Cancelled,"merged.cancelled");
     Rect rect{std::int64_t(x),std::int64_t(y),std::min<std::uint64_t>(TileSide,size.width-x),std::min<std::uint64_t>(TileSide,size.height-y)};
-    const bool cropped=s.nodes->at(id).stage==croppedRaster::Stage;
+    const bool cropped=croppedRaster::isStage(s.nodes->at(id).stage);
     const bool raster=s.nodes->at(id).stage==LineartStage || cropped;
     Result<TileData> tile=error(ErrorCode::UnsupportedFeature,"lineart.tile");
     if(raster){
@@ -143,7 +143,7 @@ Result<MergedDocument> renderMergedDocument(const DocumentSnapshot& s,EventLimit
      const auto sa=(unsigned(src.bytes[from+3])*opacity+127)/255;if(!sa)continue;
      const auto da=unsigned(dest.bytes[to+3]),den=sa*255+da*(255-sa);
      for(unsigned c=0;c<3;c++){
-      if(raster){
+      if(raster && s.nodes->at(id).blend==BlendMode::Multiply){
        const std::uint64_t cs=src.bytes[from+c],cb=dest.bytes[to+c];
        const auto numerator=cs*sa*(255-da)*255+cb*da*(255-sa)*255+cs*cb*sa*da;
        const auto divisor=std::uint64_t(den)*255;

@@ -434,11 +434,14 @@ def exercise_mypaint(page, output, width=512, height=512):
     initial=click_post(page,page.locator('#nativeNew'),'/projects',201)
     assert 'mypaint_ink' in initial['capabilities'],initial.get('mypaint_status')
     page.locator('#nativeBrush').select_option('mypaint_ink')
+    expect(page.locator('#nativeMyPaintColor')).to_be_enabled()
     page.locator('#nativePen').check()
     expect(page.locator('#nativePenWidth')).to_be_disabled()
     expect(page.locator('#nativeColor')).to_be_disabled()
     before=preview(page,output/'before.png');state=initial
     for index,curve in enumerate([[(.20,.38),(.36,.31),(.57,.31),(.77,.39)],[(.20,.40),(.37,.51),(.58,.57),(.75,.57)]]):
+        tint='#000000' if index==0 else '#cc2244'
+        page.locator('#nativeMyPaintColor').evaluate('(e,color)=>{e.value=color;e.dispatchEvent(new Event("input",{bubbles:true}))}',tint)
         image=page.locator('#nativePreview');image.scroll_into_view_if_needed();box=image.bounding_box();assert box
         points=[]
         scale=min(box['width']/width,box['height']/height)
@@ -469,12 +472,16 @@ def exercise_mypaint(page, output, width=512, height=512):
     png=download(page,'Export painting PNG',output,'painting.png')
     ora=download(page,'Export painted layers ORA',output,'painting.ora')
     assert b'mypaint-pointy-ink-raster-v1' in draw.read_bytes()
+    assert b'#CC2244' in draw.read_bytes(), 'explicit tint must persist in replay metadata'
+    with Image.open(png) as exported:
+        assert exported.size==(width,height)
+        assert any(r>g+30 and r>b+30 and a>0 for r,g,b,a in exported.convert('RGBA').getdata()), 'colored ink missing from actual PNG'
     click_post(page,page.locator('#nativeClose'),'/close');page.locator('#nativeFile').set_input_files(draw)
     reopened=click_post(page,page.locator('#nativeImport'),'/import',201)
     assert preview(page,output/'reopened.png')==after
     added=[n for n in reopened['nodes'] if n['name']=='MyPaint ink (experimental raster)']
     assert len(added)==2 and all(n['locked'] and n['blend']==1 for n in added)
-    receipt={'actual_chromium_mouse':True,'real_mypaint_worker':True,'independent_locked_layers':2,'undo_redo':True,'download_reopen_pixel_equal':True,'manifest_in_draw':True,'canvas':[width,height],'scope':'actual native canvas with local technical eyelid strokes; not finished artwork'}
+    receipt={'actual_chromium_mouse':True,'real_mypaint_worker':True,'independent_locked_layers':2,'ink_colors':['#000000','#CC2244'],'actual_colored_png':True,'undo_redo':True,'download_reopen_pixel_equal':True,'manifest_in_draw':True,'canvas':[width,height],'scope':'actual native canvas with local technical eyelid strokes; not finished artwork'}
     (output/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n');return receipt
 
 

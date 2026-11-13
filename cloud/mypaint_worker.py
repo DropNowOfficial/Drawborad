@@ -27,6 +27,25 @@ def load_pins():
  if not isinstance(pins,dict) or set(pins)!=set(PATHS) or any(not isinstance(v,str) or re.fullmatch(r'[0-9a-f]{64}',v) is None for v in pins.values()):raise ValueError('Invalid MyPaint pins schema')
  return pins
 
+DRY_SHA='57786e87241e977e90873ab1d5a05bdf0228a299cda41b328b97ff01fccff6af'
+def preset_name(value='pointy_ink'):
+ if type(value)!=str or value not in ('pointy_ink','dry_brush'):raise ValueError('Unsupported MyPaint preset')
+ return value
+def preset_path(name):return DATA/(preset_name(name)+'.myb')
+def selected_pins(name):
+ name=preset_name(name);pins=load_pins()
+ if name=='dry_brush':
+  if sha(preset_path(name))!=DRY_SHA:raise ValueError('Dry brush preset hash mismatch')
+  pins=dict(pins,preset=DRY_SHA)
+ return pins
+def dry_plan(canvas,points,scaled=False):
+ w,h=canvas;pad=128
+ x=max(0,math.floor(min(p['x'] for p in points))-pad);y=max(0,math.floor(min(p['y'] for p in points))-pad)
+ right=min(w,math.ceil(max(p['x'] for p in points))+pad+1);bottom=min(h,math.ceil(max(p['y'] for p in points))+pad+1)
+ rw,rh=right-x,bottom-y
+ if max(rw,rh)>2048 or rw*rh>1048576:raise ValueError('Scaled MyPaint ROI exceeds budget' if scaled else 'Dry brush ROI exceeds budget')
+ return [x,y,rw,rh],[dict(p,x=p['x']-x,y=p['y']-y) for p in points],{'policy':'input bbox plus128px; NOT a static radius guarantee; actual dab guard rejects any internal escape','padding':pad}
+
 def available(width=None,height=None):
  if not sys.platform.startswith('linux') or resource is None:return False,'MyPaint experiment currently supports Linux workers only; existing brushes remain available.'
  try:
@@ -36,10 +55,39 @@ def available(width=None,height=None):
   import importlib.util
   if importlib.util.find_spec('PIL') is None:return False,'PNG encoder unavailable.'
   if width is not None and (type(width)!=int or type(height)!=int or min(width,height)<1 or max(width,height)>2048 or width*height>1048576):return False,'MyPaint requires ≤ 1,048,576 pixels and ≤ 2048 per axis; canvas is not resized.'
-  return True,'Black pointy ink; preset pressure/size; each stroke is a separate locked Multiply layer.'
+  return True,'Optional MyPaint presets with constant-color tint; preset pressure/size; each stroke is a separate locked Multiply layer.'
  except (OSError,ValueError,KeyError):return False,'Optional pinned MyPaint runtime is unavailable; no packages are installed automatically.'
+def ink_color(value='#000000'):
+ if type(value)!=str or re.fullmatch(r'#[0-9a-fA-F]{6}',value) is None:raise ValueError('MyPaint color must be #RRGGBB.')
+ return value.upper()
+def paint_mode(value='multiply'):
+ if type(value)!=str or value not in ('multiply','normal'):raise ValueError('MyPaint paint_mode must be multiply or normal')
+ return value
+def radius_scale(value=1):
+ if type(value) not in (int,float) or not math.isfinite(value) or not .25<=value<=8:raise ValueError('MyPaint radius_scale must be a finite number from 0.25 to 8')
+ return value
+def recolor_record(record,body):
+ scale=radius_scale(body.get('radius_scale',1))
+ if scale!=1:
+  record['radius_scale']=scale
+  record['width_policy']='radius logarithmic base offset by ln(radius_scale); pressure mappings unchanged; not pixel width'
+ record['preset']=preset_name(body.get('preset','pointy_ink'));record['pins']=selected_pins(record['preset'])
+ if record['preset']=='dry_brush':record['backend']='mypaint-dry-brush-raster-v1'
+ color=ink_color(body.get('color','#000000'))
+ if color!='#000000':
+  record['color']=color
+  record['recolor_policy']='constant RGB after black grayscale coverage extraction; alpha unchanged; Multiply ink, not pigment mixing'
+ if paint_mode(body.get('paint_mode','multiply'))=='normal':
+  record['paint_mode']='normal'
+  record['recolor_policy']='constant RGB after black grayscale coverage extraction; alpha unchanged; Normal source-over paint, not pigment mixing'
+ return record
+
 def validate_request(body,state):
- if set(body)!={'type','brush','expected_revision','points'} or body.get('type')!='draw_stroke' or body.get('brush')!='mypaint_ink':raise ValueError('Invalid MyPaint fields; color/width/layer overrides are not supported.')
+ if set(body)-{'color','preset','paint_mode','radius_scale'}!={'type','brush','expected_revision','points'} or body.get('type')!='draw_stroke' or body.get('brush')!='mypaint_ink':raise ValueError('Invalid MyPaint fields; width/layer overrides are not supported.')
+ ink_color(body.get('color','#000000'))
+ preset_name(body.get('preset','pointy_ink'))
+ paint_mode(body.get('paint_mode','multiply'))
+ radius_scale(body.get('radius_scale',1))
  revision=body['expected_revision']
  if not isinstance(revision,str) or revision!=state.get('revision'):raise ValueError('Stale MyPaint revision.')
  points=body['points'];w,h=dimensions(state['width'],state['height'])
@@ -55,12 +103,16 @@ def validate_request(body,state):
 def _limits():
  resource.setrlimit(resource.RLIMIT_AS,(256*1024*1024,256*1024*1024));resource.setrlimit(resource.RLIMIT_CPU,(10,10))
 def render_legacy(body,state,folder,cancel,guard_geometry=None):
+ if radius_scale(body.get('radius_scale',1))!=1:raise ValueError('Scaled MyPaint requires cropped native support')
+ if body.get('paint_mode','multiply')!='multiply':raise ValueError('Normal paint requires new cropped native support')
+ if body.get('preset','pointy_ink')!='pointy_ink':raise ValueError('Dry brush requires guarded cropped native support')
  width,height=dimensions(state['width'],state['height']);state=dict(state,width=width,height=height)
  points=validate_request(body,state);ok,reason=available(width,height)
  if not ok:raise ValueError(reason)
  if cancel.is_set():raise RuntimeError('MyPaint cancelled; nothing added.')
  folder=Path(folder);request=folder/'request.json';png=folder/'stroke.png';manifest=folder/'manifest.json'
  record={'backend':'mypaint-pointy-ink-raster-v1','pins':load_pins(),'worker_sha256':sha(__file__),'canvas':[state['width'],state['height']],'color':'#000000','preset':'pointy_ink','width_policy':'original preset; pressure not equivalent to native width','encoding':'RGBA15 over opaque white -> RGBA8 nearest, no ICC transform','initial_zero_pressure_seconds':10,'points':points,'expected_revision':body['expected_revision'],'document_id':state.get('document_id')}
+ recolor_record(record,body)
  record['guard_geometry']=guard_geometry or {'full_canvas':[width,height],'origin':[0,0]}
  request.write_text(json.dumps(record,allow_nan=False));proc=None
  try:
@@ -81,8 +133,8 @@ def render_legacy(body,state,folder,cancel,guard_geometry=None):
 
 def worker(request,png,manifest):
  m=json.loads(Path(request).read_text());w,h=m['canvas'];ok,reason=available(w,h)
- if not ok or m['pins']!=load_pins() or m['worker_sha256']!=sha(__file__):raise ValueError(reason or 'Worker pins mismatch')
- validate_request({'type':'draw_stroke','brush':'mypaint_ink','expected_revision':m['expected_revision'],'points':m['points']},{'width':w,'height':h,'revision':m['expected_revision']})
+ if not ok or m['pins']!=selected_pins(m.get('preset','pointy_ink')) or m['worker_sha256']!=sha(__file__):raise ValueError(reason or 'Worker pins mismatch')
+ validate_request({'type':'draw_stroke','brush':'mypaint_ink','expected_revision':m['expected_revision'],'points':m['points'],'color':m.get('color','#000000'),'preset':m.get('preset','pointy_ink'),'paint_mode':m.get('paint_mode','multiply'),'radius_scale':m.get('radius_scale',1)},{'width':w,'height':h,'revision':m['expected_revision']})
  import importlib.util
  spec=importlib.util.spec_from_file_location('mypaint_pinned_abi',DATA/'abi15.py');a=importlib.util.module_from_spec(spec);spec.loader.exec_module(a)
  from PIL import Image,PngImagePlugin
@@ -90,6 +142,7 @@ def worker(request,png,manifest):
  if not surface:raise RuntimeError('MyPaint surface allocation failed')
  iface=a.interface(surface)
  if iface!=surface or a.C.cast(surface,a.C.POINTER(a.Tiled)).contents.tile_size!=64:raise RuntimeError('Unsupported MyPaint surface ABI')
+ if a.C.cast(surface,a.C.POINTER(a.Tiled)).contents.symmetry!=0:raise RuntimeError('Unexpected surface symmetry; refusing render')
  nx=(w+63)//64;ny=(h+63)//64
  for ty in range(ny):
   for tx in range(nx):
@@ -97,7 +150,12 @@ def worker(request,png,manifest):
    for i in range(64*64*4):r.buffer[i]=32768
    a.end(surface,a.C.byref(r))
  b=a.bnew()
- if not b or a.load(b,PATHS['preset'].read_bytes())!=1:raise RuntimeError('MyPaint preset load failed')
+ if not b or a.load(b,preset_path(m['preset']).read_bytes())!=1:raise RuntimeError('MyPaint preset load failed')
+ scale=radius_scale(m.get('radius_scale',1))
+ if scale!=1:
+  getbase=a.bind('mypaint_brush_get_base_value',[a.P,a.I],a.F)
+  setting=a.setting(b'radius_logarithmic');base=float(getbase(b,setting));a.setbase(b,setting,base+math.log(scale))
+  m['radius_override']={'preset_base':base,'actual_base':float(getbase(b,setting)),'operation':'preset base + ln(radius_scale); pressure mappings unchanged; not pixel width'}
  for key in ['color_h','color_s','color_v']:a.setbase(b,a.setting(key.encode()),0)
  from dab_guard import DabGuard
  guard=DabGuard(a,iface,w,h,m['guard_geometry'])
@@ -124,11 +182,16 @@ def worker(request,png,manifest):
      for c in range(4):rgba[j+c]=max(0,min(255,round(r.buffer[k+c]*255/32768)))
    a.end(surface,a.C.byref(r))
  a.sfree(iface);m['white_surface_rgba_sha256']=hashlib.sha256(rgba).hexdigest()
+ color=ink_color(m.get('color','#000000'));rgb=tuple(int(color[i:i+2],16) for i in (1,3,5))
+ has_ink=False
  for at in range(0,len(rgba),4):
   r,g,b,alpha=rgba[at:at+4]
   if r!=g or g!=b or alpha!=255:raise ValueError('Black ink worker requires opaque grayscale source')
-  rgba[at:at+4]=bytes((0,0,0,255-r))
+  has_ink=has_ink or r<255
+  rgba[at:at+4]=bytes((*rgb,255-r))
+ if not has_ink:raise ValueError('MyPaint produced no visible ink; single clicks or very short strokes are not supported by this preset. Draw a longer stroke with pressure.')
  m['rgba_sha256']=hashlib.sha256(rgba).hexdigest();m['alpha_conversion']='black RGB; alpha=255-gray; white recomposite exact'
+ if color!='#000000':m['alpha_conversion']='constant specified RGB; alpha=255-gray; unchanged black ink coverage'
  m['actual_input_policy']='fresh brush; dt=max(.001, delta_ms/1000); zero-pressure lift .02s'
  # No-clobber even inside the private temporary directory.
  fd,tmp=tempfile.mkstemp(suffix='.png',dir=Path(png).parent);os.close(fd)
@@ -152,13 +215,14 @@ def available_crop(width,height):
  return True,'Experimental cropped ink: unchanged full canvas; each stroke ROI <= 1,048,576 pixels / 2048 per axis; oversized strokes rejected.'
 
 def render(body,state,folder,cancel):
+ if body.get('paint_mode','multiply')=='normal' and not {'append_brush_crop','append_brush_normal'}.issubset(state.get('capabilities',[])):raise ValueError('Normal paint requires explicit native capability; nothing added')
  if 'append_brush_crop' not in state.get('capabilities',[]):return render_legacy(body,state,folder,cancel)
  w,h=dimensions(state['width'],state['height']);validate_request(body,state)
  ok,reason=available_crop(w,h)
  if not ok:raise ValueError(reason)
  if cancel.is_set():raise RuntimeError('MyPaint cancelled')
  folder=Path(folder);request=folder/'global-request.json';png=folder/'stroke.png';manifest=folder/'crop-manifest.json'
- record={'body':body,'state':{'width':w,'height':h,'revision':state['revision'],'document_id':state['document_id']},'pins':load_pins(),'worker_sha256':sha(__file__),'helper_sha256':{name:sha(Path(__file__).with_name(name)) for name in ['crop_plan.py','dab_guard.py']}}
+ record={'body':body,'state':{'width':w,'height':h,'revision':state['revision'],'document_id':state['document_id']},'pins':selected_pins(body.get('preset','pointy_ink')),'worker_sha256':sha(__file__),'helper_sha256':{name:sha(Path(__file__).with_name(name)) for name in ['crop_plan.py','dab_guard.py']}}
  request.write_text(json.dumps(record,allow_nan=False));proc=None
  try:
   proc=subprocess.Popen([sys.executable,__file__,'crop',str(request),str(png),str(manifest)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=dict(os.environ,OMP_NUM_THREADS='1'))
@@ -179,17 +243,22 @@ def crop_child(request,png,manifest):
  from crop_plan import plan
  import io,contextlib
  record=json.loads(Path(request).read_text());body=record['body'];state=record['state']
- if record['pins']!=load_pins() or record['worker_sha256']!=sha(__file__) or record['helper_sha256']!={name:sha(Path(__file__).with_name(name)) for name in ['crop_plan.py','dab_guard.py']}:raise ValueError('Crop pins mismatch')
+ if record['pins']!=selected_pins(body.get('preset','pointy_ink')) or record['worker_sha256']!=sha(__file__) or record['helper_sha256']!={name:sha(Path(__file__).with_name(name)) for name in ['crop_plan.py','dab_guard.py']}:raise ValueError('Crop pins mismatch')
  validate_request(body,state);w,h=dimensions(state['width'],state['height'])
  ok,reason=available_crop(w,h)
  if not ok:raise ValueError(reason)
- roi,local,proof=plan([w,h],body['points']);x,y,rw,rh=roi
+ if body.get('radius_scale',1)!=1:roi,local,proof=dry_plan([w,h],body['points'],scaled=True)
+ elif body.get('preset','pointy_ink')=='dry_brush':roi,local,proof=dry_plan([w,h],body['points'])
+ else:roi,local,proof=plan([w,h],body['points'])
+ x,y,rw,rh=roi
  m={'backend':'mypaint-pointy-ink-raster-v1','pins':load_pins(),'worker_sha256':sha(__file__),'canvas':[rw,rh],'color':'#000000','preset':'pointy_ink','width_policy':'original preset; pressure not equivalent to native width','encoding':'RGBA15 over opaque white -> RGBA8 nearest, no ICC transform','initial_zero_pressure_seconds':10,'points':local,'expected_revision':body['expected_revision'],'document_id':state['document_id'],'guard_geometry':{'full_canvas':[w,h],'origin':[x,y]}}
+ recolor_record(m,body)
  local_request=Path(request).with_name('request.json');local_manifest=Path(request).with_name('manifest.json')
  local_request.write_text(json.dumps(m,allow_nan=False))
  # Same bounded child, not a parent-thread render or a second unbounded process.
  with contextlib.redirect_stdout(io.StringIO()):worker(local_request,png,local_manifest)
  metadata={'helper_sha256':record['helper_sha256'],'prototype':'mypaint-cropped-study-v1','full_canvas':[w,h],'origin':[x,y],'roi_size':[rw,rh],'original_global_points':body['points'],'translated_local_points':local,'conservative_bound':proof,'worker_manifest':json.loads(local_manifest.read_text()),'png_sha256':sha(png),'canvas_resized':False,'full_canvas_rgba_allocated':False}
+ if body.get('preset','pointy_ink')=='dry_brush' or body.get('radius_scale',1)!=1:metadata['runtime_guarded_proposal']=metadata.pop('conservative_bound')
  with open(manifest,'x') as out:json.dump(metadata,out,sort_keys=True,separators=(',',':'),allow_nan=False)
  print(json.dumps({'png_sha256':sha(png),'manifest_sha256':sha(manifest)}))
 

@@ -6,10 +6,13 @@ const c=vm.createContext({by,window:{addEventListener(){}},nativeFillTarget:()=>
 vm.runInContext("let nativeState={id:'p',revision:'7',width:'100',height:'50',stroke_count:0,nodes:[],strokes:[],capabilities:['mypaint_ink']};let nativeSelectedNodeId=null,nativeBusy=false,nativePenDrag=null,nativeMyPaintRendering=false,nativePreviewKey='p:7:0';const nativeActionIds=[];",c);
 vm.runInContext(html.match(/\/\/ PEN_HELPERS_BEGIN([\s\S]*?)\/\/ PEN_HELPERS_END/)[1],c);
 vm.runInContext(html.slice(html.indexOf('function nativePenReady()'),html.indexOf('function nativeError(')),c);
+vm.runInContext(html.match(/\/\/ MASK_HELPERS_BEGIN([\s\S]*?)\/\/ MASK_HELPERS_END/)[1],c);
+vm.runInContext(html.match(/\/\/ COLOR_HELPERS_BEGIN([\s\S]*?)\/\/ COLOR_HELPERS_END/)[1],c);
+vm.runInContext(html.match(/\/\/ BOUNDARY_HELPERS_BEGIN([\s\S]*?)\/\/ BOUNDARY_HELPERS_END/)[1],c);
 vm.runInContext(html.slice(html.indexOf('function nativeControls()'),html.indexOf('async function nativePost(')),c);
 vm.runInContext(html.match(/\/\/ PEN_INPUT_BEGIN([\s\S]*?)\/\/ PEN_INPUT_END/)[1],c);
-by('nativeMyPaintPressure').value='0.35';by('nativeBrush').value='mypaint_ink';by('nativePen').checked=true;by('nativePenWidth').value='NaN';by('nativeColor').value='#ff0000';c.nativeControls();
-assert.equal(c.nativePenReady(),true,'no selected editable layer required');assert.equal(by('nativePenWidth').disabled,true);assert.equal(by('nativeColor').disabled,true);assert.equal(by('nativeMyPaintOption').disabled,false);
+by('nativeMyPaintColor').value='#000000';by('nativeMyPaintPressure').value='0.35';by('nativeBrush').value='mypaint_ink';by('nativePen').checked=true;by('nativePenWidth').value='NaN';by('nativeColor').value='#ff0000';c.nativeControls();
+assert.equal(c.nativePenReady(),true,'no selected editable layer required');assert.equal(by('nativePenWidth').disabled,true);assert.equal(by('nativeColor').disabled,true);assert.equal(by('nativeMyPaintOption').disabled,false);assert.equal(by('nativeMyPaintColor').disabled,false);
 const e=(x,t,extra={})=>({clientX:x,clientY:50,timeStamp:t,pointerId:1,button:0,pointerType:'pen',pressure:.4,preventDefault(){},...extra});
 (async()=>{
  by('nativePreview').onpointerdown(e(20,100));by('nativePreview').onpointermove(e(80,150,{getCoalescedEvents:()=>[e(40,120),e(80,150)]}));by('nativePreview').onpointerup(e(80.01,151));await Promise.all(pending);
@@ -18,8 +21,20 @@ const e=(x,t,extra={})=>({clientX:x,clientY:50,timeStamp:t,pointerId:1,button:0,
  by('nativePreview').onpointerdown(e(20,200));by('nativePreview').onpointercancel();assert.equal(calls.length,1);
  by('nativePreview').onpointerdown(e(20,300));by('nativePreview').onpointermove(e(300,350));by('nativePreview').onpointerup(e(80,400));assert.equal(calls.length,1,'outside cancels whole stroke');
  by('nativePreview').onpointerdown(e(20,450,{pointerType:'mouse',pressure:1}));by('nativePreview').onpointerup(e(80,470,{pointerType:'mouse',pressure:1}));await Promise.all(pending);assert.equal(calls.at(-1).points[0].pressure,.35);
+ by('nativeMyPaintColor').value='#CC2244';by('nativePreview').onpointerdown(e(20,480));by('nativePreview').onpointerup(e(80,490));await Promise.all(pending);assert.equal(calls.at(-1).color,'#cc2244');
+ const count=calls.length;by('nativeMyPaintColor').value='bad';by('nativePreview').onpointerdown(e(20,495));assert.equal(calls.length,count);assert.ok(errors.includes('Choose a valid MyPaint ink color.'));by('nativeMyPaintColor').value='#000000';
+
+ vm.runInContext("nativeState.mypaint_presets=['pointy_ink','dry_brush']",c);c.nativeControls();assert.equal(by('nativeDryBrushOption').disabled,false);
+ by('nativeMyPaintPreset').value='dry_brush';by('nativePreview').onpointerdown(e(20,496));by('nativeMyPaintPreset').value='pointy_ink';by('nativePreview').onpointerup(e(80,498));await Promise.all(pending);assert.equal(calls.at(-1).preset,'dry_brush','pointerdown freezes preset');
+ vm.runInContext('delete nativeState.mypaint_presets',c);c.nativeControls();assert.equal(by('nativeDryBrushOption').disabled,true);by('nativeMyPaintPreset').value='dry_brush';const beforeUnavailable=calls.length;by('nativePreview').onpointerdown(e(20,499));assert.equal(calls.length,beforeUnavailable);assert.equal(by('nativeStrokeDraft').hidden,true,'rejected preset must not reveal draft');assert.ok(errors.some(x=>x.includes('Selected MyPaint preset unavailable')));by('nativeMyPaintPreset').value='pointy_ink';
+
+ vm.runInContext("nativeState.mypaint_paint_modes=['multiply','normal']",c);c.nativeControls();assert.equal(by('nativeNormalPaintOption').disabled,false);by('nativeMyPaintBlend').value='normal';by('nativePreview').onpointerdown(e(20,499));by('nativeMyPaintBlend').value='multiply';by('nativePreview').onpointerup(e(80,500));await Promise.all(pending);assert.equal(calls.at(-1).paint_mode,'normal','pointerdown freezes paint mode');
+ vm.runInContext('delete nativeState.mypaint_paint_modes',c);c.nativeControls();assert.equal(by('nativeNormalPaintOption').disabled,true);by('nativeMyPaintBlend').value='normal';const beforeMode=calls.length;by('nativePreview').onpointerdown(e(20,501));assert.equal(calls.length,beforeMode);assert.ok(errors.some(x=>x.includes('Selected MyPaint blend unavailable')));assert.equal(by('nativeStrokeDraft').hidden,true);by('nativeMyPaintBlend').value='multiply';
+
+ vm.runInContext('nativeState.mypaint_radius_scale_range=[.25,8]',c);c.nativeControls();assert.equal(by('nativeMyPaintRadiusScale').disabled,false);by('nativeMyPaintRadiusScale').value='4';by('nativePreview').onpointerdown(e(20,502));by('nativeMyPaintRadiusScale').value='1';by('nativePreview').onpointerup(e(80,503));await Promise.all(pending);assert.equal(calls.at(-1).radius_scale,4,'pointerdown freezes scale');
+ vm.runInContext('delete nativeState.mypaint_radius_scale_range',c);c.nativeControls();assert.equal(by('nativeMyPaintRadiusScale').disabled,true);by('nativeMyPaintRadiusScale').value='2';const priorScale=calls.length;by('nativePreview').onpointerdown(e(20,504));assert.equal(calls.length,priorScale);assert.ok(errors.some(x=>x.includes('supported radius multiplier')));by('nativeMyPaintRadiusScale').value='1';
  fail=true;by('nativePreview').onpointerdown(e(20,500));by('nativePreview').onpointerup(e(80,550));await Promise.all(pending);assert.ok(errors.includes('worker unavailable'));assert.equal(vm.runInContext('nativeMyPaintRendering',c),false);assert.equal(by('nativeCancelBrush').disabled,true);
- vm.runInContext('nativeState.capabilities=[]',c);c.nativeControls();assert.equal(by('nativeMyPaintOption').disabled,true);assert.equal(c.nativePenReady(),false);
+ vm.runInContext('nativeState.capabilities=[]',c);c.nativeControls();assert.equal(by('nativeMyPaintOption').disabled,true);assert.equal(c.nativePenReady(),false);assert.equal(by('nativeMyPaintColor').disabled,true);
  console.log('PASS actual MyPaint page pointer code: no selection, disabled width/color, exact payload/time, coalesced/up, cancel/error/capability');
 })().catch(e=>{console.error(e);process.exitCode=1});
 // Raster content is not an empty native-event layer. Evaluate the actual row expression.
