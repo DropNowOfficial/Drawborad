@@ -30,6 +30,16 @@
 #include <memory>
 namespace drawborad {
 namespace {
+constexpr const char* MyPaintFolderStage="drawborad.mypaint.folder.v1";
+bool myPaintFolderEligible(const DocumentSnapshot& s,NodeId id) {
+    const auto it=s.nodes->find(id);if(it==s.nodes->end())return false;
+    const auto& n=it->second;const auto& root=s.nodes->at(Document::rootId());
+    return n.kind==NodeKind::Group && n.stage==MyPaintFolderStage && n.parent==Document::rootId() &&
+        !root.children.empty() && root.children.back()==id && !root.locked && root.visible &&
+        n.visible && !n.locked && n.opacity==1 && n.blend==BlendMode::Normal &&
+        n.transform==LayerTransform{} && n.maskId.empty() && n.sourceResource.empty() && n.content.empty() &&
+        n.objectId.empty() && n.sourceKind==SourceKind::Reconstructed;
+}
 struct Failure { Error value; };
 template<class T> T checked(Result<T> result) {
     if (!result) throw Failure{result.error()};
@@ -132,7 +142,7 @@ public:
             nodes.append(QJsonObject{{"id",idText(id)},{"parent_id",idText(node.parent)},
                 {"object_id",idText(node.objectId)},{"name",QString::fromStdString(node.name)},
                 {"kind",int(node.kind)},{"stage",QString::fromStdString(node.stage)},
-                {"source_kind",int(node.sourceKind)},{"blend",int(node.blend)},{"children",children},
+                {"mypaint_folder_eligible",myPaintFolderEligible(s,id)},{"source_kind",int(node.sourceKind)},{"blend",int(node.blend)},{"children",children},
                 {"visible",node.visible},{"locked",node.locked},{"opacity",node.opacity},{"mask_supported",cropMask::supported(s,id)},{"stroke_mask",strokeMask}});
         }
         for(const auto& e:*s.eventIndex) {
@@ -143,7 +153,7 @@ public:
                 {"start_us",number(e.startUs)},{"end_us",number(e.endUs)},
                 {"geometry_count",number(e.geometry.size())}});
         }
-        QJsonArray capabilities{"recovery_checkpoint","reorder_layer","mouse_pressure_taper","duplicate_paint_layer","recolor_layer","recolor_stroke","set_properties","bucket_fill","add_fill_layer","draw_stroke","update_layer","undo","redo","save","save_copy","replay","png"};
+        QJsonArray capabilities{"mypaint_folder","recovery_checkpoint","reorder_layer","mouse_pressure_taper","duplicate_paint_layer","recolor_layer","recolor_stroke","set_properties","bucket_fill","add_fill_layer","draw_stroke","update_layer","undo","redo","save","save_copy","replay","png"};
         capabilities.append("smooth_ink");capabilities.append("ora");capabilities.append("append_brush_layer");capabilities.append("append_brush_crop");capabilities.append("append_brush_normal");capabilities.append("cropped_stroke_mask");capabilities.append("hidden_fill_boundary");
         return {{"document_id",idText(s.documentId)},{"revision",number(s.revision)},
             {"saved_revision",saved?QJsonValue(number(*saved)):QJsonValue(QJsonValue::Null)},
@@ -160,6 +170,7 @@ public:
             need(paintMode.isUndefined() || (paintMode.isString() && (paintMode.toString()=="multiply" || paintMode.toString()=="normal")),"brush-crop.paint-mode");
             const bool normal=paintMode.toString()=="normal";
             need(!normal || crop,"brush-crop.normal-requires-crop");
+            need(!p.contains("folder_id") || crop,"brush-folder.requires-crop");
             if(append) {
                 revision(p);
                 if(parseId(p.value("expected_document_id"))!=snapshot().documentId)
@@ -239,6 +250,11 @@ public:
                     need(guard.value("passed")==QJsonValue(true) && dabs.isDouble() && std::isfinite(dabCount) && dabCount>=0 && dabCount<=10000000 && std::floor(dabCount)==dabCount,"brush-crop.guard-proof");
                     need(worker.value("points").toArray()==locals && worker.value("canvas").toArray()==size,"brush-crop.worker-inputs");
                     auto command=checked((normal?croppedRaster::makeNormal:croppedRaster::make)(std::move(pixels.bytes),std::move(imported.encodedSource),std::move(manifestBytes),roi,current.spec.pixelSize.width,current.spec.pixelSize.height,newEventId(),{}));
+                    if(p.contains("folder_id")) {
+                        const auto folder=parseId(p.value("folder_id"));
+                        need(myPaintFolderEligible(current,folder),"brush-folder.not-top-neutral-unlocked");
+                        for(auto& op:command.operations)if(auto* add=std::get_if<AddNode>(&op))add->node.parent=folder;
+                    }
                     // Preflight before copying/applying the command. Shared resource IDs count once.
                     std::uint64_t total=0;constexpr std::uint64_t limit=256ull*1024*1024;
                     for(const auto& [id,res]:*current.resources) {
@@ -410,6 +426,11 @@ public:
                 command=checked(brush=="dry_ink" ? dryInkStrokeCommand(s,layer,event,samples,width.toDouble(),color)
                     : brush=="smooth_ink" ? smoothInkStrokeCommand(s,layer,event,samples,width.toDouble(),color)
                     : freehandStrokeCommand(s,layer,event,samples,width.toDouble(),color));
+            } else if(type=="add_mypaint_folder") {
+                const auto s=snapshot();LayerNode folder;folder.id=newEventId();folder.parent=Document::rootId();
+                folder.kind=NodeKind::Group;folder.stage=MyPaintFolderStage;folder.name="MyPaint stroke folder";
+                command.operations.emplace_back(AddNode{folder});
+                auto candidate=checked(Document::fromSnapshot(s));checked(candidate.apply(command,s.revision));checked(planMergedDocument(candidate.snapshot()));
             } else if(type=="reorder_layer") {
                 const auto s=snapshot();const auto id=parseId(p.value("layer_id"));
                 const auto it=s.nodes->find(id);
@@ -435,6 +456,8 @@ public:
                 if(p.contains("opacity")) {
                     const auto value=p.value("opacity");
                     need(value.isDouble() && std::isfinite(value.toDouble()) && value.toDouble()>=0 && value.toDouble()<=1,"session.layer-opacity");
+                    const auto s=snapshot();const auto node=s.nodes->find(id);
+                    need(node==s.nodes->end() || node->second.stage!=MyPaintFolderStage || value.toDouble()==1,"brush-folder.keep-neutral-opacity");
                     SetProperties properties;properties.id=id;properties.opacity=value.toDouble();
                     command.operations.emplace_back(properties);any=true;
                 }

@@ -17,6 +17,7 @@ class Element {
  constructor(){this.value='';this.files=[];this.children=[];this.dataset={};this.style={};this.attributes={};this.listeners={};this.disabled=false;this.textContent='';this.classList={toggle(){},remove(){}}}
  addEventListener(type,fn){(this.listeners[type] ||= []).push(fn)}
  dispatchEvent(event){this['on'+event.type]?.(event);for(const fn of this.listeners[event.type]||[])fn(event)}
+ append(...children){this.children.push(...children)}
  replaceChildren(...children){this.children=children;this.value=''}
  setAttribute(key,value){this.attributes[key]=value}
  querySelectorAll(){return []}
@@ -32,7 +33,7 @@ function setup(){
  const elements=new Map([...html.matchAll(/\bid="([^"]+)"/g)].map(([,id])=>[id,new Element()]));
  const get=id=>elements.get(id), requests=[], writes=[], storage=new Map([['drawborad.project',projectId]]);
  const harness={get,requests,writes,storage,respond:()=>unauthorized()};
- const context=vm.createContext({document:{getElementById:get},window:{addEventListener(){}},Event,
+ const context=vm.createContext({document:{getElementById:get,createElement:()=>new Element()},window:{addEventListener(){}},Event,
   localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>{writes.push([key,value]);storage.set(key,value)},removeItem:key=>storage.delete(key)},
   URL:{createObjectURL:()=> 'blob:synthetic-preview',revokeObjectURL(){}},setInterval:()=>1,clearInterval(){},console,
   fetch:async(url,opts={})=>{requests.push({url,opts});return harness.respond(url,opts)},

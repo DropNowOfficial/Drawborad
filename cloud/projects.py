@@ -176,13 +176,17 @@ class Projects:
         paint_mode=body.get('paint_mode','multiply')
         if paint_mode not in state.get('mypaint_paint_modes',['multiply']):fail(422,'unsupported','Selected MyPaint paint_mode unavailable; nothing added')
         if paint_mode=='normal' and not {'append_brush_crop','append_brush_normal'}.issubset(state.get('capabilities',[])):fail(422,'unsupported','Normal paint requires native support; nothing added')
+        folder_id=body.get('folder_id')
+        if 'folder_id' in body:
+            if 'mypaint_folder' not in state.get('capabilities',[]) or not isinstance(folder_id,str) or not any(n['id']==folder_id and n.get('mypaint_folder_eligible') for n in state.get('nodes',[])):fail(422,'invalid_input','Choose a visible unlocked topmost neutral MyPaint folder')
+        worker_body={k:v for k,v in body.items() if k!='folder_id'}
         document_id=state.get('document_id');project_id=self.active
         if not isinstance(document_id,str) or not document_id:fail(422,'unsupported','Native document identity unavailable')
         cancel=Event()
         with self.mypaint_gate:self.mypaint_cancel=cancel
         try:
             with tempfile.TemporaryDirectory(dir=self.root) as folder:
-                try:png,manifest=mypaint_worker.render(body,state,folder,cancel)
+                try:png,manifest=mypaint_worker.render(worker_body,state,folder,cancel)
                 except ValueError as e:fail(422,'invalid_input',str(e))
                 except (RuntimeError,OSError) as e:fail(422,'mypaint_failed',str(e))
                 with self.mypaint_gate:
@@ -193,6 +197,7 @@ class Projects:
                 if paint_mode=='normal' and not {'append_brush_crop','append_brush_normal'}.issubset(current.get('capabilities',[])):fail(422,'unsupported','Normal paint support changed; nothing added')
                 params=dict(path=str(png),manifest_path=str(manifest),expected_revision=body['expected_revision'],expected_document_id=document_id)
                 if paint_mode=='normal':params['paint_mode']='normal'
+                if folder_id is not None:params['folder_id']=folder_id
                 method='append_brush_layer'
                 if 'append_brush_crop' in state.get('capabilities',[]):
                     crop=json.loads(manifest.read_text());params.update(origin_x=str(crop['origin'][0]),origin_y=str(crop['origin'][1]));method='append_brush_crop'
@@ -355,7 +360,7 @@ def install_projects(app,config,authorized):
                 elif type(body['enabled'])!=bool or not node.get('stroke_mask'):fail(422,'invalid_input','Toggle requires an existing mask and boolean enabled')
                 params={k:v for k,v in body.items() if k!='type'}
                 return projects.state(projects.rpc(kind,**params))
-            fields={'reorder_layer':{'layer_id','direction'},'duplicate_paint_layer':{'layer_id'},'recolor_layer':{'layer_id','color'},'recolor_stroke':{'stroke_id','color'},
+            fields={'add_mypaint_folder':set(),'reorder_layer':{'layer_id','direction'},'duplicate_paint_layer':{'layer_id'},'recolor_layer':{'layer_id','color'},'recolor_stroke':{'stroke_id','color'},
                     'set_properties':{'node_id','visible','locked'},
                     'add_fill_layer':set(),
                     'bucket_fill':{'layer_id','x','y','tolerance','color','under_ink'},

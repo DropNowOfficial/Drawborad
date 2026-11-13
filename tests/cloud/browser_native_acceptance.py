@@ -434,6 +434,12 @@ def exercise_mypaint(page, output, width=512, height=512):
     initial=click_post(page,page.locator('#nativeNew'),'/projects',201)
     assert 'mypaint_ink' in initial['capabilities'],initial.get('mypaint_status')
     page.locator('#nativeBrush').select_option('mypaint_ink')
+    folder=None
+    if width==512:
+        initial=click_post(page,page.locator('#nativeNewInkFolder'),'/commands')
+        folder=next(n['id'] for n in initial['nodes'] if n.get('mypaint_folder_eligible'))
+        expect(page.locator('#nativeMyPaintFolder')).to_have_value(folder)
+        expect(page.locator('#nativeScope')).to_contain_text('MyPaint stroke folder')
     expect(page.locator('#nativeMyPaintColor')).to_be_enabled()
     page.locator('#nativePen').check()
     expect(page.locator('#nativePenWidth')).to_be_disabled()
@@ -464,6 +470,14 @@ def exercise_mypaint(page, output, width=512, height=512):
         assert len(state['nodes'])==len(initial['nodes'])+index+1
         assert state['strokes']==initial['strokes'],'raster strokes must not impersonate native events'
     after=preview(page,output/'after.png');assert after!=before
+    if folder:
+        assert len(next(n['children'] for n in state['nodes'] if n['id']==folder))==2
+        row=page.locator(f'[data-node-id="{folder}"]')
+        row.get_by_role('button',name='Expand',exact=True).click();expect(page.locator('#nativeNew')).to_be_enabled()
+        assert page.locator('[data-node-id]').count()==3
+        row.get_by_role('button',name='Collapse',exact=True).click();expect(page.locator('#nativeNew')).to_be_enabled()
+        assert page.locator('[data-node-id]').count()==1
+        assert preview(page)==after,'folding the UI must not alter pixels'
     click_post(page,page.locator('#nativeUndo'),'/undo');undone=preview(page,output/'undo.png');assert undone!=after
     click_post(page,page.locator('#nativeRedo'),'/redo');assert preview(page)==after
     saved=click_post(page,page.locator('#nativeSaveCopy'),'/save-copy',201)
@@ -481,7 +495,7 @@ def exercise_mypaint(page, output, width=512, height=512):
     assert preview(page,output/'reopened.png')==after
     added=[n for n in reopened['nodes'] if n['name']=='MyPaint ink (experimental raster)']
     assert len(added)==2 and all(n['locked'] and n['blend']==1 for n in added)
-    receipt={'actual_chromium_mouse':True,'real_mypaint_worker':True,'independent_locked_layers':2,'ink_colors':['#000000','#CC2244'],'actual_colored_png':True,'undo_redo':True,'download_reopen_pixel_equal':True,'manifest_in_draw':True,'canvas':[width,height],'scope':'actual native canvas with local technical eyelid strokes; not finished artwork'}
+    receipt={'actual_chromium_mouse':True,'real_mypaint_worker':True,'independent_locked_layers':2,'neutral_folder_ui_verified':bool(folder),'ink_colors':['#000000','#CC2244'],'actual_colored_png':True,'undo_redo':True,'download_reopen_pixel_equal':True,'manifest_in_draw':True,'canvas':[width,height],'scope':'actual native canvas with local technical eyelid strokes; not finished artwork'}
     (output/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n');return receipt
 
 
