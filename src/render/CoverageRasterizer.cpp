@@ -1,3 +1,4 @@
+#include "ContinuousEraserCoverage.h"
 #include "ChiselInkCoverage.h"
 #include "CoverageRasterizer.h"
 #include "FineLineCoverage.h"
@@ -41,6 +42,7 @@ Result<std::vector<std::uint16_t>> strokeCoverage(const StrokeEvent& e, Rect rec
         return error(ErrorCode::BudgetExceeded, "render.coverage-region");
     auto pixels=checkedMultiply(rect.width,rect.height); if(!pixels) return pixels.error();
     if (stop.stop_requested()) return error(ErrorCode::Cancelled,"render.cancelled");
+    if(e.engineVersion==22)return continuousEraserCoverage(e,rect,time,stop);
     if(e.engineVersion==21)return chiselInkCoverage(e,rect,time,stop);
     if(e.engineVersion==10 || e.engineVersion==19)return fineLineCoverage(e,rect,time,stop);
     if(e.engineVersion==12)return dryInkCoverage(e,rect,time,stop);

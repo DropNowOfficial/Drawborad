@@ -37,7 +37,7 @@ g++ -std=c++20 -O0 -Wall -Wextra -Wpedantic -Werror \
   tools/artwork/BuildCoverRegions.cpp \
   src/ui/{LayerStream,MergedDocument}.cpp \
   src/core/{LineartRaster,Document,DocumentSpec,CommandBus,Digest}.cpp \
-  src/render/{ReferenceRenderer,CoverageRasterizer,FineLineCoverage,DryInkCoverage,ChiselInkCoverage,PixelBlend}.cpp \
+  src/render/{ReferenceRenderer,CoverageRasterizer,FineLineCoverage,DryInkCoverage,ChiselInkCoverage,ContinuousEraserCoverage,PixelBlend}.cpp \
   src/storage/{ProjectStore,ProjectCodec,FileIO,Journal}.cpp \
   src/codecs/{OraStream,ZipStream,RasterWriters,AtomicExport}.cpp \
   /usr/lib/x86_64-linux-gnu/libpng16.so.16 -o /tmp/build_cover_regions
@@ -168,7 +168,7 @@ This comparison is renderer output, not a GUI screenshot or final artwork.
 ```sh
 g++ -std=c++20 -O0 -Wall -Wextra -Wpedantic -Werror -Isrc \
  tools/artwork/BuildDryInkStudy.cpp \
- src/render/{CoverageRasterizer,FineLineCoverage,DryInkCoverage,ChiselInkCoverage,PixelBlend}.cpp \
+ src/render/{CoverageRasterizer,FineLineCoverage,DryInkCoverage,ChiselInkCoverage,ContinuousEraserCoverage,PixelBlend}.cpp \
  src/core/{Document,DocumentSpec,CommandBus,Digest}.cpp -o /tmp/build_dry_ink_study
 /tmp/build_dry_ink_study /tmp/normal-vs-dry.ppm
 ```

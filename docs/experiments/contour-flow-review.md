@@ -44,7 +44,7 @@ c++ -std=c++20 -O1 -Wall -Wextra -Wpedantic -Werror \
   -fno-fast-math -ffp-contract=off -Isrc -Itests/support \
   tests/support/TestMain.cpp tests/reconstruct/PlanningTests.cpp \
   src/core/DocumentSpec.cpp src/core/Document.cpp src/core/CommandBus.cpp src/core/Digest.cpp \
-  src/render/ReferenceRenderer.cpp src/render/CoverageRasterizer.cpp src/render/FineLineCoverage.cpp src/render/DryInkCoverage.cpp src/render/ChiselInkCoverage.cpp src/render/PixelBlend.cpp \
+  src/render/ReferenceRenderer.cpp src/render/CoverageRasterizer.cpp src/render/FineLineCoverage.cpp src/render/DryInkCoverage.cpp src/render/ChiselInkCoverage.cpp src/render/ContinuousEraserCoverage.cpp src/render/PixelBlend.cpp \
   src/reconstruct/ReconstructionService.cpp src/reconstruct/EventWriter.cpp \
   src/reconstruct/ContourPlanner.cpp src/reconstruct/RegionPlanner.cpp src/reconstruct/StrokeScheduler.cpp \
   -o /tmp/drawborad-test-E02

@@ -21,7 +21,7 @@ inline Result<MixedLineartView> projectControlledLineart(const DocumentSnapshot&
  auto nodes=std::make_shared<NodeMap>(*s.nodes);auto events=std::make_shared<EventList>();
  std::set<NodeId> ids(finishing.begin(),finishing.end());
  for(const auto& e:*s.eventIndex){if(stop.stop_requested())return error(ErrorCode::Cancelled,"mixed.cancelled");if(!ids.contains(e.layerId)){events->push_back(e);continue;}
- if(e.engineVersion!=1&&e.engineVersion!=2&&e.engineVersion!=10&&e.engineVersion!=12&&e.engineVersion!=19&&e.engineVersion!=21)return error(ErrorCode::UnsupportedFeature,"mixed.finishing-engine");
+ if(e.engineVersion!=1&&e.engineVersion!=2&&e.engineVersion!=10&&e.engineVersion!=12&&e.engineVersion!=19&&e.engineVersion!=21&&e.engineVersion!=22)return error(ErrorCode::UnsupportedFeature,"mixed.finishing-engine");
  auto checked=validateRasterEvent(e);if(!checked)return checked.error();}
  for(auto id:finishing){nodes->erase(id);}
  auto& children=nodes->at(Document::rootId()).children;children.resize(children.size()-finishing.size());

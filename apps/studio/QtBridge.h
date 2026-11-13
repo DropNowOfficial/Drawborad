@@ -158,6 +158,7 @@ class QtBridge : public QObject {
     Q_INVOKABLE bool useActiveBoundary();
     Q_INVOKABLE bool clearSelectedBoundary();
     QString selectedBoundaryName() const;
+    bool isSelectedBoundary(NodeId id) const { return selectedBoundary_&&*selectedBoundary_==id; }
     Q_INVOKABLE bool selectLayer(const QString&);
     Q_INVOKABLE bool setLayerVisible(const QString&, bool);
     Q_INVOKABLE bool importReferenceUrl(const QUrl&);

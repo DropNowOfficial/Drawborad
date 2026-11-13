@@ -155,7 +155,7 @@ target_link_libraries(drawborad_reconstruct PUBLIC drawborad_models drawborad_co
 add_library(drawborad_render STATIC
   src/render/ReferenceRenderer.cpp src/render/CoverageRasterizer.cpp src/render/FineLineCoverage.cpp src/render/DryInkCoverage.cpp src/render/PixelBlend.cpp
   src/render/TileCache.cpp src/render/DisplayCache.cpp src/render/CacheEvictor.cpp
-  src/render/ChiselInkCoverage.cpp src/brush/ChiselInkStroke.cpp src/brush/BrushEngine.cpp src/brush/SampleResampler.cpp src/brush/FloodFill.cpp src/brush/BucketFill.cpp src/brush/FreehandStroke.cpp src/brush/DryInkStroke.cpp src/platform/TabletInput.cpp
+  src/render/ContinuousEraserCoverage.cpp src/brush/ContinuousEraser.cpp src/render/ChiselInkCoverage.cpp src/brush/ChiselInkStroke.cpp src/brush/BrushEngine.cpp src/brush/SampleResampler.cpp src/brush/FloodFill.cpp src/brush/BucketFill.cpp src/brush/FreehandStroke.cpp src/brush/DryInkStroke.cpp src/platform/TabletInput.cpp
   src/ui/MergedDocument.cpp src/ui/LayerStream.cpp
   src/history/EventIndex.cpp src/history/ReplayEngine.cpp
   src/view/Viewport.cpp src/view/HitTest.cpp src/platform/DeviceRecovery.cpp)

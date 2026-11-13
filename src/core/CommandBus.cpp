@@ -1,3 +1,4 @@
+#include "EraserEligibility.h"
 #include "brush/CloseStrokeGap.h"
 #include "brush/WithdrawClosedInkFill.h"
 #include "Commands.h"
@@ -338,6 +339,16 @@ Result<ChangeSet> Document::apply(const Command& cmd, Revision expected) {
                         next.fillOperations.push_back(o.operation);
                     } else if constexpr (std::is_same_v<O, Paint>) {
                         const auto& e = o.event;
+                        if(e.engineVersion==22){
+                            require(cmd.operations.size()==1,ErrorCode::InvalidInput,"continuous-eraser.single-operation");
+                            auto eligible=continuousEraserLayerEligible(state_,e.layerId);if(!eligible)throw Failure{eligible.error()};
+                            std::size_t points=e.geometry.size();
+                            require(points<=1000000,ErrorCode::BudgetExceeded,"continuous-eraser.point-budget");
+                            for(const auto& old:*state_.eventIndex){
+                                require(old.geometry.size()<=1000000-points,ErrorCode::BudgetExceeded,"continuous-eraser.point-budget");
+                                points+=old.geometry.size();
+                            }
+                        }
                         exists(e.layerId);
                         require(ns->at(e.layerId).kind == NodeKind::Layer &&
                                     ns->at(e.layerId).objectId == e.objectId,

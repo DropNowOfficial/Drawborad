@@ -280,6 +280,9 @@ lineart_repair_test(B42.ChiselInk test_chisel_ink.cpp)
 
 set_tests_properties(B42.ChiselInk PROPERTIES LABELS "CorePortable")
 
+lineart_repair_test(B43.ContinuousEraser test_continuous_eraser.cpp)
+set_tests_properties(B43.ContinuousEraser PROPERTIES LABELS "CorePortable")
+
 add_test(NAME Build.NativeCoverageLists COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/build/test_native_coverage_lists.py)
 set_tests_properties(Build.NativeCoverageLists PROPERTIES LABELS "CorePortable")
 

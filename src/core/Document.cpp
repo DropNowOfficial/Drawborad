@@ -1,3 +1,4 @@
+#include "core/ContinuousEraserEvent.h"
 #include "core/ChiselInkEvent.h"
 #include "FillProvenance.h"
 #include "core/HiddenBoundary.h"
@@ -132,8 +133,9 @@ Result<void> validateSnapshot(const DocumentSnapshot& s) {
         if(e.toolId=="smooth-ink-aa" && e.engineVersion!=19)return error(ErrorCode::UnsupportedFeature,"smooth-ink.engine-tool");
         if(e.toolId=="dry-ink" && e.engineVersion!=12)return error(ErrorCode::UnsupportedFeature,"dry-ink.engine-tool");
         if(e.toolId=="fineliner-aa" && e.engineVersion!=10)return error(ErrorCode::UnsupportedFeature,"freehand.engine-tool");
-        if (e.engineVersion!=1 && e.engineVersion!=2 && e.engineVersion!=8 && e.engineVersion!=10 && e.engineVersion!=12 && e.engineVersion!=19 && e.engineVersion!=21)
+        if (e.engineVersion!=1 && e.engineVersion!=2 && e.engineVersion!=8 && e.engineVersion!=10 && e.engineVersion!=12 && e.engineVersion!=19 && e.engineVersion!=21 && e.engineVersion!=22)
             return error(ErrorCode::UnsupportedFeature,"event.engine-version");
+        if (e.engineVersion==22) {auto valid=validateContinuousEraserEvent(e);if(!valid)return valid.error();}
         if (e.engineVersion==21) {auto valid=validateChiselInkEvent(e);if(!valid)return valid.error();}
         if (e.engineVersion==12) {auto valid=validateDryInkEvent(e);if(!valid)return valid.error();}
         if (e.engineVersion==19) {auto valid=validateSmoothInkEvent(e);if(!valid)return valid.error();}
@@ -252,6 +254,10 @@ Result<ChangeSet> Document::commitExternal(const DocumentSnapshot& next, Revisio
         return error(ErrorCode::InvalidInput, "worker.event-history-rewrite");
     for (std::size_t i = state_.eventIndex->size(); i < next.eventIndex->size(); ++i) {
         const auto& e = next.eventIndex->at(i);
+        // Worker snapshots have no trusted native eraser admission proof. Existing
+        // prefix events remain valid, but new erasure must use CommandBus.
+        if (e.engineVersion == 22)
+            return error(ErrorCode::UnsupportedFeature, "worker.continuous-eraser-not-supported");
         auto n = next.nodes->find(e.layerId);
         if (n == next.nodes->end() || n->second.kind != NodeKind::Layer ||
             n->second.objectId != e.objectId || e.parentRevision != expected)
