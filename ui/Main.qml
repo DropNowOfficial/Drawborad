@@ -222,6 +222,12 @@ ApplicationWindow {
                     onCanceled: { strokeEditOverlay.selectedIndex=-1 }
                 }
             }
+            Canvas { id: brushFootprintOverlay; objectName:"brushFootprintOverlay";x:nativeCanvas.x;y:nativeCanvas.y;width:nativeCanvas.width;height:nativeCanvas.height;z:3;clip:true;visible:nativeCanvas.visible && nativeCanvas.enabled
+                onPaint:{const c=getContext("2d");c.clearRect(0,0,width,height);const p=nativeCanvas.brushFootprint;if(p.length!==64)return;let cx=0,cy=0;c.beginPath();for(let i=0;i<p.length;i++){cx+=p[i].x;cy+=p[i].y;if(i===0)c.moveTo(p[i].x,p[i].y);else c.lineTo(p[i].x,p[i].y);}c.closePath();c.lineWidth=3;c.strokeStyle="#ffffff";c.stroke();c.lineWidth=1;c.strokeStyle="#171717";c.stroke();cx/=p.length;cy/=p.length;c.beginPath();c.moveTo(cx-3,cy);c.lineTo(cx+3,cy);c.moveTo(cx,cy-3);c.lineTo(cx,cy+3);c.lineWidth=3;c.strokeStyle="#ffffff";c.stroke();c.lineWidth=1;c.strokeStyle="#171717";c.stroke();}
+                Connections {target:nativeCanvas;function onFootprintChanged(){brushFootprintOverlay.requestPaint()}}
+                Connections {target:studio;function onChanged(){brushFootprintOverlay.requestPaint()}}
+                onWidthChanged:requestPaint();onHeightChanged:requestPaint();onVisibleChanged:requestPaint()
+            }
             Rectangle { objectName: "hollowBoundsOverlay"; x: nativeCanvas.x + nativeCanvas.hollowItemRect.x; y: nativeCanvas.y + nativeCanvas.hollowItemRect.y; width: nativeCanvas.hollowItemRect.width; height: nativeCanvas.hollowItemRect.height; visible: nativeCanvas.visible && nativeCanvas.hollowTool && (nativeCanvas.hollowBounded || nativeCanvas.hollowDragActive) && nativeCanvas.hollowLassoPoints.length === 0; color: "transparent"; border.color: "#ffcf70"; border.width: 2; z: 2 }
             Canvas { id: lassoGuide; objectName: "hollowLassoGuide"; x: nativeCanvas.x; y: nativeCanvas.y; width: nativeCanvas.width; height: nativeCanvas.height; z: 2; visible: nativeCanvas.visible && nativeCanvas.hollowTool && nativeCanvas.hollowLassoPoints.length > 0
                 onPaint: { const c = getContext("2d"); c.clearRect(0,0,width,height); const p = nativeCanvas.hollowLassoPoints; if (p.length < 2) return; c.strokeStyle = "#ffcf70"; c.lineWidth = 2; c.beginPath(); c.moveTo(p[0].x,p[0].y); for (let i=1;i<p.length;i++) c.lineTo(p[i].x,p[i].y); c.closePath(); c.stroke() }
@@ -472,6 +478,7 @@ ApplicationWindow {
             Label { text: qsTr("顺序 X、Y、宽、高。可拖拽框选，按原图整像素向外吸附；完成后再点框内墨块。Esc 或越界取消本次拖动，可重拖；按钮可结束框选模式。黄框仅为范围，不修改画面，挖空仍须接受实际预览。自由套索自动闭合、最多512点，自交或越界拒绝；数字框为外接矩形，修改数字会切回矩形。"); color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Label { objectName: "lineartFillNotice"; text: studio.fillNotice; color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Label { text: studio.layerNotice; color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true; visible: text.length > 0 }
+            Label { text:qsTr("鼠标光标轮廓 = 满压力名义笔尖范围，中心十字是定位标记。压力、收笔、纹理及抗锯齿会改变实际墨迹；数位笔不显示名义范围，落笔时看真实预览。光标不会进入图层或导出。");color:"#bcbcc4";wrapMode:Text.Wrap;Layout.fillWidth:true }
             Label { text: qsTr("画笔 · 原生笔迹"); color: "#f5f5f7"; font.pixelSize: 18 }
             Label { text: qsTr("宽度：") + nativeCanvas.brushWidth.toFixed(1) + " px"; color: "#bcbcc4" }
             Button { text: qsTr("取消笔迹验收，保留原稿"); visible: studio.strokeCommitBusy; onClicked: nativeCanvas.cancelPendingStroke(); Layout.fillWidth: true }

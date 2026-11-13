@@ -37,6 +37,10 @@ CanvasItem::CanvasItem(QQuickItem* parent) : QQuickItem(parent) {
     renderPool_.setMaxThreadCount(1);
     setFlag(ItemHasContents, true);
     setAcceptedMouseButtons(Qt::LeftButton | Qt::MiddleButton);
+    setAcceptHoverEvents(true);
+    connect(this,&CanvasItem::viewChanged,this,&CanvasItem::footprintChanged);
+    connect(this,&CanvasItem::brushSettingsChanged,this,&CanvasItem::footprintChanged);
+    connect(this,&CanvasItem::renderErrorChanged,this,&CanvasItem::footprintChanged);
     setClip(true);
 }
 CanvasItem::~CanvasItem(){cancelStroke();renderStop_.request_stop();renderPool_.clear();renderPool_.waitForDone();}
@@ -54,6 +58,16 @@ Result<StrokeEvent> compileDesktopGesture(const DocumentSnapshot& source,std::sp
  return event;
 }
 }
+QVariantList CanvasItem::brushFootprint() const {
+ QVariantList out;if(!brushPointer_||brushPointer_->x()<0||brushPointer_->y()<0||brushPointer_->x()>=width()||brushPointer_->y()>=height()||!bridge_||!isEnabled()||!isVisible()||bridge_->busy()||bridge_->replaying()||rendering()||!renderError().isEmpty()||!stroke_.empty()||panGesture_||bucketTool_||hollowTool_||hollowDragTool_||closeGapTool_)return out;
+ const auto snap=bridge_->canvasSnapshot();if(!snap||snap->spec.colorSpec.format.mode!=ColorMode::RGB||!paintTarget(*snap)||!itemToDocument(*brushPointer_,*snap))return out;
+ const auto rect=documentRect();const double scale=rect.width()/double(snap->spec.pixelSize.width),a=brushSettings_.width*scale*.5,b=a/(chiselInk_?3:1),angle=chiselInk_?chiselAngle_*3.14159265358979323846/8:0;
+ if(!std::isfinite(a)||a<=0)return out;
+ const double co=std::cos(angle),si=std::sin(angle);out.reserve(64);for(int i=0;i<64;++i){const double t=i*2*3.14159265358979323846/64,x=a*std::cos(t),y=b*std::sin(t);out.push_back(QVariant::fromValue(QPointF(brushPointer_->x()+co*x-si*y,brushPointer_->y()+si*x+co*y)));}return out;
+}
+void CanvasItem::hoverEnterEvent(QHoverEvent*e){if(!e->pointingDevice()||(e->pointingDevice()->type()!=QInputDevice::DeviceType::Mouse&&e->pointingDevice()->type()!=QInputDevice::DeviceType::TouchPad))brushPointer_.reset();else brushPointer_=e->position();emit footprintChanged();e->accept();}
+void CanvasItem::hoverMoveEvent(QHoverEvent*e){if(!e->pointingDevice()||(e->pointingDevice()->type()!=QInputDevice::DeviceType::Mouse&&e->pointingDevice()->type()!=QInputDevice::DeviceType::TouchPad))brushPointer_.reset();else brushPointer_=e->position();emit footprintChanged();e->accept();}
+void CanvasItem::hoverLeaveEvent(QHoverEvent*e){brushPointer_.reset();emit footprintChanged();e->accept();}
 bool CanvasItem::configureControlledEraser(bool value){
  if(value&&brushSettings_.width>128){brushNotice_=tr("连续橡皮宽度上限128原像素。");emit brushSettingsChanged();return false;}
  if(value!=controlledEraser_){cancelStroke();}controlledEraser_=value;
@@ -91,6 +105,8 @@ void CanvasItem::setStudio(QObject* value) {
 }
 void CanvasItem::refreshSnapshot() {
     const auto next = bridge_ ? bridge_->displaySnapshot() : std::nullopt;
+    bool changedDocument=false;{std::lock_guard lock(snapshotMutex_);changedDocument=(!snapshot_&&!next)?false:(!snapshot_||!next||snapshot_->documentId!=next->documentId);}
+    if(changedDocument){brushPointer_.reset();emit footprintChanged();}
     const auto nextCount=bridge_&&!bridge_->fillPending()?std::uint64_t(bridge_->replayCount()):UINT64_MAX;
     if(bridge_&&(bridge_->replaying()||(bridge_->busy()&&!(dryCommitPending_&&bridge_->strokeCommitBusy()))))cancelStroke();
     if (strokeTarget_ && (!bridge_ || !next || strokeTarget_->document != next->documentId ||
@@ -202,7 +218,7 @@ void CanvasItem::fitDocument(){
     update();emit viewChanged();
 }
 void CanvasItem::geometryChange(const QRectF& next,const QRectF& previous){
-    if(next!=previous)cancelHollowDrag();
+    if(next!=previous){cancelHollowDrag();brushPointer_.reset();emit footprintChanged();}
     QQuickItem::geometryChange(next,previous);
     {std::lock_guard lock(snapshotMutex_);if(snapshot_)pan_=boundedPan(*snapshot_,zoom_,pan_);}
     update();emit viewChanged();
@@ -410,7 +426,8 @@ QRectF CanvasItem::hollowItemRect() const {
  const auto d=documentRect();return {d.x()+r.x()*d.width()/w,d.y()+r.y()*d.height()/h,r.width()*d.width()/w,r.height()*d.height()/h};
 }
 void CanvasItem::mousePressEvent(QMouseEvent* e){
-    if(e->button()==Qt::MiddleButton){cancelHollowDrag();panGesture_=e->position();e->accept();return;}
+    brushPointer_.reset();emit footprintChanged();
+    if(e->button()==Qt::MiddleButton){cancelHollowDrag();panGesture_=e->position();emit footprintChanged();e->accept();return;}
     if(hollowDragTool_||closeGapTool_){
         cancelStroke();const auto snap=bridge_?bridge_->canvasSnapshot():std::nullopt;
         if(e->button()==Qt::LeftButton&&snap&&!bridge_->busy()&&!bridge_->replaying()&&!rendering()&&renderError().isEmpty())
@@ -428,6 +445,7 @@ void CanvasItem::mousePressEvent(QMouseEvent* e){
     const auto s=bridge_?bridge_->canvasSnapshot():std::nullopt;if(tabletStroke_||!s||!itemToDocument(e->position(),*s)){e->ignore();return;}beginSample(mouseSample(e),false,false);e->accept();
 }
 void CanvasItem::mouseMoveEvent(QMouseEvent* e){
+    brushPointer_.reset();emit footprintChanged();
     if((hollowDragTool_||closeGapTool_)&&!panGesture_){
         if(!(e->buttons()&Qt::LeftButton))cancelHollowDrag();else updateHollowDrag(e->position());
         e->accept();return;
@@ -436,7 +454,8 @@ void CanvasItem::mouseMoveEvent(QMouseEvent* e){
     const auto s=bridge_?bridge_->canvasSnapshot():std::nullopt;if(!tabletStroke_&&!stroke_.empty()&&s&&itemToDocument(e->position(),*s))appendSample(mouseSample(e));e->accept();
 }
 void CanvasItem::mouseReleaseEvent(QMouseEvent* e){
-    if(e->button()==Qt::MiddleButton){panGesture_.reset();e->accept();return;}
+    brushPointer_.reset();emit footprintChanged();
+    if(e->button()==Qt::MiddleButton){panGesture_.reset();emit footprintChanged();e->accept();return;}
     if(closeGapTool_){
         if(e->button()==Qt::LeftButton&&updateHollowDrag(e->position())){const auto start=hollowDrag_->start,end=hollowDrag_->current;cancelHollowDrag();bridge_->closeLineartGapAt(std::floor(start.x()),std::floor(start.y()),std::floor(end.x()),std::floor(end.y()));}e->accept();return;
     }
@@ -450,7 +469,7 @@ void CanvasItem::mouseReleaseEvent(QMouseEvent* e){
                 double left=polygon.front().x,right=left,top=polygon.front().y,bottom=top;for(const auto& p:polygon){left=std::min(left,p.x);right=std::max(right,p.x);top=std::min(top,p.y);bottom=std::max(bottom,p.y);}bounds={std::floor(left),std::floor(top),std::ceil(right)-std::floor(left),std::ceil(bottom)-std::floor(top)};
             }
             if(bounds.width()>0&&bounds.height()>0){
-                hollowPolygon_=std::move(polygon);hollowBounds_=bounds;hollowBounded_=true;hollowDrag_.reset();
+                hollowPolygon_=std::move(polygon);hollowBounds_=bounds;hollowBounded_=true;hollowDrag_.reset();emit hollowBoundsChanged();
                 // Keep tool true while QML synchronizes text fields; restoring
                 // its numeric Binding earlier would overwrite this selection.
                 emit hollowSelectionFinished();hollowDragTool_=false;hollowLassoTool_=false;
@@ -468,10 +487,10 @@ void CanvasItem::wheelEvent(QWheelEvent* event){
 }
 bool CanvasItem::event(QEvent* event){
     if((bucketTool_ || hollowTool_ || closeGapTool_) && (event->type()==QEvent::TabletPress || event->type()==QEvent::TabletMove || event->type()==QEvent::TabletRelease)){event->accept();return true;}
-    if(event->type()==QEvent::FocusOut||event->type()==QEvent::WindowDeactivate)cancelStroke();
+    if(event->type()==QEvent::FocusOut||event->type()==QEvent::WindowDeactivate){cancelStroke();brushPointer_.reset();emit footprintChanged();}
     if(event->type()==QEvent::KeyPress&&static_cast<QKeyEvent*>(event)->key()==Qt::Key_Escape){cancelStroke();event->accept();return true;}
     if(event->type()==QEvent::TabletPress||event->type()==QEvent::TabletMove||event->type()==QEvent::TabletRelease){
-        auto*t=static_cast<QTabletEvent*>(event);auto sample=tabletSample(t);const bool isEraser=t->pointingDevice()&&t->pointingDevice()->pointerType()==QPointingDevice::PointerType::Eraser;
+        auto*t=static_cast<QTabletEvent*>(event);brushPointer_.reset();emit footprintChanged();auto sample=tabletSample(t);const bool isEraser=t->pointingDevice()&&t->pointingDevice()->pointerType()==QPointingDevice::PointerType::Eraser;
         const auto s=bridge_?bridge_->canvasSnapshot():std::nullopt;
         const bool inside=s&&itemToDocument(t->position(),*s).has_value();
         if(event->type()==QEvent::TabletPress){if(inside)beginSample(sample,true,isEraser);}else if(event->type()==QEvent::TabletMove){if(inside)appendSample(sample);}else{if(inside)appendSample(sample);finishStroke();tabletStroke_=false;}t->accept();return true;

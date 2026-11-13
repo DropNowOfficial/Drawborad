@@ -8,15 +8,18 @@
 #include <QColor>
 #include <QTimer>
 #include <QPointF>
+#include <QHoverEvent>
 #include <QPointer>
 #include <QTransform>
 #include <mutex>
+#include <cmath>
 #include <QThreadPool>
 #include <stop_token>
 namespace drawborad {
 class QtBridge;
 class CanvasItem : public QQuickItem {
     Q_OBJECT
+    Q_PROPERTY(QVariantList brushFootprint READ brushFootprint NOTIFY footprintChanged)
     Q_PROPERTY(QVariantList localStrokeHandles READ localStrokeHandles NOTIFY viewChanged)
     Q_PROPERTY(QObject* bridge READ studio WRITE setStudio NOTIFY studioChanged)
     Q_PROPERTY(bool closeGapTool READ closeGapTool WRITE setCloseGapTool NOTIFY brushSettingsChanged)
@@ -26,7 +29,7 @@ class CanvasItem : public QQuickItem {
     Q_PROPERTY(bool hollowDragTool READ hollowDragTool WRITE setHollowDragTool NOTIFY brushSettingsChanged)
     Q_PROPERTY(bool hollowDragActive READ hollowDragActive NOTIFY brushSettingsChanged)
     Q_PROPERTY(bool hollowBounded READ hollowBounded WRITE setHollowBounded NOTIFY brushSettingsChanged)
-    Q_PROPERTY(QRectF hollowBounds READ hollowBounds WRITE setHollowBounds NOTIFY brushSettingsChanged)
+    Q_PROPERTY(QRectF hollowBounds READ hollowBounds WRITE setHollowBounds NOTIFY hollowBoundsChanged)
     Q_PROPERTY(QRectF hollowItemRect READ hollowItemRect NOTIFY viewChanged)
     Q_PROPERTY(bool hollowTool READ hollowTool WRITE setHollowTool NOTIFY brushSettingsChanged)
     Q_PROPERTY(bool bucketTool READ bucketTool WRITE setBucketTool NOTIFY brushSettingsChanged)
@@ -49,6 +52,7 @@ class CanvasItem : public QQuickItem {
     Q_PROPERTY(QString brushNotice READ brushNotice NOTIFY brushSettingsChanged)
     BrushSettings brushSettings_,gestureBrush_;
     bool dryInk_{false},gestureDryInk_{false},smoothInk_{false},gestureSmoothInk_{false},dryCommitPending_{false};
+    std::optional<QPointF> brushPointer_;
     bool controlledEraser_{false}, gestureControlledEraser_{false};
     bool chiselInk_{false},gestureChiselInk_{false};
     int chiselAngle_{0},gestureChiselAngle_{0};
@@ -128,6 +132,9 @@ class CanvasItem : public QQuickItem {
   protected:
     QSGNode* updatePaintNode(QSGNode*, UpdatePaintNodeData*) override;
     void mouseUngrabEvent() override;
+    void hoverEnterEvent(QHoverEvent*) override;
+    void hoverMoveEvent(QHoverEvent*) override;
+    void hoverLeaveEvent(QHoverEvent*) override;
     void mousePressEvent(QMouseEvent*) override;
     void mouseMoveEvent(QMouseEvent*) override;
     void mouseReleaseEvent(QMouseEvent*) override;
@@ -135,6 +142,8 @@ class CanvasItem : public QQuickItem {
     void geometryChange(const QRectF&,const QRectF&) override;
     bool event(QEvent*) override;
   signals:
+    void footprintChanged();
+    void hollowBoundsChanged();
     void hollowSelectionFinished();
     void brushSettingsChanged();
     void studioChanged();
@@ -154,7 +163,7 @@ class CanvasItem : public QQuickItem {
     bool hollowBounded() const { return hollowBounded_; }
     void setHollowBounded(bool value) { hollowBounded_=value;emit brushSettingsChanged();emit viewChanged(); }
     QRectF hollowBounds() const { return hollowBounds_; }
-    void setHollowBounds(QRectF value) { if(value!=hollowBounds_)hollowPolygon_.clear();hollowBounds_=value;emit brushSettingsChanged();emit viewChanged(); }
+    void setHollowBounds(QRectF value) { const auto eq=[](double a,double b){return a==b||(std::isnan(a)&&std::isnan(b));};if(eq(value.x(),hollowBounds_.x())&&eq(value.y(),hollowBounds_.y())&&eq(value.width(),hollowBounds_.width())&&eq(value.height(),hollowBounds_.height()))return;hollowPolygon_.clear();hollowBounds_=value;emit hollowBoundsChanged();emit viewChanged(); }
     QRectF hollowItemRect() const;
     bool hollowTool() const { return hollowTool_; }
     void setHollowTool(bool value) { cancelStroke();hollowTool_=value;if(value){controlledEraser_=false;bucketTool_=false;closeGapTool_=false;}else {hollowDragTool_=false;hollowLassoTool_=false;}emit brushSettingsChanged(); }
@@ -174,6 +183,7 @@ class CanvasItem : public QQuickItem {
     Q_INVOKABLE bool configureDryInk(bool);
     bool smoothInk()const{return smoothInk_;}
     Q_INVOKABLE bool configureSmoothInk(bool);
+    QVariantList brushFootprint() const;
     bool controlledEraser() const { return controlledEraser_; }
     Q_INVOKABLE bool configureControlledEraser(bool);
     bool chiselInk()const{return chiselInk_;}
