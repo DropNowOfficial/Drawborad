@@ -145,6 +145,16 @@ QPointF CanvasItem::boundedPan(const DocumentSnapshot& snapshot,double magnifica
 }
 QString CanvasItem::renderError() const {std::lock_guard lock(snapshotMutex_);return renderError_;}
 double CanvasItem::zoom() const {std::lock_guard lock(snapshotMutex_);return zoom_;}
+QVariantList CanvasItem::localStrokeHandles() const {
+    QVariantList out;const auto snap=bridge_?bridge_->canvasSnapshot():std::nullopt;
+    if(!snap||!snap->eventIndex||snap->eventIndex->empty()||bridge_->replaying())return out;
+    const auto& e=snap->eventIndex->back();
+    if(e.engineVersion!=19||e.toolId!="smooth-ink-aa"||e.geometry.size()>4096||!nativeLayerPaintable(*snap,e.layerId))return out;
+    const auto r=documentRect();const auto w=snap->spec.pixelSize.width,h=snap->spec.pixelSize.height;
+    if(!w||!h)return out;
+    for(const auto& p:e.geometry)out.push_back(QVariantMap{{"x",r.x()+p.x*r.width()/w},{"y",r.y()+p.y*r.height()/h},{"scale",r.width()/w},{"pressure",p.pressure}});
+    return out;
+}
 QRectF CanvasItem::documentRect() const {
     std::lock_guard lock(snapshotMutex_);if(!snapshot_)return {};
     return documentTransform(*snapshot_,zoom_,pan_).mapRect(QRectF(0,0,double(snapshot_->spec.pixelSize.width),double(snapshot_->spec.pixelSize.height)));

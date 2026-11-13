@@ -9,6 +9,7 @@
 #include "view/Viewport.h"
 #include <QThreadPool>
 #include <stop_token>
+#include <mutex>
 #include <QVariantList>
 #include <QImage>
 namespace drawborad {
@@ -31,6 +32,7 @@ class QtBridge : public QObject {
     Q_PROPERTY(QVariantList layers READ layers NOTIFY changed)
     Q_PROPERTY(QString activeLayerId READ activeLayerId NOTIFY changed)
     Q_PROPERTY(bool canAddLayer READ canAddLayer NOTIFY changed)
+    Q_PROPERTY(QVariantList localStrokePoints READ localStrokePoints NOTIFY changed)
     Q_PROPERTY(bool fillPending READ fillPending NOTIFY changed)
     Q_PROPERTY(bool strokeCommitBusy READ strokeCommitBusy NOTIFY changed)
     Q_PROPERTY(bool fillBusy READ fillBusy NOTIFY changed)
@@ -57,6 +59,17 @@ class QtBridge : public QObject {
     mutable std::shared_ptr<const Bytes> referenceCacheBytes_;
     mutable QString referenceCacheKey_, referenceCacheInfo_;
     void refreshOriginalReference() const;
+    struct LocalEditCompletion {
+        std::optional<Command> command;
+        DocumentSnapshot source;
+        std::optional<DocumentSnapshot> preview;
+        QString failure;
+        std::stop_token stop;
+        std::uint64_t generation{};
+    };
+    std::mutex localEditMutex_;
+    std::optional<LocalEditCompletion> localEditCompletion_;
+    void finishLocalStrokeEdit();
     QThreadPool fillPool_;
     std::stop_source fillStop_;
     bool fillBusy_{false};
@@ -82,6 +95,8 @@ class QtBridge : public QObject {
     ~QtBridge() override;
     bool fillPending() const { return pendingFill_.has_value(); }
     Q_INVOKABLE bool acceptFill();
+    Q_INVOKABLE bool previewLocalStrokeEdit(int sampleIndex,double radius,double dx,double dy,double pressureDelta);
+    QVariantList localStrokePoints() const;
     std::optional<DocumentSnapshot> displaySnapshot() const { return pendingFillPreview_?pendingFillPreview_:app_.snapshot(); }
     bool strokeCommitBusy() const { return strokeCommitBusy_; }
     void setStrokeCommitBusy(bool value) { if(value!=strokeCommitBusy_){strokeCommitBusy_=value;emit changed();} }

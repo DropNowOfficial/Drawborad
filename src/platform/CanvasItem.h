@@ -17,6 +17,7 @@ namespace drawborad {
 class QtBridge;
 class CanvasItem : public QQuickItem {
     Q_OBJECT
+    Q_PROPERTY(QVariantList localStrokeHandles READ localStrokeHandles NOTIFY viewChanged)
     Q_PROPERTY(QObject* bridge READ studio WRITE setStudio NOTIFY studioChanged)
     Q_PROPERTY(bool closeGapTool READ closeGapTool WRITE setCloseGapTool NOTIFY brushSettingsChanged)
     Q_PROPERTY(QVariantList closeGapGuide READ closeGapGuide NOTIFY viewChanged)
@@ -134,6 +135,7 @@ class CanvasItem : public QQuickItem {
     void viewChanged();
     void renderErrorChanged();
   public:
+    QVariantList localStrokeHandles() const;
     bool closeGapTool() const { return closeGapTool_; }
     void setCloseGapTool(bool);
     QVariantList closeGapGuide() const;

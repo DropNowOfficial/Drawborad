@@ -177,7 +177,51 @@ ApplicationWindow {
                 TabButton { text: qsTr("原图与蒙版审阅") }
                 TabButton { text: qsTr("绘制结果") }
             }
-            NativeCanvas { id: nativeCanvas; objectName: "nativeCanvas"; anchors.fill: parent; anchors.margins: 24; anchors.topMargin: workspaceTabs.visible ? 64 : 24; visible: studio.hasDocument && !reviewPanel.visible; bridge: studio }
+            NativeCanvas { id: nativeCanvas; objectName: "nativeCanvas"; anchors.fill: parent; anchors.margins: 24; anchors.topMargin: workspaceTabs.visible ? 64 : 24; visible: studio.hasDocument && !reviewPanel.visible; enabled: !strokeEditMode.checked; bridge: studio }
+            Canvas {
+                id: strokeEditOverlay; objectName: "strokeEditOverlay"
+                x: nativeCanvas.x; y: nativeCanvas.y; width: nativeCanvas.width; height: nativeCanvas.height; z: 4
+                visible: nativeCanvas.visible && strokeEditMode.checked && !studio.busy; clip: true
+                property int selectedIndex: -1
+                property var handles: nativeCanvas.localStrokeHandles
+                function choose(x,y) {
+                    selectedIndex = -1
+                    let best = 100 // ten logical pixels; never silently choose a distant point
+                    if (!Number.isFinite(x) || !Number.isFinite(y) || x<0 || y<0 || x>=width || y>=height) return
+                    for (let i=0;i<handles.length;i++) {
+                        const p=handles[i]
+                        if(!Number.isFinite(p.x)||!Number.isFinite(p.y)||p.x<0||p.y<0||p.x>=width||p.y>=height)continue
+                        const d=(p.x-x)*(p.x-x)+(p.y-y)*(p.y-y)
+                        if (d<best) { best=d; selectedIndex=i }
+                    }
+                    editDx.text="0";editDy.text="0"; requestPaint()
+                }
+                onSelectedIndexChanged: requestPaint()
+                onHandlesChanged: requestPaint()
+                onPaint: {
+                    const c=getContext("2d");c.clearRect(0,0,width,height)
+                    c.fillStyle="#5dd6ff"
+                    for(let i=0;i<handles.length;i++){const p=handles[i];c.beginPath();c.arc(p.x,p.y,i===selectedIndex?5:2,0,Math.PI*2);c.fill()}
+                }
+                Connections { target: nativeCanvas; function onViewChanged(){strokeEditOverlay.requestPaint()} }
+                Connections { target: studio; function onChanged(){strokeEditOverlay.selectedIndex=-1;strokeEditOverlay.requestPaint()} }
+                MouseArea {
+                    objectName: "strokeEditPicker"; anchors.fill: parent; acceptedButtons: Qt.LeftButton | Qt.MiddleButton
+                    property real pressX: 0; property real pressY: 0; property real lastX: 0; property real lastY: 0
+                    enabled: !studio.busy
+                    onPressed: function(mouse){pressX=lastX=mouse.x;pressY=lastY=mouse.y;if(mouse.button===Qt.LeftButton)strokeEditOverlay.choose(mouse.x,mouse.y)}
+                    onPositionChanged: function(mouse){if(pressedButtons & Qt.MiddleButton){nativeCanvas.panBy(mouse.x-lastX,mouse.y-lastY);lastX=mouse.x;lastY=mouse.y}}
+                    onWheel: function(wheel){nativeCanvas.zoomAt(wheel.angleDelta.y>0?1.25:.8,wheel.x,wheel.y);wheel.accepted=true}
+                    onReleased: function(mouse){
+                        const i=strokeEditOverlay.selectedIndex, p=strokeEditOverlay.handles[i]
+                        if(mouse.button===Qt.LeftButton && Math.hypot(mouse.x-pressX,mouse.y-pressY)>4 && i>=0 && p && p.scale>0 && mouse.x>=0 && mouse.y>=0 && mouse.x<width && mouse.y<height){
+                            editDx.text=String(Math.round((mouse.x-p.x)/p.scale*100)/100)
+                            editDy.text=String(Math.round((mouse.y-p.y)/p.scale*100)/100)
+                        }
+                    }
+                    onCanceled: { strokeEditOverlay.selectedIndex=-1 }
+                }
+            }
             Rectangle { objectName: "hollowBoundsOverlay"; x: nativeCanvas.x + nativeCanvas.hollowItemRect.x; y: nativeCanvas.y + nativeCanvas.hollowItemRect.y; width: nativeCanvas.hollowItemRect.width; height: nativeCanvas.hollowItemRect.height; visible: nativeCanvas.visible && nativeCanvas.hollowTool && (nativeCanvas.hollowBounded || nativeCanvas.hollowDragActive) && nativeCanvas.hollowLassoPoints.length === 0; color: "transparent"; border.color: "#ffcf70"; border.width: 2; z: 2 }
             Canvas { id: lassoGuide; objectName: "hollowLassoGuide"; x: nativeCanvas.x; y: nativeCanvas.y; width: nativeCanvas.width; height: nativeCanvas.height; z: 2; visible: nativeCanvas.visible && nativeCanvas.hollowTool && nativeCanvas.hollowLassoPoints.length > 0
                 onPaint: { const c = getContext("2d"); c.clearRect(0,0,width,height); const p = nativeCanvas.hollowLassoPoints; if (p.length < 2) return; c.strokeStyle = "#ffcf70"; c.lineWidth = 2; c.beginPath(); c.moveTo(p[0].x,p[0].y); for (let i=1;i<p.length;i++) c.lineTo(p[i].x,p[i].y); c.closePath(); c.stroke() }
@@ -187,7 +231,7 @@ ApplicationWindow {
                 onPaint: { const c=getContext("2d"); c.clearRect(0,0,width,height); const p=nativeCanvas.closeGapGuide;if(p.length!==2)return;c.strokeStyle="#ffcf70";c.lineWidth=2;c.beginPath();c.moveTo(p[0].x,p[0].y);c.lineTo(p[1].x,p[1].y);c.stroke() }
                 Connections { target: nativeCanvas; function onViewChanged() { gapGuide.requestPaint() } function onBrushSettingsChanged() { gapGuide.requestPaint() } }
             }
-            Label { objectName: "fillPreviewStatus"; anchors.top: nativeCanvas.top; anchors.horizontalCenter: nativeCanvas.horizontalCenter; visible: studio.fillPending; text: qsTr("区域操作预览 · 尚未提交 · 请接受或取消"); color: "#ffcf70"; z: 3 }
+            Label { objectName: "fillPreviewStatus"; anchors.top: nativeCanvas.top; anchors.horizontalCenter: nativeCanvas.horizontalCenter; visible: studio.fillPending; text: qsTr("操作预览 · 尚未提交 · 请接受或取消"); color: "#ffcf70"; z: 3 }
             Label { objectName: "strokePreviewStatus"; anchors.bottom: nativeCanvas.bottom; anchors.horizontalCenter: nativeCanvas.horizontalCenter; visible: nativeCanvas.strokePreviewActive; text: nativeCanvas.previewing ? qsTr("笔迹预览更新中 · 尚未提交") : qsTr("未提交预览 · 松手提交，Esc 取消"); color: "#ffffff"; padding: 6; background: Rectangle { color: "#c0202428" } }
             Label { objectName: "canvasRendering"; anchors.centerIn: nativeCanvas; visible: nativeCanvas.visible && nativeCanvas.rendering; text: qsTr("Rendering document…"); color: "#bcbcc4" }
             Label {
@@ -401,8 +445,8 @@ ApplicationWindow {
             Button { objectName: "clearBoundaryButton"; text: qsTr("停止采样手绘边界"); visible: studio.selectedBoundaryName.length > 0; enabled: !studio.busy; Layout.fillWidth: true; onClicked: studio.clearSelectedBoundary() }
             Label { objectName: "selectedBoundaryLabel"; visible: studio.selectedBoundaryName.length > 0; text: qsTr("边界层：") + studio.selectedBoundaryName + qsTr("。仅 alpha≥128/255 的覆盖阻挡；不改笔迹透明度、不采其他彩色细节。只填原稿白区，挖空区请停止采样后填。重开须重选。"); wrapMode: Text.Wrap; color: "#edc79a"; Layout.fillWidth: true }
             Label { text: qsTr("同尺寸黑白灰 PNG，最多 2000 万像素；原图锁定、色块独立、后台填色，不缩图。导入仍为同步操作。"); color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
-            Button { objectName: "cancelLineartFill"; text: qsTr("取消当前区域操作"); visible: studio.fillBusy || studio.fillPending; onClicked: studio.cancelFill() }
-            Button { objectName: "acceptLineartFill"; text: qsTr("接受当前区域预览"); visible: studio.fillPending; enabled: !nativeCanvas.rendering && nativeCanvas.renderError.length === 0; onClicked: studio.acceptFill() }
+            Button { objectName: "cancelLineartFill"; text: qsTr("取消当前操作"); visible: studio.fillBusy || studio.fillPending; onClicked: studio.cancelFill() }
+            Button { objectName: "acceptLineartFill"; text: qsTr("接受当前预览"); visible: studio.fillPending; enabled: !nativeCanvas.rendering && nativeCanvas.renderError.length === 0; onClicked: studio.acceptFill() }
             CheckBox { objectName: "closeGapTool"; text: qsTr("短断口补线（拖两个原墨端点）"); checked: nativeCanvas.closeGapTool; enabled: !studio.busy; onToggled: nativeCanvas.closeGapTool = checked }
             Label { text: qsTr("1像素黑线，最多64像素；两端须在原墨、跨过原白缺口，不自动找线。黄线仅指引，松开后看实际补线预览再接受；Esc/越界取消。原图不改，补线在可隐藏修正层，可撤销。"); color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             CheckBox { objectName: "hollowInkTool"; enabled: !studio.busy; text: qsTr("局部挖空（白纸，点墨块）"); checked: nativeCanvas.hollowTool; onToggled: nativeCanvas.hollowTool = checked }
@@ -442,6 +486,23 @@ ApplicationWindow {
             Slider { objectName: "mouseTaperSlider"; from: 0; to: 0.5; stepSize: 0.05; value: nativeCanvas.mouseTaper; Layout.fillWidth: true; onMoved: nativeCanvas.configureBrush(nativeCanvas.brushWidth,nativeCanvas.brushColor,nativeCanvas.brushOpacity,nativeCanvas.brushHardness,value) }
             Label { text: qsTr("0 为关闭；辅助只改变鼠标笔画首尾压力，不替代数位笔真实压感。设置对下一笔生效。"); color: "#bcbcc4"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Label { text: nativeCanvas.brushNotice; visible: text.length > 0; color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            CheckBox { id: strokeEditMode; objectName: "strokeEditMode"; text: qsTr("修整最近实墨笔迹（不新增细节）"); enabled: !studio.busy
+                onToggled: { nativeCanvas.cancelStroke();strokeEditOverlay.selectedIndex=-1 }
+            }
+            ColumnLayout { visible: strokeEditMode.checked; Layout.fillWidth: true
+                Label { text: qsTr("蓝点为已有采样点。点击或拖动一点，再预览；范围按原笔迹弧长计算。只改最后一笔，稀疏笔迹不会插点。"); wrapMode: Text.Wrap; Layout.fillWidth: true; color: "#bcbcc4" }
+                Label { text: strokeEditOverlay.selectedIndex<0 ? qsTr("未选中采样点") : qsTr("采样点 ")+(strokeEditOverlay.selectedIndex+1); color: "#5dd6ff" }
+                GridLayout { columns: 2; enabled: !studio.busy; Layout.fillWidth: true
+                    Label { text: qsTr("影响半径(px)"); color:"#bcbcc4" } TextField { id: editRadius; objectName:"editRadius"; text:"16"; Layout.fillWidth:true }
+                    Label { text: qsTr("水平移动(px)"); color:"#bcbcc4" } TextField { id: editDx; objectName:"editDx"; text:"0"; Layout.fillWidth:true }
+                    Label { text: qsTr("垂直移动(px)"); color:"#bcbcc4" } TextField { id: editDy; objectName:"editDy"; text:"0"; Layout.fillWidth:true }
+                    Label { text: qsTr("笔压增量(-1~1)"); color:"#bcbcc4" } TextField { id: editPressure; objectName:"editPressure"; text:"0"; Layout.fillWidth:true }
+                }
+                Button { objectName:"previewStrokeEdit"; text:qsTr("渲染修整预览"); enabled:!studio.busy && strokeEditOverlay.selectedIndex>=0
+                    onClicked: studio.previewLocalStrokeEdit(strokeEditOverlay.selectedIndex,Number(editRadius.text.trim()||"NaN"),Number(editDx.text.trim()||"NaN"),Number(editDy.text.trim()||"NaN"),Number(editPressure.text.trim()||"NaN"))
+                }
+                Label { text:qsTr("超出画布、笔压范围或渲染预算会拒绝，不会暗中截断。使用上方接受/取消；接受后可撤销。"); wrapMode:Text.Wrap;Layout.fillWidth:true;color:"#bcbcc4" }
+            }
             Label { text: qsTr("Canvas view"); color: "#f5f5f7"; font.pixelSize: 18 }
             RowLayout {
                 enabled: studio.hasDocument && !reviewPanel.visible

@@ -42,6 +42,11 @@ struct RecolorStroke {
     Id id;
     ColorValue color;
 };
+// Only positions/pressure of the global last smooth-ink event may change.
+struct AdjustStrokeSamples {
+    Id id;
+    std::vector<InputSample> geometry;
+};
 struct Paint {
     StrokeEvent event;
     Rect dirty;
@@ -62,7 +67,7 @@ struct ConvertColor {
 };
 using Operation =
     std::variant<AddNode, RemoveNode, RenameNode, MoveNode, DuplicateNode, SetProperties, SetMask,
-                 InstallResource, SetDependencies, Paint, RecolorStroke, MergeNodes, SplitNode, ConvertColor>;
+                 InstallResource, SetDependencies, Paint, RecolorStroke, AdjustStrokeSamples, MergeNodes, SplitNode, ConvertColor>;
 struct Command {
     std::uint32_t version = 1;
     std::vector<Operation> operations;

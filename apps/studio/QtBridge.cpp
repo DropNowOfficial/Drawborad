@@ -4,6 +4,8 @@
 #include "brush/OriginalLineartFill.h"
 #include "brush/MixedLineartStack.h"
 #include "brush/SelectedBoundaryFill.h"
+#include "brush/LocalStrokeEdit.h"
+#include "core/FreehandEvent.h"
 #include "brush/FillRegionReview.h"
 #include "brush/HollowInkCommand.h"
 #include "brush/DerivedHollowFill.h"
@@ -53,6 +55,7 @@ QtBridge::QtBridge(QObject* parent)
     connect(workflow_,&WorkflowController::changed,this,&QtBridge::changed);
     poll_.setInterval(25);
     connect(&poll_, &QTimer::timeout, this, [this] {
+        finishLocalStrokeEdit();
         broker_.poll();
         if (!running_) return;
         auto state = broker_.status(*running_);
@@ -77,8 +80,66 @@ bool QtBridge::acceptFill(){
     auto command=std::move(*pendingFill_);pendingFill_.reset();pendingFillPreview_.reset();pendingFillSource_.reset();
     std::optional<NodeId> paintedLayer;for(const auto& op:command.operations)if(const auto* p=std::get_if<Paint>(&op))paintedLayer=p->event.layerId;
     const auto retained=activeLayer_;const bool keepDetail=retained&&current->nodes->contains(*retained)&&current->nodes->at(*retained).stage==FinishingLayerStage&&nativeLayerPaintable(*current,*retained);
-    auto committed=app_.apply(command);if(committed&&paintedLayer&&!keepDetail)activeLayer_=paintedLayer;fillNotice_=committed?tr("已接受区域操作，独立图层已更新；原线稿未改，可撤销和保存。"):QString::fromStdString(committed.error().messageKey);emit changed();return bool(committed);
+    const bool localEdit=command.operations.size()==1&&std::holds_alternative<AdjustStrokeSamples>(command.operations.front());
+    auto committed=app_.apply(command);if(committed&&paintedLayer&&!keepDetail)activeLayer_=paintedLayer;fillNotice_=committed?(localEdit?tr("已接受原笔迹的局部修整；未新增笔迹或图层，颜色和时间不变，可撤销和保存。"):tr("已接受区域操作，独立图层已更新；原线稿未改，可撤销和保存。")):QString::fromStdString(committed.error().messageKey);emit changed();return bool(committed);
 }
+QVariantList QtBridge::localStrokePoints() const try {
+    QVariantList out;const auto s=app_.snapshot();
+    if(!s||busy()||workflow_->pending()||replaying()||s->eventIndex->empty()||s->eventIndex->size()>8192)return out;
+    const auto& e=s->eventIndex->back();
+    if(e.engineVersion!=19||e.toolId!="smooth-ink-aa"||!nativeLayerPaintable(*s,e.layerId)||!validateSmoothInkEvent(e))return out;
+    out.reserve(qsizetype(e.geometry.size()));for(const auto& p:e.geometry)out.push_back(QVariantMap{{"x",p.x},{"y",p.y},{"pressure",p.pressure}});return out;
+}catch(const std::bad_alloc&){return {};}
+bool QtBridge::previewLocalStrokeEdit(int sampleIndex,double radius,double dx,double dy,double pressureDelta) try {
+    const auto fail=[&](const QString& reason){fillNotice_=reason;emit changed();return false;};
+    const auto s=app_.snapshot();
+    if(!s||busy()||workflow_->pending()||replaying()||sampleIndex<0||s->eventIndex->empty())return fail(tr("请先结束当前任务，并选择最后一笔连续实墨的有效样本。"));
+    const auto& last=s->eventIndex->back();
+    if(last.engineVersion!=19||last.toolId!="smooth-ink-aa"||std::size_t(sampleIndex)>=last.geometry.size()||last.geometry.size()>4096||!nativeLayerPaintable(*s,last.layerId))return fail(tr("本次只允许修整全局最后一笔可写连续实墨；工程未改。"));
+    if(!std::isfinite(radius)||radius<=0||radius>128||!std::isfinite(dx)||!std::isfinite(dy)||std::abs(dx)>128||std::abs(dy)>128||!std::isfinite(pressureDelta)||std::abs(pressureDelta)>1)return fail(tr("半径须为0到128之间的正数，位移每轴≤128原像素，压力增量绝对值≤1。"));
+    const auto snapshot=*s;const auto id=last.id;const auto generation=canvasGeneration_;
+    fillPool_.setMaxThreadCount(1);fillStop_=std::stop_source{};const auto stop=fillStop_.get_token();
+    {std::lock_guard lock(localEditMutex_);localEditCompletion_.reset();}
+    fillBusy_=true;fillNotice_=tr("正在按原笔迹弧长计算局部修整并验收画面；尚未提交，可取消。范围外样本和原图不改。");emit changed();
+    fillPool_.start([this,snapshot,id,generation,stop,sampleIndex,radius,dx,dy,pressureDelta]{
+        LocalEditCompletion done{std::nullopt,snapshot,std::nullopt,{},stop,generation};
+        try {
+            auto command=localStrokeEditCommand(snapshot,id,std::size_t(sampleIndex),radius,dx,dy,pressureDelta,stop);
+            if(!command)done.failure=QString::fromStdString(command.error().messageKey);
+            else {
+                auto candidate=Document::fromSnapshot(snapshot);
+                if(!candidate)done.failure=QString::fromStdString(candidate.error().messageKey);
+                else {
+                    auto applied=candidate.value().apply(command.value(),snapshot.revision);
+                    if(!applied)done.failure=QString::fromStdString(applied.error().messageKey);
+                    else {
+                        const auto edited=candidate.value().snapshot();const auto layer=edited.eventIndex->back().layerId;
+                        if(edited.nodes->at(layer).stage==FinishingLayerStage){auto projected=projectControlledLineart(edited,stop);if(!projected)done.failure=QString::fromStdString(projected.error().messageKey);}
+                        if(done.failure.isEmpty()){
+                            auto frame=renderMergedDocument(edited,{edited.revision},{},stop);
+                            if(!frame)done.failure=QString::fromStdString(frame.error().messageKey);
+                            else {done.command=std::move(command.value());done.preview=edited;}
+                        }
+                    }
+                }
+            }
+        }catch(const std::bad_alloc&){done.failure=QStringLiteral("stroke-edit.preview-allocation");}
+        // Busy remains true until this bounded mailbox is drained, including
+        // cancellation. No queued callback allocation can strand the operation.
+        std::lock_guard lock(localEditMutex_);localEditCompletion_=std::move(done);
+    });
+    return true;
+}catch(const std::bad_alloc&){fillStop_.request_stop();fillBusy_=false;fillNotice_=tr("局部修整启动内存不足，工程未修改。");emit changed();return false;}
+void QtBridge::finishLocalStrokeEdit() try {
+    std::optional<LocalEditCompletion> done;
+    {std::lock_guard lock(localEditMutex_);if(!localEditCompletion_)return;done=std::move(localEditCompletion_);localEditCompletion_.reset();}
+    fillBusy_=false;const auto current=app_.snapshot();
+    if(done->stop.stop_requested()){fillNotice_=tr("局部修整已取消，原工程未修改。");emit changed();return;}
+    if(!current||replaying()||current->documentId!=done->source.documentId||current->revision!=done->source.revision||canvasGeneration_!=done->generation){fillNotice_=tr("工程已改变，旧局部修整结果已丢弃。");emit changed();return;}
+    if(!done->failure.isEmpty()||!done->command||!done->preview){fillNotice_=tr("局部修整未提交，工程未改：")+done->failure;emit changed();return;}
+    pendingFill_=std::move(done->command);pendingFillSource_=std::move(done->source);pendingFillPreview_=std::move(done->preview);pendingFillGeneration_=done->generation;
+    fillNotice_=tr("局部修整预览，尚未提交：仅沿原笔迹弧长附近调整位置/压力，未新增图层；范围外样本、颜色及时间不变。请接受或取消。");emit changed();
+}catch(const std::bad_alloc&){fillBusy_=false;pendingFill_.reset();pendingFillSource_.reset();pendingFillPreview_.reset();fillNotice_=tr("局部修整预览内存不足，未提交工程。");emit changed();}
 bool QtBridge::dirty() const {return app_.dirty() || workflow_->pending() || fillPending();}
 int QtBridge::eventCount() const {const auto s=app_.snapshot();return s?int(std::min<std::size_t>(s->eventIndex->size(),std::size_t(INT_MAX))):0;}
 int QtBridge::replayCount() const {return replayCount_<0?eventCount():std::min(replayCount_,eventCount());}
