@@ -2,6 +2,8 @@
 #include "ReviewJob.h"
 #include "ReconstructionJob.h"
 #include "PaintedDocument.h"
+#include "LayerStream.h"
+#include "codecs/OraStream.h"
 #include "SemanticManifest.h"
 #include "codecs/ImageReader.h"
 #include "apps/studio/QtBridge.h"
@@ -627,10 +629,42 @@ bool WorkflowController::refineRectangle(double x0,double y0,double x1,double y1
     return startPaintJob({{"mode","refine"},{"object",QString::fromLatin1(QByteArray(reinterpret_cast<const char*>(id.bytes.data()),16).toHex())},
         {"x",qint64(x)},{"y",qint64(y)},{"width",qint64(right-x)},{"height",qint64(bottom-y)}});
 }
+bool WorkflowController::exportNative(const QUrl& url,const QString& format){
+    const auto snapshot=bridge_.canvasSnapshot();
+    if(busy() || pending_ || !snapshot || !url.isLocalFile() || (format!="png" && format!="ora"))return false;
+    // Export the full committed document, never the display cache or a scaled preview.
+    ExportRequest request;request.path=std::filesystem::path(url.toLocalFile().toStdWString());request.size=snapshot->spec.pixelSize;
+    request.format=format=="ora"?ExportFormat::Ora:ExportFormat::Png;
+    auto plan=preflightExport(*snapshot,request);if(!plan){fail(QString::fromStdString(plan.error().messageKey));return false;}
+    RasterEncodingOptions options;options.ppi=snapshot->spec.ppi;
+    if(!snapshot->spec.colorSpec.profileId.empty()){
+        const auto found=snapshot->resources->find(snapshot->spec.colorSpec.profileId);
+        if(found==snapshot->resources->end() || found->second.kind!=ResourceKind::Profile || !found->second.bytes){fail(tr("缺少输出 ICC 资源，未导出。"));return false;}
+        options.iccProfile=*found->second.bytes;
+    }
+    auto frame=renderMergedDocument(*snapshot,{snapshot->revision});if(!frame){fail(QString::fromStdString(frame.error().messageKey));return false;}
+    Result<ExportReport> written=error(ErrorCode::InvalidInput,"export.format");
+    if(format=="png")written=ExportService{}.write(plan.value(),frame.value().merged,{},options);
+    else {
+        auto stream=NativeLayerStream::create(*snapshot,{snapshot->revision});if(!stream){fail(QString::fromStdString(stream.error().messageKey));return false;}
+        written=writeOraStream(plan.value(),stream.value().size(),[&](std::size_t index,std::stop_token stop){return stream.value().read(index,stop);},frame.value().merged,options);
+    }
+    if(!written){fail(QString::fromStdString(written.error().messageKey));return false;}
+    message_=tr("已导出全部已提交内容 %1：%2 × %3 px，%4 PPI，%5 × %6 英寸。RGB，不是 CMYK；像素尺寸不代表新增绘画细节。")
+        .arg(format.toUpper()).arg(qulonglong(request.size.width)).arg(qulonglong(request.size.height)).arg(options.ppi)
+        .arg(double(request.size.width)/options.ppi,0,'f',2).arg(double(request.size.height)/options.ppi,0,'f',2);
+    if(format=="ora")message_+=tr(" 独立叶图层保留；组层级展开，蒙版烘焙进像素，不保留锁定属性，并非完整组/蒙版往返编辑。");
+    if(options.iccProfile.empty())message_+=tr(" 未嵌入 ICC，不保证打印色彩匹配。");
+    else message_+=tr(" 已携带原 ICC，未做印刷设备转换或打样。");
+    for(const auto& warning:written.value().warnings)message_+=" "+QString::fromStdString(warning);
+    emit changed();return true;
+}
 bool WorkflowController::exportPsd(const QUrl& url){
     const auto snapshot=bridge_.canvasSnapshot();
     if(busy() || pending_ || !snapshot || !url.isLocalFile())return false;
-    auto painted=renderPaintedDocument(*snapshot,{snapshot->revision});if(!painted){fail(QString::fromStdString(painted.error().messageKey));return false;}
+    auto painted=renderPaintedDocument(*snapshot,{snapshot->revision});if(!painted){
+        fail(tr("当前 PSD 路径有尺寸/图层限制，未导出，也未覆盖文件。海报或导入栅格请改用原尺寸 PNG / 叶图层 ORA；ORA 不保留完整组与蒙版结构。")+" "+QString::fromStdString(painted.error().messageKey));return false;
+    }
     PsdWriteRequest request;request.path=std::filesystem::path(url.toLocalFile().toStdWString());request.size=snapshot->spec.pixelSize;
     request.format=snapshot->spec.colorSpec.format;request.profile=snapshot->spec.colorSpec.profileId;request.ppi=snapshot->spec.ppi;
     if(!request.profile.empty()){

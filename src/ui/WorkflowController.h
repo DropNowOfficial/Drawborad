@@ -139,6 +139,7 @@ class WorkflowController : public QObject {
     Q_INVOKABLE bool startReconstruction();
     Q_INVOKABLE bool refineRectangle(double x0,double y0,double x1,double y1);
     Q_INVOKABLE bool exportPsd(const QUrl&);
+    Q_INVOKABLE bool exportNative(const QUrl&,const QString& format);
     Q_INVOKABLE bool relinkSource(const QUrl&);
     void reset();
     void restore(const DocumentSnapshot&);
@@ -146,3 +147,4 @@ class WorkflowController : public QObject {
     void changed();
 };
 }
+

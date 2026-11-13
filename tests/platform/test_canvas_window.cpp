@@ -1,4 +1,7 @@
 #include "apps/studio/QtBridge.h"
+#include "ui/WorkflowController.h"
+#include <QFile>
+#include <QDir>
 #include "platform/CanvasItem.h"
 #include "core/LineartRaster.h"
 #include "storage/ProjectStore.h"
@@ -56,5 +59,13 @@ int main(int argc,char**argv){
  QTest::mousePress(uiWindow,Qt::LeftButton,{},start);uiBridge.setReplayCount(0);QTest::mouseRelease(uiWindow,Qt::LeftButton,{},end);assert(uiBridge.canvasSnapshot()->sameContent(posterPainted));
  uiBridge.setReplayCount(0);uiBridge.setReplayCount(uiBridge.eventCount());settle(*uiCanvas);assert(uiCanvas->renderError().isEmpty());assert(uiBridge.canvasSnapshot()->sameContent(posterPainted));auto latestShot=uiWindow->grabWindow();int latestDark=255;for(int dy=-2;dy<=2;dy++)for(int dx=-2;dx<=2;dx++)latestDark=std::min(latestDark,latestShot.pixelColor(strokeMid+QPoint(dx,dy)).red());assert(latestDark<120);
  {auto temporary=std::make_unique<CanvasItem>();temporary->setSize({320,320});temporary->setProperty("bridge",QVariant::fromValue<QObject*>(&uiBridge));assert(temporary->rendering());QTest::qWait(20);}QTest::qWait(20);
+ auto workflow=qobject_cast<WorkflowController*>(uiBridge.workflow());assert(workflow);assert(uiWindow->findChild<QObject*>("nativeExportButton"));
+ const auto exportDir=qEnvironmentVariable("DRAWBORAD_TEST_EXPORT_DIR",dir.path());assert(QDir().mkpath(exportDir));auto pngPath=exportDir+"/poster-export.png";auto oraPath=exportDir+"/poster-export.ora";
+ assert(workflow->exportNative(QUrl::fromLocalFile(pngPath),"png"));assert(uiBridge.canvasSnapshot()->sameContent(posterPainted));
+ QImage png(pngPath);assert(png.width()==3300&&png.height()==5100);assert(std::abs(png.dotsPerMeterX()*0.0254-300)<0.1);assert(png.pixelColor(1650,2550).red()>250&&png.pixelColor(1650,2550).green()<5);
+ assert(workflow->exportNative(QUrl::fromLocalFile(oraPath),"ora"));QFile ora(oraPath);assert(ora.open(QIODevice::ReadOnly));auto oraBytes=ora.readAll();ora.close();assert(oraBytes.contains("xres=\"300\"")&&oraBytes.contains("w=\"3300\"")&&oraBytes.contains("h=\"5100\""));assert(oraBytes.count("<layer ")==2);
+ assert(workflow->message().contains("RGB")&&workflow->message().contains("CMYK"));assert(uiBridge.canvasSnapshot()->sameContent(posterPainted));
+ assert(!workflow->exportPsd(QUrl::fromLocalFile(exportDir+"/unsupported-poster.psd")));assert(!QFile::exists(exportDir+"/unsupported-poster.psd"));assert(workflow->message().contains("PNG /"));
+ assert(!workflow->exportNative(QUrl::fromLocalFile(oraPath),"ora"));assert(ora.open(QIODevice::ReadOnly));assert(ora.readAll()==oraBytes);assert(uiBridge.canvasSnapshot()->sameContent(posterPainted));
  std::cout<<"PASS real Qt software/QML: imported pixels, native paint, pan/zoom, visible error recovery; 3300x5100 seam-free display, paint, save/reopen\n";
 }

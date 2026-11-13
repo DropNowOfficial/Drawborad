@@ -33,7 +33,7 @@ private:
     std::optional<Error> failure_;
     Result<void> fail(Error);
     Result<void> ready();
-    Result<void> emit(std::span<const std::uint8_t>);
+    Result<void> emitBytes(std::span<const std::uint8_t>);
     Result<void> start(std::string,std::uint16_t,std::uint32_t,std::uint32_t);
 };
 }

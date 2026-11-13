@@ -15,6 +15,8 @@ ApplicationWindow {
     property bool approvedClose: false
     property bool closeAfterSave: false
     Timer { id: replayTimer; interval: 100; repeat: true; onTriggered: { if (studio.busy || studio.replayCount >= studio.eventCount) stop(); else studio.setReplayCount(studio.replayCount + 1) } }
+    FileDialog { id: pngExportDialog; title: qsTr("导出原尺寸 RGB PNG（新文件名）"); fileMode: FileDialog.SaveFile; defaultSuffix: "png"; nameFilters: ["PNG (*.png)"]; onAccepted: studio.workflow.exportNative(selectedFile, "png") }
+    FileDialog { id: oraExportDialog; title: qsTr("导出叶图层 ORA（组展开、蒙版烘焙；新文件名）"); fileMode: FileDialog.SaveFile; defaultSuffix: "ora"; nameFilters: ["OpenRaster (*.ora)"]; onAccepted: studio.workflow.exportNative(selectedFile, "ora") }
     FileDialog { id: psdDialog; title: qsTr("导出笔迹分层 PSD（请选择新文件名）"); fileMode: FileDialog.SaveFile; defaultSuffix: "psd"; nameFilters: ["Photoshop (*.psd)"]; onAccepted: studio.workflow.exportPsd(selectedFile) }
     FileDialog { id: relinkDialog; title: qsTr("选择与原始文件哈希一致的图片"); nameFilters: ["PNG/JPEG (*.png *.jpg *.jpeg)"]; onAccepted: studio.workflow.relinkSource(selectedFile) }
     onClosing: function(event) {
@@ -37,7 +39,13 @@ ApplicationWindow {
             Button { text: qsTr("Save"); enabled: studio.hasDocument; onClicked: saveDialog.open() }
             Button { objectName: "promptReviewButton"; text: qsTr("按提示补候选"); enabled: studio.workflow.hasReview && studio.workflow.modelReady && !studio.busy; onClicked: studio.workflow.startPrompted() }
             Button { objectName: "reconstructButton"; text: qsTr("生成笔迹"); enabled: studio.workflow.editingExisting && !studio.workflow.pending && !studio.busy; onClicked: { if (studio.workflow.startReconstruction()) workspaceTabs.currentIndex = 1 } }
-            Button { objectName: "exportPsdButton"; text: qsTr("导出分层 PSD"); enabled: studio.hasDocument && !studio.busy && !studio.workflow.pending; onClicked: psdDialog.open() }
+            Button { objectName: "nativeExportButton"; text: qsTr("PNG / ORA"); enabled: studio.hasDocument && !studio.busy && !studio.workflow.pending; onClicked: nativeExportMenu.open()
+                Menu { id: nativeExportMenu
+                    MenuItem { text: qsTr("原尺寸 RGB PNG"); onTriggered: pngExportDialog.open() }
+                    MenuItem { text: qsTr("叶图层 ORA（组/蒙版烘焙）"); onTriggered: oraExportDialog.open() }
+                }
+            }
+            Button { objectName: "exportPsdButton"; text: qsTr("PSD（受限）"); enabled: studio.hasDocument && !studio.busy && !studio.workflow.pending; onClicked: psdDialog.open() }
         }
     }
     RowLayout {

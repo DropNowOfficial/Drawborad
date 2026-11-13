@@ -36,7 +36,7 @@ Result<void> ZipStream::ready(){
  if(!sink_)return fail(error(ErrorCode::InvalidInput,"zip.sink"));
  return {};
 }
-Result<void> ZipStream::emit(std::span<const std::uint8_t> data){
+Result<void> ZipStream::emitBytes(std::span<const std::uint8_t> data){
  auto ok=ready();if(!ok)return ok;
  const auto cap=std::min<std::uint64_t>(limits_.maxBytes,UINT32_MAX);
  if(offset_>cap || data.size()>cap-offset_)return fail(error(ErrorCode::BudgetExceeded,"zip.byte-limit"));
@@ -60,7 +60,7 @@ Result<void> ZipStream::start(std::string name,std::uint16_t flags,std::uint32_t
  Bytes header;u32(header,0x04034b50);u16(header,20);u16(header,flags);u16(header,0);u16(header,0);u16(header,0x21);
  u32(header,checksum);u32(header,size);u32(header,size);u16(header,std::uint16_t(current_.name.size()));u16(header,0);
  header.insert(header.end(),current_.name.begin(),current_.name.end());
- ok=emit(header);if(!ok)return ok;metadata_+=cost;open_=true;crc_=0xffffffffu;return {};
+ ok=emitBytes(header);if(!ok)return ok;metadata_+=cost;open_=true;crc_=0xffffffffu;return {};
 }
 Result<void> ZipStream::addKnown(std::string name,std::span<const std::uint8_t> data) try {
  auto ok=ready();if(!ok)return ok;
@@ -68,7 +68,7 @@ Result<void> ZipStream::addKnown(std::string name,std::span<const std::uint8_t> 
  auto checksum=std::uint32_t(0xffffffffu);
  for(std::size_t at=0;at<data.size();){ok=ready();if(!ok)return ok;const auto n=std::min<std::size_t>(65536,data.size()-at);checksum=crc(checksum,data.subspan(at,n));at+=n;}
  ok=start(std::move(name),0x0800,std::uint32_t(data.size()),~checksum);if(!ok)return ok;
- ok=emit(data);if(!ok)return ok;entries_.push_back(std::move(current_));open_=false;return {};
+ ok=emitBytes(data);if(!ok)return ok;entries_.push_back(std::move(current_));open_=false;return {};
 }catch(const std::bad_alloc&){return fail(error(ErrorCode::BudgetExceeded,"zip.allocation"));}catch(...){return fail(error(ErrorCode::IoError,"zip.sink-exception"));}
 Result<void> ZipStream::begin(std::string name) try {return start(std::move(name),0x0808,0,0);}
 catch(const std::bad_alloc&){return fail(error(ErrorCode::BudgetExceeded,"zip.allocation"));}catch(...){return fail(error(ErrorCode::IoError,"zip.sink-exception"));}
@@ -77,13 +77,13 @@ Result<void> ZipStream::write(std::span<const std::uint8_t> data) try {
  if(data.size()>UINT32_MAX-current_.size)return fail(error(ErrorCode::BudgetExceeded,"zip.entry-size"));
  for(std::size_t at=0;at<data.size();){
   const auto n=std::min<std::size_t>(65536,data.size()-at);auto chunk=data.subspan(at,n);
-  ok=emit(chunk);if(!ok)return ok;crc_=crc(crc_,chunk);current_.size+=std::uint32_t(n);at+=n;
+  ok=emitBytes(chunk);if(!ok)return ok;crc_=crc(crc_,chunk);current_.size+=std::uint32_t(n);at+=n;
  }return {};
 }catch(const std::bad_alloc&){return fail(error(ErrorCode::BudgetExceeded,"zip.allocation"));}catch(...){return fail(error(ErrorCode::IoError,"zip.sink-exception"));}
 Result<void> ZipStream::end() try {
  auto ok=ready();if(!ok)return ok;if(!open_)return fail(error(ErrorCode::InvalidInput,"zip.no-entry"));
  current_.crc=~crc_;Bytes descriptor;u32(descriptor,0x08074b50);u32(descriptor,current_.crc);u32(descriptor,current_.size);u32(descriptor,current_.size);
- ok=emit(descriptor);if(!ok)return ok;entries_.push_back(std::move(current_));open_=false;return {};
+ ok=emitBytes(descriptor);if(!ok)return ok;entries_.push_back(std::move(current_));open_=false;return {};
 }catch(const std::bad_alloc&){return fail(error(ErrorCode::BudgetExceeded,"zip.allocation"));}catch(...){return fail(error(ErrorCode::IoError,"zip.sink-exception"));}
 Result<void> ZipStream::finish() try {
  auto ok=ready();if(!ok)return ok;if(open_)return fail(error(ErrorCode::InvalidInput,"zip.entry-unfinished"));
@@ -94,9 +94,9 @@ Result<void> ZipStream::finish() try {
  for(const auto& e:entries_){
   Bytes header;u32(header,0x02014b50);u16(header,20);u16(header,20);u16(header,e.flags);u16(header,0);u16(header,0);u16(header,0x21);
   u32(header,e.crc);u32(header,e.size);u32(header,e.size);u16(header,std::uint16_t(e.name.size()));u16(header,0);u16(header,0);u16(header,0);u16(header,0);u32(header,0);u32(header,e.offset);
-  header.insert(header.end(),e.name.begin(),e.name.end());ok=emit(header);if(!ok)return ok;
+  header.insert(header.end(),e.name.begin(),e.name.end());ok=emitBytes(header);if(!ok)return ok;
  }
  Bytes end;u32(end,0x06054b50);u16(end,0);u16(end,0);u16(end,std::uint16_t(entries_.size()));u16(end,std::uint16_t(entries_.size()));u32(end,std::uint32_t(centralSize));u32(end,centralOffset);u16(end,0);
- ok=emit(end);if(!ok)return ok;finished_=true;return {};
+ ok=emitBytes(end);if(!ok)return ok;finished_=true;return {};
 }catch(const std::bad_alloc&){return fail(error(ErrorCode::BudgetExceeded,"zip.allocation"));}catch(...){return fail(error(ErrorCode::IoError,"zip.sink-exception"));}
 }

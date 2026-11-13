@@ -77,11 +77,15 @@ void appendImageResource(Bytes& resources, std::uint16_t id,
 }
 
 Result<Bytes> imageResources(const PsdWriteRequest& request) {
-    if (!std::isfinite(request.ppi) || request.ppi <= 0.0 || request.ppi > 100000.0)
+    // ResolutionInfo stores unsigned 16.16 values, not arbitrary positive doubles.
+    constexpr double maxPpi = double(UINT32_MAX) / 65536.0;
+    if (!std::isfinite(request.ppi) || request.ppi <= 0.0 || request.ppi > maxPpi)
         return error(ErrorCode::InvalidInput, "psd.ppi");
     Bytes resources;
     Bytes resolution;
     const auto fixed = std::uint32_t(std::llround(request.ppi * 65536.0));
+    if (fixed == 0)
+        return error(ErrorCode::InvalidInput, "psd.ppi");
     put32(resolution, fixed);
     put16(resolution, 1);
     put16(resolution, 1);
@@ -927,3 +931,4 @@ Result<void> writePsd(const PsdWriteRequest& request, std::stop_token stop,
 }
 
 } // namespace drawborad
+

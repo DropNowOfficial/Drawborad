@@ -4,6 +4,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
+#include <cmath>
 using namespace drawborad;
 TEST("C05 layered PSD writer emits layer records readable by independent header parser"){PsdWriteRequest q;q.size={2,2};q.format={ColorMode::RGB,Depth::U8,true};PsdLayerPixels l;l.name="Layer";l.pixels.width=2;l.pixels.height=2;l.pixels.format=q.format;l.pixels.rowStride=8;l.pixels.bytes.assign(16,255);q.layers.push_back(l);auto b=encodePsd(q);CHECK(b);CodecLimits lim;auto r=readPhotoshopHeader(b.value(),lim);CHECK(r);CHECK(r.value().layers.size()==1);CHECK(r.value().size==q.size);}
 TEST("C05 refuses PSD dimensions above format limit"){PsdWriteRequest q;q.size={30001,1};q.format={ColorMode::RGB,Depth::U8,true};CHECK(!encodePsd(q));}
@@ -641,4 +643,37 @@ TEST("C05 rejects unclosed Photoshop group boundary"){
     CHECK(!encoded);
     CHECK(encoded.error().code==ErrorCode::InvalidInput);
     CHECK(encoded.error().messageKey=="psd.section-divider-balance");
+}
+
+
+TEST("C05 PSD resolution rejects unrepresentable fixed16 values without replacing output") {
+    PsdWriteRequest q;
+    q.size={1,1};q.format={ColorMode::RGB,Depth::U8,true};
+    PsdLayerPixels layer;layer.name="Resolution";layer.pixels.width=1;layer.pixels.height=1;
+    layer.pixels.format=q.format;layer.pixels.rowStride=4;layer.pixels.bytes={10,20,30,255};
+    q.layers.push_back(layer);q.merged=layer.pixels;
+    q.path=std::filesystem::temp_directory_path()/"drawborad-c05-invalid-ppi.psd";
+    q.overwrite=true;
+    const Bytes original{9,8,7};
+    {std::ofstream out(q.path,std::ios::binary|std::ios::trunc);out.write(reinterpret_cast<const char*>(original.data()),original.size());}
+    for (const auto invalid : {0.0, -1.0, 0.25/65536.0, 65536.0, 100000.0,
+            std::numeric_limits<double>::max(), std::numeric_limits<double>::infinity(),
+            std::numeric_limits<double>::quiet_NaN()}) {
+        q.ppi=invalid;
+        auto memory=encodePsd(q);CHECK(!memory);CHECK(memory.error().messageKey=="psd.ppi");
+        auto disk=writePsd(q);CHECK(!disk);CHECK(disk.error().messageKey=="psd.ppi");
+        std::ifstream in(q.path,std::ios::binary);Bytes actual((std::istreambuf_iterator<char>(in)),{});
+        CHECK(actual==original);
+    }
+    std::filesystem::remove(q.path);
+    for (const auto valid : {1.0/65536.0, 72.0, 300.25, double(UINT32_MAX)/65536.0}) {
+        q.ppi=valid;
+        auto encoded=encodePsd(q);CHECK(encoded);
+        auto info=readPhotoshopHeader(encoded.value(),CodecLimits{});CHECK(info);
+        CHECK(info.value().ppi==valid);
+        CHECK(writePsd(q));
+        std::ifstream in(q.path,std::ios::binary);Bytes disk((std::istreambuf_iterator<char>(in)),{});in.close();
+        CHECK(disk==encoded.value());
+    }
+    std::filesystem::remove(q.path);
 }
