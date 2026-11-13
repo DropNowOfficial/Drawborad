@@ -4,5 +4,5 @@
 namespace drawborad {
 // Display-only composite: never replaces source layers or changes the document.
 Result<QImage> renderCanvasFrame(const DocumentSnapshot&,std::uint64_t replayCount,
-                                MergedBudget={});
+                                MergedBudget={},std::stop_token={});
 }

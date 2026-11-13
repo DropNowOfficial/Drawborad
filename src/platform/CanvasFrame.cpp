@@ -2,9 +2,9 @@
 #include <algorithm>
 #include <memory>
 namespace drawborad {
-Result<QImage> renderCanvasFrame(const DocumentSnapshot& snapshot,std::uint64_t count,MergedBudget budget){
+Result<QImage> renderCanvasFrame(const DocumentSnapshot& snapshot,std::uint64_t count,MergedBudget budget,std::stop_token stop){
     if(!snapshot.eventIndex)return error(ErrorCode::CorruptData,"document.structure");
-    auto rendered=renderMergedDocument(snapshot,{snapshot.revision,std::min<std::uint64_t>(count,snapshot.eventIndex->size()),UINT64_MAX},budget);
+    auto rendered=renderMergedDocument(snapshot,{snapshot.revision,std::min<std::uint64_t>(count,snapshot.eventIndex->size()),UINT64_MAX},budget,stop);
     if(!rendered)return rendered.error();
     try{
         auto pixels=std::make_unique<TileData>(std::move(rendered.value().merged));

@@ -56,6 +56,7 @@ ApplicationWindow {
                 TabButton { text: qsTr("绘制结果") }
             }
             NativeCanvas { id: nativeCanvas; objectName: "nativeCanvas"; anchors.fill: parent; anchors.margins: 24; anchors.topMargin: workspaceTabs.visible ? 64 : 24; visible: studio.hasDocument && !reviewPanel.visible; bridge: studio }
+            Label { objectName: "canvasRendering"; anchors.centerIn: nativeCanvas; visible: nativeCanvas.visible && nativeCanvas.rendering; text: qsTr("Rendering document…"); color: "#bcbcc4" }
             Label {
                 objectName: "canvasRenderError"
                 anchors.centerIn: nativeCanvas

@@ -9,20 +9,30 @@
 #include <QPointer>
 #include <QTransform>
 #include <mutex>
+#include <QThreadPool>
+#include <stop_token>
 namespace drawborad {
 class QtBridge;
 class CanvasItem : public QQuickItem {
     Q_OBJECT
     Q_PROPERTY(QObject* bridge READ studio WRITE setStudio NOTIFY studioChanged)
     Q_PROPERTY(double zoom READ zoom NOTIFY viewChanged)
+    Q_PROPERTY(bool rendering READ rendering NOTIFY renderErrorChanged)
     Q_PROPERTY(QString renderError READ renderError NOTIFY renderErrorChanged)
     Q_PROPERTY(QRectF documentRect READ documentRect NOTIFY viewChanged)
     QPointer<QtBridge> bridge_;
     mutable std::mutex snapshotMutex_;
     std::optional<DocumentSnapshot> snapshot_;
     QImage displayFrame_;
+    QImage completedFrame_;
+    QString completedError_;
+    bool completedLegacy_{false};
     QString renderError_;
     bool legacyDisplay_{false};
+    bool rendering_{false};
+    QThreadPool renderPool_;
+    std::stop_source renderStop_;
+    std::uint64_t renderGeneration_{0};
     std::uint64_t replayCount_{UINT64_MAX};
     double zoom_{1};
     QPointF pan_;
@@ -64,6 +74,8 @@ class CanvasItem : public QQuickItem {
     void renderErrorChanged();
   public:
     explicit CanvasItem(QQuickItem* parent = nullptr);
+    ~CanvasItem() override;
+    bool rendering() const;
     double zoom() const;
     QString renderError() const;
     QRectF documentRect() const;

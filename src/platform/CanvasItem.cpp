@@ -23,10 +23,13 @@
 #include <functional>
 namespace drawborad {
 CanvasItem::CanvasItem(QQuickItem* parent) : QQuickItem(parent) {
+    renderPool_.setMaxThreadCount(1);
     setFlag(ItemHasContents, true);
     setAcceptedMouseButtons(Qt::LeftButton | Qt::MiddleButton);
     setClip(true);
 }
+CanvasItem::~CanvasItem(){renderStop_.request_stop();renderPool_.clear();renderPool_.waitForDone();}
+bool CanvasItem::rendering() const {std::lock_guard lock(snapshotMutex_);return rendering_;}
 QObject* CanvasItem::studio() const { return bridge_; }
 void CanvasItem::setStudio(QObject* value) {
     auto next = qobject_cast<QtBridge*>(value);
@@ -54,35 +57,39 @@ void CanvasItem::refreshSnapshot() {
             snapshot_->revision == next->revision && snapshot_->nodes == next->nodes &&
             snapshot_->eventIndex == next->eventIndex && replayCount_==nextCount) return;
     }
-    QImage frame;QString failure;bool legacy=false;
-    if(next){
-        auto rendered=renderCanvasFrame(*next,nextCount);
-        if(rendered){
-            // Cache display-ready pixels once per document revision, not on every pan.
-            frame=rendered.value().convertToFormat(QImage::Format_RGBA8888_Premultiplied);
-            if(frame.isNull())failure=QStringLiteral("canvas.image-allocation");
-        }
-        else {
-            // Preserve transformed native-only documents handled by the old scene graph.
-            // Never fall back when a raster layer would silently disappear.
-            legacy=rendered.error().messageKey=="merged.native-compositing-required" &&
-                std::all_of(next->nodes->begin(),next->nodes->end(),[&](const auto& entry){
-                    return entry.second.kind!=NodeKind::Layer || !layerVisible(*next,entry.first) || nativeLayerSupported(*next,entry.first);
-                });
-            if(!legacy)failure=QString::fromStdString(rendered.error().messageKey);
-        }
-    }
+    // A changed document/replay invalidates an in-progress input gesture.
+    stroke_.clear();strokeTarget_.reset();tabletStroke_=false;
+    renderStop_.request_stop();renderPool_.clear();renderStop_=std::stop_source{};
+    const auto token=renderStop_.get_token();std::uint64_t generation;
     {
         std::lock_guard lock(snapshotMutex_);
-        if(!snapshot_ || !next || snapshot_->documentId!=next->documentId || snapshot_->spec.pixelSize!=next->spec.pixelSize){
-            zoom_=1;pan_={};panGesture_.reset();
-        }
-        snapshot_=next;replayCount_=nextCount;displayFrame_=std::move(frame);
-        renderError_=failure;legacyDisplay_=legacy;
+        if(!snapshot_ || !next || snapshot_->documentId!=next->documentId || snapshot_->spec.pixelSize!=next->spec.pixelSize){zoom_=1;pan_={};panGesture_.reset();}
+        generation=++renderGeneration_;completedFrame_={};completedError_={};
+        snapshot_=next;replayCount_=nextCount;displayFrame_={};renderError_={};legacyDisplay_=false;rendering_=bool(next);
     }
-    emit renderErrorChanged();
-    update();emit viewChanged();
+    emit renderErrorChanged();update();emit viewChanged();
+    if(!next)return;
+    renderPool_.start([this,next,nextCount,token,generation]{
+        if(token.stop_requested())return;
+        QImage frame;QString failure;bool legacy=false;
+        auto rendered=renderCanvasFrame(*next,nextCount,{},token);
+        if(token.stop_requested())return;
+        if(rendered){frame=rendered.value().convertToFormat(QImage::Format_RGBA8888_Premultiplied);if(frame.isNull())failure=QStringLiteral("canvas.image-allocation");}
+        else {
+            legacy=rendered.error().messageKey=="merged.native-compositing-required" &&
+                std::all_of(next->nodes->begin(),next->nodes->end(),[&](const auto& entry){return entry.second.kind!=NodeKind::Layer || !layerVisible(*next,entry.first) || nativeLayerSupported(*next,entry.first);});
+            if(!legacy)failure=QString::fromStdString(rendered.error().messageKey);
+        }
+        if(token.stop_requested())return;
+        // One completion mailbox: stale queued notifications never retain poster images.
+        {std::lock_guard lock(snapshotMutex_);if(generation!=renderGeneration_)return;completedFrame_=std::move(frame);completedError_=failure;completedLegacy_=legacy;}
+        QMetaObject::invokeMethod(this,[this,generation]{
+            {std::lock_guard lock(snapshotMutex_);if(generation!=renderGeneration_)return;displayFrame_=std::move(completedFrame_);renderError_=completedError_;legacyDisplay_=completedLegacy_;rendering_=false;}
+            emit renderErrorChanged();update();
+        },Qt::QueuedConnection);
+    });
 }
+
 std::optional<std::pair<NodeId, NodeId>> CanvasItem::paintTarget(const DocumentSnapshot& s) const {
     if (bridge_)
         if (const auto id = bridge_->activeLayer(); id && nativeLayerPaintable(s, *id))
@@ -170,7 +177,7 @@ void CanvasItem::beginSample(InputSample sample, bool tablet, bool eraser) {
     strokeTarget_.reset();
     tabletStroke_ = tablet;
     eraser_ = eraser;
-    if (!bridge_ || bridge_->busy() || bridge_->replaying() || !renderError().isEmpty()) return;
+    if (!bridge_ || bridge_->busy() || bridge_->replaying() || rendering() || !renderError().isEmpty()) return;
     const auto snapshot = bridge_->canvasSnapshot();
     if (!snapshot) return;
     const auto target = paintTarget(*snapshot);
@@ -180,7 +187,7 @@ void CanvasItem::beginSample(InputSample sample, bool tablet, bool eraser) {
 }
 void CanvasItem::appendSample(InputSample s){if(!stroke_.empty())stroke_.push_back(s);}
 void CanvasItem::finishStroke(){
-    if(!bridge_||stroke_.empty()||!renderError().isEmpty()){stroke_.clear();strokeTarget_.reset();return;}std::optional<DocumentSnapshot> snap;{std::lock_guard lock(snapshotMutex_);snap=snapshot_;}
+    if(!bridge_||bridge_->busy()||bridge_->replaying()||stroke_.empty()||rendering()||!renderError().isEmpty()){stroke_.clear();strokeTarget_.reset();return;}std::optional<DocumentSnapshot> snap;{std::lock_guard lock(snapshotMutex_);snap=snapshot_;}
     if(!snap||!strokeTarget_||strokeTarget_->document!=snap->documentId||
        strokeTarget_->generation!=bridge_->canvasGeneration()||
        !nativeLayerPaintable(*snap,strokeTarget_->layer)||
