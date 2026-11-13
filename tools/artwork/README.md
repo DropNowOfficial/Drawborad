@@ -37,7 +37,7 @@ g++ -std=c++20 -O0 -Wall -Wextra -Wpedantic -Werror \
   tools/artwork/BuildCoverRegions.cpp \
   src/ui/{LayerStream,MergedDocument}.cpp \
   src/core/{LineartRaster,Document,DocumentSpec,CommandBus,Digest}.cpp \
-  src/render/{ReferenceRenderer,CoverageRasterizer,FineLineCoverage,DryInkCoverage,PixelBlend}.cpp \
+  src/render/{ReferenceRenderer,CoverageRasterizer,FineLineCoverage,DryInkCoverage,ChiselInkCoverage,PixelBlend}.cpp \
   src/storage/{ProjectStore,ProjectCodec,FileIO,Journal}.cpp \
   src/codecs/{OraStream,ZipStream,RasterWriters,AtomicExport}.cpp \
   /usr/lib/x86_64-linux-gnu/libpng16.so.16 -o /tmp/build_cover_regions
@@ -168,7 +168,7 @@ This comparison is renderer output, not a GUI screenshot or final artwork.
 ```sh
 g++ -std=c++20 -O0 -Wall -Wextra -Wpedantic -Werror -Isrc \
  tools/artwork/BuildDryInkStudy.cpp \
- src/render/{CoverageRasterizer,FineLineCoverage,DryInkCoverage,PixelBlend}.cpp \
+ src/render/{CoverageRasterizer,FineLineCoverage,DryInkCoverage,ChiselInkCoverage,PixelBlend}.cpp \
  src/core/{Document,DocumentSpec,CommandBus,Digest}.cpp -o /tmp/build_dry_ink_study
 /tmp/build_dry_ink_study /tmp/normal-vs-dry.ppm
 ```
@@ -180,8 +180,7 @@ controls phase, not canvas random dots. Opacity still applies at normal blending
 Straight-path insertion and tile partition equality are tested. Curved paths use
 local segment tangents; their join/texture quality remains a visual limitation.
 Regular mathematical fibers are not yet proof of convincing natural dry brush.
-For current native tooling, add `src/render/DryInkCoverage.cpp` to the earlier
-full build command as CoverageRasterizer now dispatches to its opt-in function.
+The manual commands above must link every coverage implementation dispatched by CoverageRasterizer; the repository dependency guard checks these documented source lists alongside isolated build scripts.
 
 ### Dry-ink nearest-frame revision
 
