@@ -1,3 +1,5 @@
+> Historical checkpoint: the then-missing hollow-to-color link is now provided by the restricted [controlled derived reference](2026-11-13-controlled-hollow-fill.md). Other limits and unmet art goals remain.
+
 # Desktop selected-ink hollow preview
 
 ## Connected path
