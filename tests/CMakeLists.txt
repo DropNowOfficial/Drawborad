@@ -281,3 +281,6 @@ include(${PROJECT_SOURCE_DIR}/cmake/TestTargets.cmake)
 lineart_repair_test(B42.ChiselInk test_chisel_ink.cpp)
 
 set_tests_properties(B42.ChiselInk PROPERTIES LABELS "CorePortable")
+
+add_test(NAME Build.NativeCoverageLists COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/build/test_native_coverage_lists.py)
+set_tests_properties(Build.NativeCoverageLists PROPERTIES LABELS "CorePortable")
