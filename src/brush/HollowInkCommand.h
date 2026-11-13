@@ -55,11 +55,13 @@ inline Result<Command> hollowInkOverlayCommand(const DocumentSnapshot& s,NodeId 
   if(stop.stop_requested())return error(ErrorCode::Cancelled,"hollow.cancelled");
   for(std::uint32_t x=run.x;x<run.x+run.length;++x)
    if(accepted->cleared[std::size_t(run.y)*w+x])return error(ErrorCode::InvalidInput,"hollow.already-cleared");
+  for(std::uint32_t x=run.x;x<run.x+run.length;++x)
+   if(std::binary_search(accepted->barriers.begin(),accepted->barriers.end(),std::uint32_t(run.y*w+x)))return error(ErrorCode::InvalidInput,"gap.intersects-hollow");
  }
  if(s.eventIndex->size()>=8192)return error(ErrorCode::BudgetExceeded,"hollow.events");
  std::uint64_t points=0,tick=0;for(const auto& e:*s.eventIndex){if(e.id==event)return error(ErrorCode::InvalidInput,"hollow.duplicate-event");points+=e.geometry.size();if(points>1000000||e.endUs==UINT64_MAX)return error(ErrorCode::BudgetExceeded,"hollow.timeline");tick=std::max(tick,e.endUs+1);}
  if(clear.runs.size()*2>1000000-points)return error(ErrorCode::BudgetExceeded,"hollow.geometry");
- LayerNode layer;layer.id=overlay;layer.parent=Document::rootId();layer.name="Selected ink hollow - white paper overlay";layer.bounds={0,0,w,h};
+ LayerNode layer;layer.id=overlay;layer.parent=Document::rootId();layer.name="Lineart corrections - white hollow / black gap barriers";layer.bounds={0,0,w,h};
  StrokeEvent paint;paint.id=event;paint.layerId=overlay;paint.parentRevision=s.revision;paint.engineVersion=8;paint.toolId="bucket";paint.startUs=paint.endUs=tick;paint.color.activeChannels=3;paint.color.channels={1,1,1,0};paint.color.alpha=1;paint.color.profileId=s.spec.colorSpec.profileId;
  for(const auto& run:clear.runs){paint.geometry.push_back({double(run.x),double(run.y),1,{},{},tick,0,0});paint.geometry.push_back({double(run.x+run.length),double(run.y),1,{},{},tick,0,0});}
  Command command;if(!existing)command.operations.emplace_back(AddNode{layer});command.operations.emplace_back(Paint{std::move(paint),{0,0,w,h}});return command;

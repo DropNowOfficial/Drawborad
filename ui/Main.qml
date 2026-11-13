@@ -72,6 +72,10 @@ ApplicationWindow {
                 onPaint: { const c = getContext("2d"); c.clearRect(0,0,width,height); const p = nativeCanvas.hollowLassoPoints; if (p.length < 2) return; c.strokeStyle = "#ffcf70"; c.lineWidth = 2; c.beginPath(); c.moveTo(p[0].x,p[0].y); for (let i=1;i<p.length;i++) c.lineTo(p[i].x,p[i].y); c.closePath(); c.stroke() }
                 Connections { target: nativeCanvas; function onViewChanged() { lassoGuide.requestPaint() } function onBrushSettingsChanged() { lassoGuide.requestPaint() } }
             }
+            Canvas { id: gapGuide; objectName: "gapGuide"; x: nativeCanvas.x; y: nativeCanvas.y; width: nativeCanvas.width; height: nativeCanvas.height; z: 2; visible: nativeCanvas.visible && nativeCanvas.closeGapTool && nativeCanvas.closeGapGuide.length === 2
+                onPaint: { const c=getContext("2d"); c.clearRect(0,0,width,height); const p=nativeCanvas.closeGapGuide;if(p.length!==2)return;c.strokeStyle="#ffcf70";c.lineWidth=2;c.beginPath();c.moveTo(p[0].x,p[0].y);c.lineTo(p[1].x,p[1].y);c.stroke() }
+                Connections { target: nativeCanvas; function onViewChanged() { gapGuide.requestPaint() } function onBrushSettingsChanged() { gapGuide.requestPaint() } }
+            }
             Label { objectName: "fillPreviewStatus"; anchors.top: nativeCanvas.top; anchors.horizontalCenter: nativeCanvas.horizontalCenter; visible: studio.fillPending; text: qsTr("区域操作预览 · 尚未提交 · 请接受或取消"); color: "#ffcf70"; z: 3 }
             Label { objectName: "strokePreviewStatus"; anchors.bottom: nativeCanvas.bottom; anchors.horizontalCenter: nativeCanvas.horizontalCenter; visible: nativeCanvas.strokePreviewActive; text: nativeCanvas.previewing ? qsTr("笔迹预览更新中 · 尚未提交") : qsTr("未提交预览 · 松手提交，Esc 取消"); color: "#ffffff"; padding: 6; background: Rectangle { color: "#c0202428" } }
             Label { objectName: "canvasRendering"; anchors.centerIn: nativeCanvas; visible: nativeCanvas.visible && nativeCanvas.rendering; text: qsTr("Rendering document…"); color: "#bcbcc4" }
@@ -283,6 +287,8 @@ ApplicationWindow {
             Label { text: qsTr("同尺寸黑白灰 PNG，最多 2000 万像素；原图锁定、色块独立、后台填色，不缩图。导入仍为同步操作。"); color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Button { objectName: "cancelLineartFill"; text: qsTr("取消当前区域操作"); visible: studio.fillBusy || studio.fillPending; onClicked: studio.cancelFill() }
             Button { objectName: "acceptLineartFill"; text: qsTr("接受当前区域预览"); visible: studio.fillPending; enabled: !nativeCanvas.rendering && nativeCanvas.renderError.length === 0; onClicked: studio.acceptFill() }
+            CheckBox { objectName: "closeGapTool"; text: qsTr("短断口补线（拖两个原墨端点）"); checked: nativeCanvas.closeGapTool; enabled: !studio.busy; onToggled: nativeCanvas.closeGapTool = checked }
+            Label { text: qsTr("1像素黑线，最多64像素；两端须在原墨、跨过原白缺口，不自动找线。黄线仅指引，松开后看实际补线预览再接受；Esc/越界取消。原图不改，补线在可隐藏修正层，可撤销。"); color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             CheckBox { objectName: "hollowInkTool"; enabled: !studio.busy; text: qsTr("局部挖空（白纸，点墨块）"); checked: nativeCanvas.hollowTool; onToggled: nativeCanvas.hollowTool = checked }
             Label { text: qsTr("挖空只清除所选墨块内部，保留原轮廓和细笔触；可依次选择独立墨块，已挖区域不会重复覆盖；接受后切换填色桶可继续填内部或普通白区，自动分到上/下独立色层。不采旧颜色，不是中心线化或整页抽线。"); color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Button { objectName: "dragHollowSelection"; text: nativeCanvas.hollowDragTool ? qsTr("结束框选模式") : qsTr("在画布拖拽框选范围"); enabled: !studio.busy; onClicked: nativeCanvas.hollowDragTool = !nativeCanvas.hollowDragTool }

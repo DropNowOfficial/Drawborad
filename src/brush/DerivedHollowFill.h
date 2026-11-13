@@ -19,6 +19,8 @@ inline Result<Command> derivedHollowFillCommand(const DocumentSnapshot& s,
   // Restore original-only sampling in the existing buffer. Covered ink must
   // not turn into a lower-layer fill target, and old colors never enter it.
   for(std::size_t at=0;at<raw.value().size();at+=65536){if(stop.stop_requested())return error(ErrorCode::Cancelled,"derived-fill.cancelled");std::copy_n(raw.value().begin()+at,std::min<std::size_t>(65536,raw.value().size()-at),ref.value().reference.bytes.begin()+at);}
+  for(auto pos:ref.value().barriers){auto k=std::size_t(pos)*4;ref.value().reference.bytes[k]=ref.value().reference.bytes[k+1]=ref.value().reference.bytes[k+2]=0;ref.value().reference.bytes[k+3]=255;}
+  if(std::binary_search(ref.value().barriers.begin(),ref.value().barriers.end(),std::uint32_t(y*w+x)))return error(ErrorCode::InvalidInput,"gap.seed-on-barrier");
  }
  const bool createUpper=upper&&!existing;
  Command out;

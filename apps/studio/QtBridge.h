@@ -88,7 +88,8 @@ class QtBridge : public QObject {
     std::optional<DocumentSnapshot> canvasSnapshot() const { return app_.snapshot(); }
     QString fillNotice() const { return fillNotice_; }
     Q_INVOKABLE bool importLineartUrl(const QUrl&);
-    bool fillLineartAt(double x, double y, const QColor&, bool hollow = false, std::optional<QRectF> limit = std::nullopt, std::vector<DocumentPoint> polygon = {});
+    bool fillLineartAt(double x, double y, const QColor&, bool hollow = false, std::optional<QRectF> limit = std::nullopt, std::vector<DocumentPoint> polygon = {}, std::optional<QPointF> gapEnd = std::nullopt);
+    bool closeLineartGapAt(double x0,double y0,double x1,double y1) { return fillLineartAt(x0,y0,Qt::black,false,std::nullopt,{},QPointF(x1,y1)); }
     Result<void> commitStroke(const StrokeEvent&);
     Q_INVOKABLE void createDocument(double width, double height, double ppi, bool whitePaper = false);
     Q_INVOKABLE bool addLayer();

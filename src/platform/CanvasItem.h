@@ -18,6 +18,8 @@ class QtBridge;
 class CanvasItem : public QQuickItem {
     Q_OBJECT
     Q_PROPERTY(QObject* bridge READ studio WRITE setStudio NOTIFY studioChanged)
+    Q_PROPERTY(bool closeGapTool READ closeGapTool WRITE setCloseGapTool NOTIFY brushSettingsChanged)
+    Q_PROPERTY(QVariantList closeGapGuide READ closeGapGuide NOTIFY viewChanged)
     Q_PROPERTY(bool hollowLassoTool READ hollowLassoTool WRITE setHollowLassoTool NOTIFY brushSettingsChanged)
     Q_PROPERTY(QVariantList hollowLassoPoints READ hollowLassoPoints NOTIFY viewChanged)
     Q_PROPERTY(bool hollowDragTool READ hollowDragTool WRITE setHollowDragTool NOTIFY brushSettingsChanged)
@@ -43,7 +45,7 @@ class CanvasItem : public QQuickItem {
     QColor brushColor_{QColor::fromRgbF(.08,.08,.08)},gestureColor_;
     bool bucketTool_{false},hollowTool_{false},hollowBounded_{false};
     QRectF hollowBounds_{0,0,64,64};
-    bool hollowDragTool_{false},hollowLassoTool_{false};
+    bool hollowDragTool_{false},hollowLassoTool_{false},closeGapTool_{false};
     std::vector<DocumentPoint> hollowPolygon_;
     struct HollowDrag { QPointF start,current; DocumentId document; std::uint64_t revision{},generation{}; std::vector<DocumentPoint> points; };
     std::optional<HollowDrag> hollowDrag_;
@@ -115,6 +117,9 @@ class CanvasItem : public QQuickItem {
     void viewChanged();
     void renderErrorChanged();
   public:
+    bool closeGapTool() const { return closeGapTool_; }
+    void setCloseGapTool(bool);
+    QVariantList closeGapGuide() const;
     bool hollowLassoTool() const { return hollowLassoTool_; }
     void setHollowLassoTool(bool);
     QVariantList hollowLassoPoints() const;
@@ -127,9 +132,9 @@ class CanvasItem : public QQuickItem {
     void setHollowBounds(QRectF value) { if(value!=hollowBounds_)hollowPolygon_.clear();hollowBounds_=value;emit brushSettingsChanged();emit viewChanged(); }
     QRectF hollowItemRect() const;
     bool hollowTool() const { return hollowTool_; }
-    void setHollowTool(bool value) { cancelStroke();hollowTool_=value;if(value)bucketTool_=false;else {hollowDragTool_=false;hollowLassoTool_=false;}emit brushSettingsChanged(); }
+    void setHollowTool(bool value) { cancelStroke();hollowTool_=value;if(value){bucketTool_=false;closeGapTool_=false;}else {hollowDragTool_=false;hollowLassoTool_=false;}emit brushSettingsChanged(); }
     bool bucketTool() const { return bucketTool_; }
-    void setBucketTool(bool value) { cancelStroke();bucketTool_=value;if(value){hollowTool_=false;hollowDragTool_=false;hollowLassoTool_=false;}emit brushSettingsChanged(); }
+    void setBucketTool(bool value) { cancelStroke();bucketTool_=value;if(value){closeGapTool_=false;hollowTool_=false;hollowDragTool_=false;hollowLassoTool_=false;}emit brushSettingsChanged(); }
     explicit CanvasItem(QQuickItem* parent = nullptr);
     ~CanvasItem() override;
     bool rendering() const;

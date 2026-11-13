@@ -1,5 +1,6 @@
 #pragma once
 #include "BucketFill.h"
+#include "LineartGapGeometry.h"
 #include "core/BucketEvent.h"
 #include "core/LineartRaster.h"
 #include "view/LayerTree.h"
@@ -23,7 +24,7 @@ inline Result<void> validateOriginalWhitePaint(const StrokeEvent& e,const Docume
 // Compatibility validation, not provenance certification. Original resources,
 // accepted cover events and colors are never rewritten. Only temporary sampling
 // pixels are composed; existing colored paint never enters the reference.
-struct HollowDerivedReference { TileData reference; std::vector<std::uint8_t> cleared; };
+struct HollowDerivedReference { TileData reference; std::vector<std::uint8_t> cleared; std::vector<std::uint32_t> barriers; };
 inline Result<HollowDerivedReference> hollowDerivedReference(const DocumentSnapshot& s,
  NodeId source,NodeId overlay,NodeId colorLayer={},std::stop_token stop={}) try {
  if(stop.stop_requested())return error(ErrorCode::Cancelled,"derived-fill.cancelled");
@@ -46,13 +47,18 @@ inline Result<HollowDerivedReference> hollowDerivedReference(const DocumentSnaps
  const auto& ink=s.nodes->at(source);
  if(!ink.locked||!ink.visible||ink.opacity!=1||!ink.maskId.empty()||ink.transform!=LayerTransform{})return error(ErrorCode::UnsupportedFeature,"derived-fill.source");
  auto raw=lineartRasterPixels(s,source);if(!raw)return raw.error();
- std::vector<const StrokeEvent*> covers;
+ std::vector<const StrokeEvent*> covers,barriers;
  for(const auto& e:*s.eventIndex){
-   if(e.layerId==overlay){covers.push_back(&e);}
+   if(e.layerId==overlay){
+    if(e.color.activeChannels!=3||e.color.profileId!=s.spec.colorSpec.profileId||e.color.alpha!=1)return error(ErrorCode::UnsupportedFeature,"derived-fill.overlay-color");
+    if(e.color.channels[0]==1&&e.color.channels[1]==1&&e.color.channels[2]==1)covers.push_back(&e);
+    else if(e.color.channels[0]==0&&e.color.channels[1]==0&&e.color.channels[2]==0){if(barriers.size()>=1024)return error(ErrorCode::BudgetExceeded,"gap.event-limit");barriers.push_back(&e);}
+    else return error(ErrorCode::UnsupportedFeature,"derived-fill.overlay-color");
+   }
   else if(e.layerId==root.children[0]){auto lowerValid=validateOriginalWhitePaint(e,s,raw.value(),stop);if(!lowerValid)return lowerValid.error();}
   else if(!existing||e.layerId!=colorLayer)return error(ErrorCode::UnsupportedFeature,"derived-fill.other-paint");
  }
- if(covers.empty())return error(ErrorCode::InvalidInput,"derived-fill.missing-overlay");
+ if(covers.empty()&&barriers.empty())return error(ErrorCode::InvalidInput,"derived-fill.missing-overlay");
  for(const auto* cover:covers){auto coverValid=validateBucketEvent(*cover);if(!coverValid)return coverValid.error();
  if(cover->color.activeChannels!=3||cover->color.profileId!=s.spec.colorSpec.profileId||cover->color.alpha!=1||cover->color.channels[0]!=1||cover->color.channels[1]!=1||cover->color.channels[2]!=1)return error(ErrorCode::UnsupportedFeature,"derived-fill.overlay-not-white");}
  // Scratch: reference4N + clearedN + bucket RGBA4N + visitedN, with bounded runs.
@@ -79,7 +85,18 @@ inline Result<HollowDerivedReference> hollowDerivedReference(const DocumentSnaps
  };
  for(const auto* cover:covers){auto covered=walk(*cover,true);if(!covered)return covered.error();}
  for(const auto& e:*s.eventIndex)if(e.layerId==colorLayer){auto checked=walk(e,false);if(!checked)return checked.error();}
- return HollowDerivedReference{std::move(reference),std::move(cleared)};
+ std::vector<std::uint32_t> barrierPixels;
+ for(const auto* barrier:barriers){
+  if(stop.stop_requested())return error(ErrorCode::Cancelled,"derived-fill.cancelled");
+  auto validated=validateLineartGapEvent(*barrier,raw.value(),std::uint32_t(w),std::uint32_t(h));if(!validated)return validated.error();
+  for(auto pos:validated.value()){
+   if(cleared[pos])return error(ErrorCode::UnsupportedFeature,"gap.intersects-hollow");
+   reference.bytes[std::size_t(pos)*4]=reference.bytes[std::size_t(pos)*4+1]=reference.bytes[std::size_t(pos)*4+2]=0;reference.bytes[std::size_t(pos)*4+3]=255;
+   barrierPixels.push_back(pos);
+  }
+ }
+ std::sort(barrierPixels.begin(),barrierPixels.end());barrierPixels.erase(std::unique(barrierPixels.begin(),barrierPixels.end()),barrierPixels.end());
+ return HollowDerivedReference{std::move(reference),std::move(cleared),std::move(barrierPixels)};
 }catch(const std::bad_alloc&){return error(ErrorCode::BudgetExceeded,"derived-fill.allocation");}
 inline Result<void> validateHollowColorDomain(const StrokeEvent& e,
  const HollowDerivedReference& ref,std::stop_token stop={}) {

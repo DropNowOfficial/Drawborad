@@ -6,6 +6,7 @@
 #include "brush/DerivedHollowFill.h"
 #include "brush/ClipFillSelection.h"
 #include "brush/ClipPolygonSelection.h"
+#include "brush/CloseLineartGap.h"
 #include "ui/MergedDocument.h"
 #include <QFile>
 #include <QColorSpace>
@@ -325,10 +326,11 @@ bool QtBridge::importLineartUrl(const QUrl& url) try {
     auto result=app_.apply(command);if(!result)return fail(QString::fromStdString(result.error().messageKey));
     activeLayer_=fill;++canvasGeneration_;referenceUrl_=QUrl{};fillNotice_=tr("原 PNG 已嵌入并锁定；色块写入独立底层。仅按原线稿取样，不重绘、不自动补洞。");emit changed();return true;
 }catch(const std::bad_alloc&){fillNotice_=tr("内存不足，线稿未导入。");emit changed();return false;}
-bool QtBridge::fillLineartAt(double x,double y,const QColor& color,bool hollow,std::optional<QRectF> limit,std::vector<DocumentPoint> polygon) try {
+bool QtBridge::fillLineartAt(double x,double y,const QColor& color,bool hollow,std::optional<QRectF> limit,std::vector<DocumentPoint> polygon,std::optional<QPointF> gapEnd) try {
     auto s=app_.snapshot();
     const auto fail=[&](const QString& reason){fillNotice_=reason;emit changed();return false;};
     if(!s || busy() || replaying() || workflow_->pending() || !activeLayer_ || !color.isValid() || !std::isfinite(x) || !std::isfinite(y) || x<0 || y<0 || x>=double(s->spec.pixelSize.width) || y>=double(s->spec.pixelSize.height))return fail(tr("填色未执行：请选可编辑色层并结束当前操作。"));
+    if(gapEnd){const double coords[]={x,y,gapEnd->x(),gapEnd->y()};for(auto v:coords)if(!std::isfinite(v)||v<0||std::floor(v)!=v)return fail(tr("补线端点须为有效原图整像素；未修改工程。"));if(hollow||limit||!polygon.empty()||gapEnd->x()>=s->spec.pixelSize.width||gapEnd->y()>=s->spec.pixelSize.height)return fail(tr("补线端点越界或工具冲突；未修改工程。"));}
     if(!polygon.empty()&&(!hollow||limit))return fail(tr("套索与矩形限制不能同时应用；工程未修改。"));
     std::optional<Rect> bounds;
     if(limit){
@@ -343,14 +345,15 @@ bool QtBridge::fillLineartAt(double x,double y,const QColor& color,bool hollow,s
     fillPool_.setMaxThreadCount(1);fillStop_=std::stop_source{};const auto stop=fillStop_.get_token();
     const auto snapshot=*s;auto target=*activeLayer_;NodeId hollowOverlay;bool derived=false;
     const auto& ordered=s->nodes->at(Document::rootId()).children;
-    if((ordered.size()==3||ordered.size()==4) && ordered[1]==source){hollowOverlay=ordered[2];if(!hollow){derived=true;target=ordered.size()==4?ordered[3]:uuid();}}
+    if((ordered.size()==3||ordered.size()==4) && ordered[1]==source){hollowOverlay=ordered[2];if(!hollow&&!gapEnd){derived=true;target=ordered.size()==4?ordered[3]:uuid();}}
     const auto event=uuid();const auto generation=canvasGeneration_;
     fillBusy_=true;fillNotice_=tr("正在按原尺寸线稿计算区域；尚未提交，可取消。请接受预览后再保存。");emit changed();
-    fillPool_.start([this,snapshot,source,target,event,x,y,paint,stop,generation,hollow,derived,hollowOverlay,bounds,polygon=std::move(polygon)]{
+    fillPool_.start([this,snapshot,source,target,event,x,y,paint,stop,generation,hollow,derived,hollowOverlay,bounds,polygon=std::move(polygon),gapEnd]{
         Result<Command> result=error(ErrorCode::InvalidInput,"hollow.selection");
         std::uint64_t selectedInk=0;
         try{
-            if(derived)result=derivedHollowFillCommand(snapshot,source,hollowOverlay,target,event,std::uint32_t(x),std::uint32_t(y),paint,stop);
+            if(gapEnd)result=closeLineartGapCommand(snapshot,source,hollowOverlay.empty()?uuid():hollowOverlay,event,std::uint32_t(x),std::uint32_t(y),std::uint32_t(gapEnd->x()),std::uint32_t(gapEnd->y()),stop);
+            else if(derived)result=derivedHollowFillCommand(snapshot,source,hollowOverlay,target,event,std::uint32_t(x),std::uint32_t(y),paint,stop);
             else if(!hollow)result=originalLineartFillCommand(snapshot,source,target,event,std::uint32_t(x),std::uint32_t(y),paint,stop);
             else{
                 const auto w=snapshot.spec.pixelSize.width,h=snapshot.spec.pixelSize.height;auto raw=lineartRasterPixels(snapshot,source);
@@ -373,7 +376,7 @@ bool QtBridge::fillLineartAt(double x,double y,const QColor& color,bool hollow,s
             }
         }
         }catch(const std::bad_alloc&){preview.reset();result=error(ErrorCode::BudgetExceeded,"fill-review.allocation");}
-        QMetaObject::invokeMethod(this,[this,snapshot,result=std::move(result),preview,review,stop,generation,hollow,selectedInk,derived]() mutable {
+        QMetaObject::invokeMethod(this,[this,snapshot,result=std::move(result),preview,review,stop,generation,hollow,selectedInk,derived,gapEnd]() mutable {
             const auto current=app_.snapshot();fillBusy_=false;
             if(stop.stop_requested()){fillNotice_=tr("区域操作已取消，工程未修改。");emit changed();return;}
             if(replaying() || !current || current->documentId!=snapshot.documentId || current->revision!=snapshot.revision || canvasGeneration_!=generation){fillNotice_=tr("原工程已变化，旧填色结果已丢弃。");emit changed();return;}
@@ -389,9 +392,10 @@ bool QtBridge::fillLineartAt(double x,double y,const QColor& color,bool hollow,s
                 .arg(review.touchesCanvasEdge?tr("连到画布边缘，警惕背景漏选"):tr("未连画布边缘"))
                 .arg(review.seedX).arg(review.seedY).arg(review.clearance).arg(review.tiny?tr("注意：极小色块，可能点中了碎岛。 "):QString{});
             if(derived){bool lower=false;for(const auto& op:pendingFill_->operations)if(const auto* paint=std::get_if<Paint>(&op))lower=paint->event.layerId==snapshot.nodes->at(Document::rootId()).children.front();
-                fillNotice_=(lower?tr("原线稿白区填色预览：接受后写入下方色层；挖空区域和上方颜色不变。仅取样原图，不采已填颜色。"):tr("挖空内部填色预览：接受后写入上方色层；原线稿白区和下方颜色不变。仅取样原图加已接受覆盖。"))+"\n"+fillNotice_;}
+                fillNotice_=(lower?tr("原线稿白区填色预览：接受后写入下方色层；挖空区域和上方颜色不变。参考原图及已接受补线，不采已填颜色。"):tr("挖空内部填色预览：接受后写入上方色层；原线稿白区和下方颜色不变。仅取样原图加已接受覆盖。"))+"\n"+fillNotice_;}
 
             if(hollow)fillNotice_=tr("局部挖空未提交：选中墨块 %1 像素，仅清空安全内部 %2 像素。原轮廓、细笔触及其他区域保留；白纸覆盖，不是透明擦除。请对照预览后接受或取消。").arg(qulonglong(selectedInk)).arg(qulonglong(review.pixelCount));
+            if(gapEnd)fillNotice_=tr("短断口补线未提交：%1 像素，黑色1像素连接。仅连接指定端点，不改原图；接受后填色才会参考此线。请确认没有封错位置。").arg(qulonglong(review.pixelCount));
             emit changed();
         },Qt::QueuedConnection);
     });

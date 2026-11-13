@@ -265,13 +265,15 @@ void CanvasItem::finishStroke(){
         if(!committed){brushNotice_=tr("笔迹未提交，工程未修改：")+QString::fromStdString(committed.error().messageKey);emit brushSettingsChanged();}
     }else{brushNotice_=tr("笔迹未提交，工程未修改：")+QString::fromStdString(event.error().messageKey);emit brushSettingsChanged();}
 }
+void CanvasItem::setCloseGapTool(bool value){cancelStroke();closeGapTool_=value;if(value){hollowTool_=false;bucketTool_=false;hollowDragTool_=false;hollowLassoTool_=false;}emit brushSettingsChanged();emit viewChanged();}
+QVariantList CanvasItem::closeGapGuide() const {QVariantList out;if(!closeGapTool_||!hollowDrag_)return out;const auto snap=bridge_?bridge_->canvasSnapshot():std::nullopt;if(!snap)return out;const auto r=documentRect();for(const auto p:{hollowDrag_->start,hollowDrag_->current})out.push_back(QVariant::fromValue(QPointF(r.x()+(std::floor(p.x())+.5)*r.width()/snap->spec.pixelSize.width,r.y()+(std::floor(p.y())+.5)*r.height()/snap->spec.pixelSize.height)));return out;}
 void CanvasItem::setHollowDragTool(bool value){
- cancelStroke();hollowDragTool_=value;hollowLassoTool_=false;
+ cancelStroke();closeGapTool_=false;hollowDragTool_=value;hollowLassoTool_=false;
  if(value){hollowTool_=true;bucketTool_=false;}
  emit brushSettingsChanged();emit viewChanged();
 }
 void CanvasItem::setHollowLassoTool(bool value){
- cancelStroke();hollowDragTool_=value;hollowLassoTool_=value;
+ cancelStroke();closeGapTool_=false;hollowDragTool_=value;hollowLassoTool_=value;
  if(value){hollowTool_=true;bucketTool_=false;}
  emit brushSettingsChanged();emit viewChanged();
 }
@@ -311,7 +313,7 @@ QRectF CanvasItem::hollowItemRect() const {
 }
 void CanvasItem::mousePressEvent(QMouseEvent* e){
     if(e->button()==Qt::MiddleButton){cancelHollowDrag();panGesture_=e->position();e->accept();return;}
-    if(hollowDragTool_){
+    if(hollowDragTool_||closeGapTool_){
         cancelStroke();const auto snap=bridge_?bridge_->canvasSnapshot():std::nullopt;
         if(e->button()==Qt::LeftButton&&snap&&!bridge_->busy()&&!bridge_->replaying()&&!rendering()&&renderError().isEmpty())
             if(const auto p=itemToDocument(e->position(),*snap)){
@@ -328,7 +330,7 @@ void CanvasItem::mousePressEvent(QMouseEvent* e){
     const auto s=bridge_?bridge_->canvasSnapshot():std::nullopt;if(tabletStroke_||!s||!itemToDocument(e->position(),*s)){e->ignore();return;}beginSample(mouseSample(e),false,false);e->accept();
 }
 void CanvasItem::mouseMoveEvent(QMouseEvent* e){
-    if(hollowDragTool_&&!panGesture_){
+    if((hollowDragTool_||closeGapTool_)&&!panGesture_){
         if(!(e->buttons()&Qt::LeftButton))cancelHollowDrag();else updateHollowDrag(e->position());
         e->accept();return;
     }
@@ -337,6 +339,9 @@ void CanvasItem::mouseMoveEvent(QMouseEvent* e){
 }
 void CanvasItem::mouseReleaseEvent(QMouseEvent* e){
     if(e->button()==Qt::MiddleButton){panGesture_.reset();e->accept();return;}
+    if(closeGapTool_){
+        if(e->button()==Qt::LeftButton&&updateHollowDrag(e->position())){const auto start=hollowDrag_->start,end=hollowDrag_->current;cancelHollowDrag();bridge_->closeLineartGapAt(std::floor(start.x()),std::floor(start.y()),std::floor(end.x()),std::floor(end.y()));}e->accept();return;
+    }
     if(hollowDragTool_){
         if(e->button()==Qt::LeftButton&&updateHollowDrag(e->position())){
             auto bounds=hollowDragRect();std::vector<DocumentPoint> polygon;
@@ -364,7 +369,7 @@ void CanvasItem::wheelEvent(QWheelEvent* event){
     else event->ignore();
 }
 bool CanvasItem::event(QEvent* event){
-    if((bucketTool_ || hollowTool_) && (event->type()==QEvent::TabletPress || event->type()==QEvent::TabletMove || event->type()==QEvent::TabletRelease)){event->accept();return true;}
+    if((bucketTool_ || hollowTool_ || closeGapTool_) && (event->type()==QEvent::TabletPress || event->type()==QEvent::TabletMove || event->type()==QEvent::TabletRelease)){event->accept();return true;}
     if(event->type()==QEvent::FocusOut||event->type()==QEvent::WindowDeactivate)cancelStroke();
     if(event->type()==QEvent::KeyPress&&static_cast<QKeyEvent*>(event)->key()==Qt::Key_Escape){cancelStroke();event->accept();return true;}
     if(event->type()==QEvent::TabletPress||event->type()==QEvent::TabletMove||event->type()==QEvent::TabletRelease){
