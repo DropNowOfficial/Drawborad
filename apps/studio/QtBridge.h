@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QTimer>
 #include <QUrl>
+#include <QColor>
 #include <QVariantList>
 namespace drawborad {
 class WorkflowController;
@@ -22,6 +23,7 @@ class QtBridge : public QObject {
     Q_PROPERTY(QVariantList layers READ layers NOTIFY changed)
     Q_PROPERTY(QString activeLayerId READ activeLayerId NOTIFY changed)
     Q_PROPERTY(bool canAddLayer READ canAddLayer NOTIFY changed)
+    Q_PROPERTY(QString fillNotice READ fillNotice NOTIFY changed)
     Q_PROPERTY(QString layerNotice READ layerNotice NOTIFY changed)
     Q_PROPERTY(int eventCount READ eventCount NOTIFY changed)
     Q_PROPERTY(int replayCount READ replayCount NOTIFY changed)
@@ -35,6 +37,7 @@ class QtBridge : public QObject {
     QString workerMessage_;
     QUrl referenceUrl_;
     QString referenceFeedback_;
+    QString fillNotice_;
     std::optional<NodeId> activeLayer_;
     std::uint64_t canvasGeneration_{};
     WorkflowController* workflow_{};
@@ -65,6 +68,9 @@ class QtBridge : public QObject {
     std::optional<NodeId> activeLayer() const { return activeLayer_; }
     std::uint64_t canvasGeneration() const { return canvasGeneration_; }
     std::optional<DocumentSnapshot> canvasSnapshot() const { return app_.snapshot(); }
+    QString fillNotice() const { return fillNotice_; }
+    Q_INVOKABLE bool importLineartUrl(const QUrl&);
+    bool fillLineartAt(double x, double y, const QColor&);
     Result<void> commitStroke(const StrokeEvent&);
     Q_INVOKABLE void createDocument(double width, double height, double ppi);
     Q_INVOKABLE bool addLayer();
@@ -79,3 +85,4 @@ class QtBridge : public QObject {
     void changed();
 };
 }
+

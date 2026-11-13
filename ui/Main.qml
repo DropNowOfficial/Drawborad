@@ -15,6 +15,7 @@ ApplicationWindow {
     property bool approvedClose: false
     property bool closeAfterSave: false
     Timer { id: replayTimer; interval: 100; repeat: true; onTriggered: { if (studio.busy || studio.replayCount >= studio.eventCount) stop(); else studio.setReplayCount(studio.replayCount + 1) } }
+    FileDialog { id: lineartDialog; title: qsTr("嵌入同尺寸黑白灰 PNG 线稿"); nameFilters: ["PNG (*.png)"]; onAccepted: studio.importLineartUrl(selectedFile) }
     FileDialog { id: pngExportDialog; title: qsTr("导出原尺寸 RGB PNG（新文件名）"); fileMode: FileDialog.SaveFile; defaultSuffix: "png"; nameFilters: ["PNG (*.png)"]; onAccepted: studio.workflow.exportNative(selectedFile, "png") }
     FileDialog { id: oraExportDialog; title: qsTr("导出叶图层 ORA（组展开、蒙版烘焙；新文件名）"); fileMode: FileDialog.SaveFile; defaultSuffix: "ora"; nameFilters: ["OpenRaster (*.ora)"]; onAccepted: studio.workflow.exportNative(selectedFile, "ora") }
     FileDialog { id: psdDialog; title: qsTr("导出笔迹分层 PSD（请选择新文件名）"); fileMode: FileDialog.SaveFile; defaultSuffix: "psd"; nameFilters: ["Photoshop (*.psd)"]; onAccepted: studio.workflow.exportPsd(selectedFile) }
@@ -268,6 +269,10 @@ ApplicationWindow {
                 }
                 ScrollBar.vertical: ScrollBar { }
             }
+            Button { objectName: "importLineartButton"; text: qsTr("空白工程 · 嵌入原线稿"); enabled: !studio.busy; onClicked: lineartDialog.open() }
+            CheckBox { objectName: "lineartBucketTool"; text: qsTr("原线稿填色桶（鼠标点击）"); checked: nativeCanvas.bucketTool; onToggled: nativeCanvas.bucketTool = checked }
+            Label { text: qsTr("仅同尺寸黑白灰 PNG、4 Mi 像素以内；原图锁定，色块独立。大海报尚未接通，不缩图。"); color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Label { objectName: "lineartFillNotice"; text: studio.fillNotice; color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Label { text: studio.layerNotice; color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true; visible: text.length > 0 }
             Label { text: qsTr("画笔 · 原生笔迹"); color: "#f5f5f7"; font.pixelSize: 18 }
             Label { text: qsTr("宽度：") + nativeCanvas.brushWidth.toFixed(1) + " px"; color: "#bcbcc4" }

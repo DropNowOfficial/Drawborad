@@ -264,6 +264,11 @@ void CanvasItem::finishStroke(){
 }
 void CanvasItem::mousePressEvent(QMouseEvent* e){
     if(e->button()==Qt::MiddleButton){panGesture_=e->position();e->accept();return;}
+    if(bucketTool_){
+        cancelStroke();const auto snap=bridge_?bridge_->canvasSnapshot():std::nullopt;
+        if(e->button()==Qt::LeftButton && snap && !rendering() && renderError().isEmpty())if(auto point=itemToDocument(e->position(),*snap)){auto color=brushColor_;color.setAlphaF(color.alphaF()*brushOpacity());bridge_->fillLineartAt(point->x,point->y,color);}
+        e->accept();return;
+    }
     const auto s=bridge_?bridge_->canvasSnapshot():std::nullopt;if(tabletStroke_||!s||!itemToDocument(e->position(),*s)){e->ignore();return;}beginSample(mouseSample(e),false,false);e->accept();
 }
 void CanvasItem::mouseMoveEvent(QMouseEvent* e){
@@ -280,6 +285,7 @@ void CanvasItem::wheelEvent(QWheelEvent* event){
     else event->ignore();
 }
 bool CanvasItem::event(QEvent* event){
+    if(bucketTool_ && (event->type()==QEvent::TabletPress || event->type()==QEvent::TabletMove || event->type()==QEvent::TabletRelease)){event->accept();return true;}
     if(event->type()==QEvent::FocusOut||event->type()==QEvent::WindowDeactivate)cancelStroke();
     if(event->type()==QEvent::KeyPress&&static_cast<QKeyEvent*>(event)->key()==Qt::Key_Escape){cancelStroke();event->accept();return true;}
     if(event->type()==QEvent::TabletPress||event->type()==QEvent::TabletMove||event->type()==QEvent::TabletRelease){

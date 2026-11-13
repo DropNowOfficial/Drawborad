@@ -1,5 +1,11 @@
 #include "QtBridge.h"
 #include "AlphaImportPolicy.h"
+#include "brush/OriginalLineartFill.h"
+#include "ui/MergedDocument.h"
+#include <QFile>
+#include <QColorSpace>
+#include <QBuffer>
+#include <cmath>
 #include "storage/ProjectCodec.h"
 #include "render/ReferenceRenderer.h"
 #include "view/LayerTree.h"
@@ -260,6 +266,56 @@ bool QtBridge::importReferenceUrl(const QUrl& url) {
         : tr("New canvas created from the image. The .draw file saves strokes, not the reference image.");
     emit changed();
     return true;
+}
+bool QtBridge::importLineartUrl(const QUrl& url) try {
+    const auto fail=[&](const QString& reason){fillNotice_=reason;emit changed();return false;};
+    auto s=app_.snapshot();
+    if(!s || busy() || replaying() || workflow_->pending())return fail(tr("请先结束当前操作并回到完整工程。"));
+    if(!s->eventIndex->empty() || !s->resources->empty())return fail(tr("仅向空白同尺寸工程嵌入线稿；现有作品未修改。"));
+    const auto& children=s->nodes->at(Document::rootId()).children;
+    if(!children.empty()){
+        if(children.size()!=1 || s->nodes->size()!=3)return fail(tr("请使用新建的默认空白工程；现有图层结构保留不变。"));
+        const auto& object=s->nodes->at(children.front());
+        if(object.kind!=NodeKind::Object || object.name!="Artwork" || object.children.size()!=1)return fail(tr("现有自定义图层结构不会被覆盖。"));
+        const auto unchanged=[](const LayerNode& n){return !n.locked && n.visible && n.opacity==1 && n.blend==BlendMode::Normal && n.maskId.empty() && n.transform==LayerTransform{} && n.content.empty();};
+        if(!unchanged(object))return fail(tr("现有自定义图层属性不会被覆盖。"));
+        const auto& layer=s->nodes->at(object.children.front());
+        if(!unchanged(layer) || layer.name!="Paint" || layer.stage!="paint" || layer.kind!=NodeKind::Layer || !layer.content.empty())return fail(tr("现有自定义图层结构不会被覆盖。"));
+    }
+    if(s->spec.pixelSize.width>4096 || s->spec.pixelSize.height>4096 || s->spec.pixelSize.width*s->spec.pixelSize.height>4*1024*1024)return fail(tr("当前桌面填色上限为 4 Mi 像素、单边 4096；不会缩小图片。大海报尚未接通。"));
+    if(s->spec.colorSpec.format.mode!=ColorMode::RGB || s->spec.colorSpec.format.depth!=Depth::U8 || !s->spec.colorSpec.profileId.empty())return fail(tr("当前线稿导入仅支持未指定 ICC 的 RGB 8 位工程。"));
+    if(!url.isLocalFile())return fail(tr("请选择本地 PNG 线稿。"));
+    QFile file(url.toLocalFile());if(!file.open(QIODevice::ReadOnly) || file.size()<=0 || file.size()>32*1024*1024)return fail(tr("PNG 文件须可读且不超过 32 MiB。"));
+    const auto expectedSize=file.size();const auto encoded=file.read(32*1024*1024+1);
+    if(encoded.size()!=expectedSize || !file.atEnd())return fail(tr("读取 PNG 时文件发生变化或读取不完整，未导入。"));
+    QBuffer buffer;buffer.setData(encoded);if(!buffer.open(QIODevice::ReadOnly))return fail(tr("无法读取 PNG 缓冲。"));
+    QImageReader reader(&buffer,"png");reader.setAutoTransform(false);const auto size=reader.size();
+    if(size.width()!=int(s->spec.pixelSize.width) || size.height()!=int(s->spec.pixelSize.height))return fail(tr("线稿必须与画布像素尺寸一致；不会自动放大或缩小。"));
+    auto image=reader.read();if(image.isNull())return fail(tr("PNG 解码失败，工程未修改。"));
+    if(image.colorSpace().isValid())return fail(tr("带 ICC/色彩空间标签的线稿尚未接通转换，未修改工程。"));
+    image=image.convertToFormat(QImage::Format_RGBA8888);
+    if(image.isNull() || image.size()!=size)return fail(tr("线稿像素转换失败，工程未修改。"));
+    Bytes rgba(std::size_t(image.width())*image.height()*4);
+    for(int y=0;y<image.height();y++)std::copy_n(image.constScanLine(y),std::size_t(image.width())*4,rgba.begin()+std::size_t(y)*image.width()*4);
+    for(std::size_t i=0;i<rgba.size();i+=4)if(rgba[i+3] && (rgba[i]!=rgba[i+1] || rgba[i+1]!=rgba[i+2]))return fail(tr("此入口只接受黑白灰线稿，不会把彩色成图自动转成线稿。"));
+    const auto ink=uuid(),fill=uuid();auto import=makeLineartRasterCommand(std::move(rgba),Bytes(encoded.begin(),encoded.end()),image.width(),image.height(),ink);if(!import)return fail(QString::fromStdString(import.error().messageKey));
+    Command command;for(auto id:s->nodes->at(Document::rootId()).children)command.operations.push_back(RemoveNode{id});
+    LayerNode layer;layer.id=fill;layer.parent=Document::rootId();layer.name="Color fill";layer.bounds={0,0,s->spec.pixelSize.width,s->spec.pixelSize.height};command.operations.push_back(AddNode{layer});
+    command.operations.insert(command.operations.end(),import.value().operations.begin(),import.value().operations.end());
+    auto candidate=Document::fromSnapshot(*s);if(!candidate)return fail(QString::fromStdString(candidate.error().messageKey));auto applied=candidate.value().apply(command,s->revision);if(!applied)return fail(QString::fromStdString(applied.error().messageKey));auto plan=planMergedDocument(candidate.value().snapshot());if(!plan)return fail(QString::fromStdString(plan.error().messageKey));
+    auto result=app_.apply(command);if(!result)return fail(QString::fromStdString(result.error().messageKey));
+    activeLayer_=fill;++canvasGeneration_;referenceUrl_=QUrl{};fillNotice_=tr("原 PNG 已嵌入并锁定；色块写入独立底层。仅按原线稿取样，不重绘、不自动补洞。");emit changed();return true;
+}catch(const std::bad_alloc&){fillNotice_=tr("内存不足，线稿未导入。");emit changed();return false;}
+bool QtBridge::fillLineartAt(double x,double y,const QColor& color) {
+    auto s=app_.snapshot();
+    const auto fail=[&](const QString& reason){fillNotice_=reason;emit changed();return false;};
+    if(!s || busy() || replaying() || workflow_->pending() || !activeLayer_ || !color.isValid() || !std::isfinite(x) || !std::isfinite(y) || x<0 || y<0 || x>=double(s->spec.pixelSize.width) || y>=double(s->spec.pixelSize.height))return fail(tr("填色未执行：请选可编辑色层并结束当前操作。"));
+    NodeId source;for(const auto&[id,node]:*s->nodes)if(node.stage==LineartStage){if(!source.empty())return fail(tr("目前只支持一个原线稿图层。"));source=id;}
+    ColorValue paint;paint.activeChannels=3;paint.profileId=s->spec.colorSpec.profileId;paint.channels={color.redF(),color.greenF(),color.blueF(),0};paint.alpha=color.alphaF();
+    auto command=originalLineartFillCommand(*s,source,*activeLayer_,uuid(),std::uint32_t(x),std::uint32_t(y),paint);
+    if(!command)return fail(tr("未填色，工程未修改：")+QString::fromStdString(command.error().messageKey));
+    auto result=app_.apply(command.value());if(!result)return fail(QString::fromStdString(result.error().messageKey));
+    fillNotice_=tr("已按原线稿闭区写入独立色层；可撤销，原线稿字节未修改。");emit changed();return true;
 }
 Result<void> QtBridge::commitStroke(const StrokeEvent& event) {
     const auto snapshot = app_.snapshot();

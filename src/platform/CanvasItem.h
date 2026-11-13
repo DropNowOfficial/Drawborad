@@ -18,6 +18,7 @@ class QtBridge;
 class CanvasItem : public QQuickItem {
     Q_OBJECT
     Q_PROPERTY(QObject* bridge READ studio WRITE setStudio NOTIFY studioChanged)
+    Q_PROPERTY(bool bucketTool READ bucketTool WRITE setBucketTool NOTIFY brushSettingsChanged)
     Q_PROPERTY(double zoom READ zoom NOTIFY viewChanged)
     Q_PROPERTY(bool strokePreviewActive READ strokePreviewActive NOTIFY renderErrorChanged)
     Q_PROPERTY(bool previewing READ previewing NOTIFY renderErrorChanged)
@@ -32,6 +33,7 @@ class CanvasItem : public QQuickItem {
     Q_PROPERTY(QString brushNotice READ brushNotice NOTIFY brushSettingsChanged)
     BrushSettings brushSettings_,gestureBrush_;
     QColor brushColor_{QColor::fromRgbF(.08,.08,.08)},gestureColor_;
+    bool bucketTool_{false};
     double mouseTaper_{0},gestureTaper_{0};
     QString brushNotice_;
     QPointer<QtBridge> bridge_;
@@ -96,6 +98,8 @@ class CanvasItem : public QQuickItem {
     void viewChanged();
     void renderErrorChanged();
   public:
+    bool bucketTool() const { return bucketTool_; }
+    void setBucketTool(bool value) { cancelStroke();bucketTool_=value;emit brushSettingsChanged(); }
     explicit CanvasItem(QQuickItem* parent = nullptr);
     ~CanvasItem() override;
     bool rendering() const;

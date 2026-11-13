@@ -91,5 +91,24 @@ int main(int argc,char**argv){
  assert(workflow->message().contains("RGB")&&workflow->message().contains("CMYK"));assert(uiBridge.canvasSnapshot()->sameContent(posterPainted));
  assert(!workflow->exportPsd(QUrl::fromLocalFile(exportDir+"/unsupported-poster.psd")));assert(!QFile::exists(exportDir+"/unsupported-poster.psd"));assert(workflow->message().contains("PNG /"));
  assert(!workflow->exportNative(QUrl::fromLocalFile(oraPath),"ora"));assert(ora.open(QIODevice::ReadOnly));assert(ora.readAll()==oraBytes);assert(uiBridge.canvasSnapshot()->sameContent(posterPainted));
+ // Desktop source-only fill starts from an empty document, embeds original PNG,
+ // and keeps fills independent instead of sampling a colored composite.
+ QtBridge fillBridge;fillBridge.createDocument(64,64,300);auto emptyFill=*fillBridge.canvasSnapshot();
+ QImage line(64,64,QImage::Format_RGBA8888);line.fill(Qt::white);
+ for(int y=4;y<60;y++)for(int x=4;x<60;x++)if(x==4||x==32||x==59||y==4||y==59)line.setPixelColor(x,y,Qt::black);
+ auto linePath=dir.filePath("line.png");assert(line.save(linePath));
+ assert(fillBridge.importLineartUrl(QUrl::fromLocalFile(linePath)));auto embedded=*fillBridge.canvasSnapshot();assert(embedded.nodes->size()==3);
+ assert(fillBridge.fillLineartAt(10,10,QColor("#ff0000")));auto filled=*fillBridge.canvasSnapshot();
+ for(const auto&[hash,res]:*embedded.resources)assert(*filled.resources->at(hash).bytes==*res.bytes);
+ assert(fillBridge.fillLineartAt(10,10,QColor("#0000ff")));assert(fillBridge.undoDrawing());assert(fillBridge.canvasSnapshot()->sameContent(filled));assert(fillBridge.undoDrawing());assert(fillBridge.canvasSnapshot()->sameContent(embedded));
+ assert(!fillBridge.fillLineartAt(4,4,Qt::red));assert(fillBridge.canvasSnapshot()->sameContent(embedded));
+ assert(fillBridge.undoDrawing());assert(fillBridge.canvasSnapshot()->sameContent(emptyFill));assert(fillBridge.redoDrawing());assert(fillBridge.canvasSnapshot()->sameContent(embedded));
+ assert(!fillBridge.importLineartUrl(QUrl::fromLocalFile(linePath)));assert(fillBridge.canvasSnapshot()->sameContent(embedded));
+ CanvasItem fillCanvas(uiWindow->contentItem());fillCanvas.setWidth(256);fillCanvas.setHeight(256);fillCanvas.setProperty("bridge",QVariant::fromValue(static_cast<QObject*>(&fillBridge)));settle(fillCanvas);fillCanvas.setBucketTool(true);
+ auto fillRect=fillCanvas.documentRect();QPointF fillPoint=fillRect.topLeft()+QPointF(fillRect.width()*10/64,fillRect.height()*10/64);
+ QMouseEvent fillPress(QEvent::MouseButtonPress,fillPoint,fillPoint,Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);QCoreApplication::sendEvent(&fillCanvas,&fillPress);settle(fillCanvas);assert(fillBridge.eventCount()==1);assert(!fillCanvas.strokePreviewActive());
+ QtBridge customFill;customFill.createDocument(64,64,300);assert(customFill.addLayer());auto customBefore=*customFill.canvasSnapshot();assert(!customFill.importLineartUrl(QUrl::fromLocalFile(linePath)));assert(customFill.canvasSnapshot()->sameContent(customBefore));
+ QtBridge largeFill;largeFill.createDocument(1725,2625,300);auto largeBefore=*largeFill.canvasSnapshot();assert(!largeFill.importLineartUrl(QUrl::fromLocalFile(linePath)));assert(largeFill.canvasSnapshot()->sameContent(largeBefore));
+ assert(uiWindow->findChild<QObject*>("lineartBucketTool"));assert(uiWindow->findChild<QObject*>("importLineartButton"));
  std::cout<<"PASS real Qt software/QML: imported pixels, native paint, pan/zoom, visible error recovery; 3300x5100 seam-free display, paint, save/reopen\n";
 }
