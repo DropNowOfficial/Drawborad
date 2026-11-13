@@ -3,6 +3,7 @@
 #include "core/OriginalReference.h"
 #include "brush/OriginalLineartFill.h"
 #include "brush/MixedLineartStack.h"
+#include "brush/SelectedBoundaryFill.h"
 #include "brush/FillRegionReview.h"
 #include "brush/HollowInkCommand.h"
 #include "brush/DerivedHollowFill.h"
@@ -234,6 +235,7 @@ bool QtBridge::initializeCanvas(double w, double h, double ppi, bool whitePaper)
 void QtBridge::createDocument(double w, double h, double ppi, bool whitePaper) {
     const bool created = initializeCanvas(w, h, ppi, whitePaper);
     if (created) {
+        selectedBoundary_.reset();
         workflow_->reset();
         referenceUrl_ = QUrl{};
         referenceFeedback_.clear();
@@ -382,6 +384,18 @@ bool QtBridge::importLineartUrl(const QUrl& url) try {
     auto result=app_.apply(command);if(!result)return fail(QString::fromStdString(result.error().messageKey));
     activeLayer_=fill;++canvasGeneration_;referenceUrl_=QUrl{};fillNotice_=tr("原 PNG 已嵌入并锁定；色块写入独立底层。仅按原线稿取样，不重绘、不自动补洞。");emit changed();return true;
 }catch(const std::bad_alloc&){fillNotice_=tr("内存不足，线稿未导入。");emit changed();return false;}
+QString QtBridge::selectedBoundaryName() const {
+ if(!selectedBoundary_)return {};
+ const auto s=app_.snapshot();
+ if(!s||!s->nodes->contains(*selectedBoundary_))return tr("所选边界层已不可用，请清除或重选");
+ return QString::fromStdString(s->nodes->at(*selectedBoundary_).name);
+}
+bool QtBridge::useActiveBoundary(){
+ if(busy()||replaying()||workflow_->pending())return false;
+ const auto s=app_.snapshot();if(!s||!activeLayer_||!s->nodes->contains(*activeLayer_)||s->nodes->at(*activeLayer_).stage!=FinishingLayerStage||!layerVisible(*s,*activeLayer_)){fillNotice_=tr("请明确选择一个可见手绘细节层作为边界；不会自动采样其他颜色层。");emit changed();return false;}
+ selectedBoundary_=activeLayer_;fillNotice_=tr("已选择该手绘层的 alpha≥128/255 覆盖作为临时边界；不改颜色/透明度，只限原稿白区填色，先看预览。重开后须重选。");emit changed();return true;
+}
+bool QtBridge::clearSelectedBoundary(){if(busy()||workflow_->pending())return false;selectedBoundary_.reset();fillNotice_=tr("已停止采样手绘边界，恢复原线稿/明确补线取样。");emit changed();return true;}
 bool QtBridge::fillLineartAt(double x,double y,const QColor& color,bool hollow,std::optional<QRectF> limit,std::vector<DocumentPoint> polygon,std::optional<QPointF> gapEnd) try {
     auto s=app_.snapshot();
     const auto fail=[&](const QString& reason){fillNotice_=reason;emit changed();return false;};
@@ -404,15 +418,17 @@ bool QtBridge::fillLineartAt(double x,double y,const QColor& color,bool hollow,s
     if(withDetails&&!hollow&&!gapEnd&&!ordered.empty())target=ordered.front();
     if((ordered.size()==3||ordered.size()==4) && ordered[1]==source){hollowOverlay=ordered[2];if(!hollow&&!gapEnd){derived=true;target=ordered.size()==4?ordered[3]:uuid();}}
     const auto event=uuid();const auto generation=canvasGeneration_;
-    fillBusy_=true;fillNotice_=tr("正在按原尺寸线稿计算区域；手绘细节不参与边界，尚未提交，可取消。请接受预览后再保存。");emit changed();
-    fillPool_.start([this,snapshot,source,target,event,x,y,paint,stop,generation,hollow,derived,hollowOverlay,bounds,polygon=std::move(polygon),gapEnd]{
+    const auto boundary=(!hollow&&!gapEnd)?selectedBoundary_:std::optional<NodeId>{};
+    fillBusy_=true;fillNotice_=boundary?tr("正在计算原稿白区与明确所选手绘层的边界；alpha≥128/255，其他细节不取样，可取消。请核对预览。"):tr("正在按原尺寸线稿计算区域；手绘细节不参与边界，尚未提交，可取消。请接受预览后再保存。");emit changed();
+    fillPool_.start([this,snapshot,source,target,event,x,y,paint,stop,generation,hollow,derived,hollowOverlay,bounds,polygon=std::move(polygon),gapEnd,boundary]{
         Result<Command> result=error(ErrorCode::InvalidInput,"hollow.selection");
         std::uint64_t selectedInk=0;
         try{
             auto projected=projectControlledLineart(snapshot,stop);
             if(!projected)result=projected.error();else {
             const auto& controlled=projected.value().controlled;
-            if(gapEnd)result=closeLineartGapCommand(controlled,source,hollowOverlay.empty()?uuid():hollowOverlay,event,std::uint32_t(x),std::uint32_t(y),std::uint32_t(gapEnd->x()),std::uint32_t(gapEnd->y()),stop);
+            if(boundary)result=selectedBoundaryFillCommand(snapshot,*boundary,event,std::uint32_t(x),std::uint32_t(y),paint,stop);
+            else if(gapEnd)result=closeLineartGapCommand(controlled,source,hollowOverlay.empty()?uuid():hollowOverlay,event,std::uint32_t(x),std::uint32_t(y),std::uint32_t(gapEnd->x()),std::uint32_t(gapEnd->y()),stop);
             else if(derived)result=derivedHollowFillCommand(controlled,source,hollowOverlay,target,event,std::uint32_t(x),std::uint32_t(y),paint,stop);
             else if(!hollow)result=originalLineartFillCommand(controlled,source,target,event,std::uint32_t(x),std::uint32_t(y),paint,stop);
             else{
@@ -425,7 +441,7 @@ bool QtBridge::fillLineartAt(double x,double y,const QColor& color,bool hollow,s
                     else{auto selection=floodFill(pixels,std::uint32_t(w),std::uint32_t(h),std::uint32_t(x),std::uint32_t(y),0,{},stop);if(selection&&bounds)selection=clipFillSelection(selection.value(),std::uint32_t(w),std::uint32_t(h),*bounds,stop);if(selection&&!polygon.empty()){selection=clipPolygonSelection(selection.value(),std::uint32_t(w),std::uint32_t(h),polygon,stop);if(selection){bool inside=false;for(const auto& run:selection.value().runs)if(run.y==std::uint32_t(y)&&std::uint32_t(x)>=run.x&&std::uint32_t(x)<run.x+run.length){inside=true;break;}if(!inside)selection=error(ErrorCode::InvalidInput,"clip-polygon.seed-outside");}}if(!selection)result=selection.error();else{selectedInk=selection.value().pixelCount;std::vector<Rgba8>().swap(pixels);result=hollowInkOverlayCommand(controlled,source,hollowOverlay.empty()?event:hollowOverlay,uuid(),selection.value(),1,stop);}}
                 }
             }
-            if(result)result=restoreControlledCommand(snapshot,projected.value(),std::move(result.value()),stop);
+            if(result&&!boundary)result=restoreControlledCommand(snapshot,projected.value(),std::move(result.value()),stop);
             }
         }catch(const std::bad_alloc&){result=error(ErrorCode::BudgetExceeded,"hollow.selection-allocation");}
         std::optional<DocumentSnapshot> preview;FillRegionReview review;
@@ -438,7 +454,7 @@ bool QtBridge::fillLineartAt(double x,double y,const QColor& color,bool hollow,s
             }
         }
         }catch(const std::bad_alloc&){preview.reset();result=error(ErrorCode::BudgetExceeded,"fill-review.allocation");}
-        QMetaObject::invokeMethod(this,[this,snapshot,result=std::move(result),preview,review,stop,generation,hollow,selectedInk,derived,gapEnd]() mutable {
+        QMetaObject::invokeMethod(this,[this,snapshot,result=std::move(result),preview,review,stop,generation,hollow,selectedInk,derived,gapEnd,boundary]() mutable {
             const auto current=app_.snapshot();fillBusy_=false;
             if(stop.stop_requested()){fillNotice_=tr("区域操作已取消，工程未修改。");emit changed();return;}
             if(replaying() || !current || current->documentId!=snapshot.documentId || current->revision!=snapshot.revision || canvasGeneration_!=generation){fillNotice_=tr("原工程已变化，旧填色结果已丢弃。");emit changed();return;}
@@ -453,9 +469,10 @@ bool QtBridge::fillLineartAt(double x,double y,const QColor& color,bool hollow,s
                 .arg(qulonglong(review.pixelCount)).arg(qlonglong(review.bounds.width)).arg(qlonglong(review.bounds.height))
                 .arg(review.touchesCanvasEdge?tr("连到画布边缘，警惕背景漏选"):tr("未连画布边缘"))
                 .arg(review.seedX).arg(review.seedY).arg(review.clearance).arg(review.tiny?tr("注意：极小色块，可能点中了碎岛。 "):QString{});
-            if(derived){bool lower=false;for(const auto& op:pendingFill_->operations)if(const auto* paint=std::get_if<Paint>(&op))lower=paint->event.layerId==snapshot.nodes->at(Document::rootId()).children.front();
+            if(derived&&!boundary){bool lower=false;for(const auto& op:pendingFill_->operations)if(const auto* paint=std::get_if<Paint>(&op))lower=paint->event.layerId==snapshot.nodes->at(Document::rootId()).children.front();
                 fillNotice_=(lower?tr("原线稿白区填色预览：接受后写入下方色层；挖空区域和上方颜色不变。参考原图及已接受补线，不采已填颜色。"):tr("挖空内部填色预览：接受后写入上方色层；原线稿白区和下方颜色不变。仅取样原图加已接受覆盖。"))+"\n"+fillNotice_;}
 
+            if(boundary)fillNotice_=tr("明确所选手绘层的 alpha≥128/255 与原稿白区共同取样；只写下方色层，笔迹透明度/原稿未改。\n")+fillNotice_;
             if(hollow)fillNotice_=tr("局部挖空未提交：选中墨块 %1 像素，仅清空安全内部 %2 像素。原轮廓、细笔触及其他区域保留；白纸覆盖，不是透明擦除。请对照预览后接受或取消。").arg(qulonglong(selectedInk)).arg(qulonglong(review.pixelCount));
             if(gapEnd)fillNotice_=tr("短断口补线未提交：%1 像素，黑色1像素连接。仅连接指定端点，不改原图；接受后填色才会参考此线。请确认没有封错位置。").arg(qulonglong(review.pixelCount));
             emit changed();
@@ -478,7 +495,7 @@ void QtBridge::openUrl(const QUrl& p){
     if(busy()){fillNotice_=tr("请等待或取消当前任务后再打开工程。");emit changed();return;}
     if(!p.isLocalFile())return;
     auto done=app_.open(std::filesystem::path(p.toLocalFile().toStdWString()));
-    if(done){replayCount_=-1;referenceUrl_=QUrl{};referenceFeedback_=tr("Reference previews are not stored in .draw projects. Reimport the source image to compare.");++canvasGeneration_;resetLayerSelection();workflow_->restore(*app_.snapshot());}
+    if(done){selectedBoundary_.reset();replayCount_=-1;referenceUrl_=QUrl{};referenceFeedback_=tr("Reference previews are not stored in .draw projects. Reimport the source image to compare.");++canvasGeneration_;resetLayerSelection();workflow_->restore(*app_.snapshot());}
     emit changed();
 }
 void QtBridge::saveUrl(const QUrl& p){if(strokeCommitBusy_){fillNotice_=tr("笔迹仍在验收；请等待完成或取消后再保存。");emit changed();return;}if(fillBusy_ || fillPending()){fillNotice_=tr("填色尚未提交，本次未保存；请等待完成或取消后重试。");emit changed();return;}if(!p.isLocalFile())return;if(workflow_->pending()){workflow_->fail(tr("请先接受审阅蒙版，再保存工程。未接受的修改仍然保留；也可取消关闭或明确放弃。" ));return;}auto done=app_.save(std::filesystem::path(p.toLocalFile().toStdWString()));(void)done;emit changed();}

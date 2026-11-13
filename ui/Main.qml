@@ -270,7 +270,7 @@ ApplicationWindow {
                 Button { objectName: "addLayerButton"; text: qsTr("Add layer"); enabled: studio.canAddLayer; onClicked: studio.addLayer() }
             }
             Button { objectName: "addFinishingLayerButton"; text: qsTr("新增手绘细节层（不作边界）"); enabled: studio.hasDocument && !studio.busy; Layout.fillWidth: true; onClicked: studio.addFinishingLayer() }
-            Label { text: qsTr("在独立细节层画笔触，可继续给下面原线稿填色。手绘新线条不会成为填色边界；需封口时使用明确补线工具。"); wrapMode: Text.Wrap; color: "#dbba98"; Layout.fillWidth: true }
+            Label { text: qsTr("在独立细节层画笔触，可继续给下面原线稿填色。默认不采样手绘线条；可明确指定一个细节层作边界，或用补线工具封口。"); wrapMode: Text.Wrap; color: "#dbba98"; Layout.fillWidth: true }
             ListView {
                 objectName: "layerList"
                 Layout.fillWidth: true
@@ -315,6 +315,9 @@ ApplicationWindow {
             }
             Button { objectName: "importLineartButton"; text: qsTr("空白工程 · 嵌入原线稿"); enabled: !studio.busy; onClicked: lineartDialog.open() }
             CheckBox { objectName: "lineartBucketTool"; text: qsTr("原线稿填色桶（鼠标点击）"); checked: nativeCanvas.bucketTool; onToggled: nativeCanvas.bucketTool = checked }
+            Button { objectName: "useActiveBoundaryButton"; text: qsTr("用所选手绘细节层作为填色边界"); enabled: studio.hasDocument && !studio.busy; Layout.fillWidth: true; onClicked: studio.useActiveBoundary() }
+            Button { objectName: "clearBoundaryButton"; text: qsTr("停止采样手绘边界"); visible: studio.selectedBoundaryName.length > 0; enabled: !studio.busy; Layout.fillWidth: true; onClicked: studio.clearSelectedBoundary() }
+            Label { objectName: "selectedBoundaryLabel"; visible: studio.selectedBoundaryName.length > 0; text: qsTr("边界层：") + studio.selectedBoundaryName + qsTr("。仅 alpha≥128/255 的覆盖阻挡；不改笔迹透明度、不采其他彩色细节。只填原稿白区，挖空区请停止采样后填。重开须重选。"); wrapMode: Text.Wrap; color: "#edc79a"; Layout.fillWidth: true }
             Label { text: qsTr("同尺寸黑白灰 PNG，最多 2000 万像素；原图锁定、色块独立、后台填色，不缩图。导入仍为同步操作。"); color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Button { objectName: "cancelLineartFill"; text: qsTr("取消当前区域操作"); visible: studio.fillBusy || studio.fillPending; onClicked: studio.cancelFill() }
             Button { objectName: "acceptLineartFill"; text: qsTr("接受当前区域预览"); visible: studio.fillPending; enabled: !nativeCanvas.rendering && nativeCanvas.renderError.length === 0; onClicked: studio.acceptFill() }

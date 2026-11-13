@@ -35,6 +35,7 @@ class QtBridge : public QObject {
     Q_PROPERTY(bool strokeCommitBusy READ strokeCommitBusy NOTIFY changed)
     Q_PROPERTY(bool fillBusy READ fillBusy NOTIFY changed)
     Q_PROPERTY(QString fillNotice READ fillNotice NOTIFY changed)
+    Q_PROPERTY(QString selectedBoundaryName READ selectedBoundaryName NOTIFY changed)
     Q_PROPERTY(QString layerNotice READ layerNotice NOTIFY changed)
     Q_PROPERTY(int eventCount READ eventCount NOTIFY changed)
     Q_PROPERTY(int replayCount READ replayCount NOTIFY changed)
@@ -64,6 +65,7 @@ class QtBridge : public QObject {
     std::optional<DocumentSnapshot> pendingFillPreview_,pendingFillSource_;
     std::uint64_t pendingFillGeneration_{};
     std::optional<NodeId> activeLayer_;
+    std::optional<NodeId> selectedBoundary_;
     std::uint64_t canvasGeneration_{};
     WorkflowController* workflow_{};
     int replayCount_{-1};
@@ -115,6 +117,9 @@ class QtBridge : public QObject {
     Q_INVOKABLE void createDocument(double width, double height, double ppi, bool whitePaper = false);
     Q_INVOKABLE bool addLayer();
     Q_INVOKABLE bool addFinishingLayer();
+    Q_INVOKABLE bool useActiveBoundary();
+    Q_INVOKABLE bool clearSelectedBoundary();
+    QString selectedBoundaryName() const;
     Q_INVOKABLE bool selectLayer(const QString&);
     Q_INVOKABLE bool setLayerVisible(const QString&, bool);
     Q_INVOKABLE bool importReferenceUrl(const QUrl&);
