@@ -1,5 +1,7 @@
 #include "apps/studio/QtBridge.h"
 #include "platform/CanvasItem.h"
+#include "core/LineartRaster.h"
+#include "storage/ProjectStore.h"
 #include "view/LayerTree.h"
 #include "ui/WorkflowController.h"
 #include "ui/ReviewJob.h"
@@ -88,6 +90,7 @@ QColor pixel(QQuickWindow* window, QQuickItem* canvas, const DocumentSnapshot& s
 }
 QColor referencePixel(const DocumentSnapshot& snapshot, QPointF point) {
     std::array<double, 3> rgb{250, 249, 246};
+    if(!snapshot.spec.background.transparent)for(std::size_t c=0;c<3;c++)rgb[c]=snapshot.spec.background.paperColor.channels[c]*255;
     ReferenceRenderer renderer;
     for (const auto id : layerOrder(snapshot)) {
         if (!layerVisible(snapshot, id) || !nativeLayerSupported(snapshot, id)) continue;
@@ -163,6 +166,19 @@ class LayerUiTests : public QObject {
     Q_OBJECT
   private slots:
     void init() { QTest::failOnWarning(QRegularExpression(".*")); }
+    void importedRasterDisplaysWithoutFlatteningDocument() {
+        NewDocumentRequest request;request.dimensions={128,128,Unit::Px,300};
+        auto spec=validateDocument(request,{});QVERIFY(spec);auto doc=Document::create(spec.value(),Id::fromNumber(91));QVERIFY(doc);
+        Bytes rgba(128*128*4,0);for(unsigned y=20;y<100;y++)for(unsigned x=20;x<100;x++){const auto at=(y*128+x)*4;rgba[at]=255;rgba[at+3]=255;}
+        auto imported=makeLineartRasterCommand(rgba,{137,80,78,71,13,10,26,10},128,128,Id::fromNumber(92));QVERIFY(imported);QVERIFY(doc.value().apply(imported.value(),0));
+        QTemporaryDir directory;QVERIFY(directory.isValid());const auto file=directory.filePath("imported.draw");ProjectStore store;
+        QVERIFY(store.save(std::filesystem::path(file.toStdWString()),doc.value().snapshot()));
+        QtBridge bridge;bridge.openUrl(QUrl::fromLocalFile(file));QVERIFY(bridge.canvasSnapshot());
+        const auto original=*bridge.canvasSnapshot();QQuickWindow window;window.resize(320,320);CanvasItem canvas(window.contentItem());canvas.setSize({320,320});canvas.setProperty("bridge",QVariant::fromValue<QObject*>(&bridge));window.show();QVERIFY(QTest::qWaitForWindowExposed(&window));
+        QTRY_VERIFY(pixel(&window,&canvas,original,{60,60}).red()>250);
+        QTRY_VERIFY(pixel(&window,&canvas,original,{60,60}).green()<5);
+        QVERIFY(canvas.renderError().isEmpty());QVERIFY(bridge.canvasSnapshot()->sameContent(original));
+    }
     void missingModelPreflightUsesWorkerWithoutChangingDocument() {
         QtBridge bridge;
         bridge.createDocument(64, 64, 300);
@@ -715,3 +731,4 @@ int main(int argc, char** argv) {
     return QTest::qExec(&tests, argc, argv);
 }
 #include "LayerUiTests.moc"
+

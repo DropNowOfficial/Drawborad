@@ -1,4 +1,5 @@
 #include "CanvasItem.h"
+#include "CanvasFrame.h"
 #ifdef DRAWBORAD_HAS_QT
 #include "apps/studio/QtBridge.h"
 #include "view/Viewport.h"
@@ -51,12 +52,30 @@ void CanvasItem::refreshSnapshot() {
         if (snapshot_ && next && snapshot_->documentId == next->documentId &&
             snapshot_->revision == next->revision && snapshot_->nodes == next->nodes &&
             snapshot_->eventIndex == next->eventIndex && replayCount_==nextCount) return;
+    }
+    QImage frame;QString failure;bool legacy=false;
+    if(next){
+        auto rendered=renderCanvasFrame(*next,nextCount);
+        if(rendered)frame=std::move(rendered.value());
+        else {
+            // Preserve transformed native-only documents handled by the old scene graph.
+            // Never fall back when a raster layer would silently disappear.
+            legacy=rendered.error().messageKey=="merged.native-compositing-required" &&
+                std::all_of(next->nodes->begin(),next->nodes->end(),[&](const auto& entry){
+                    return entry.second.kind!=NodeKind::Layer || !layerVisible(*next,entry.first) || nativeLayerSupported(*next,entry.first);
+                });
+            if(!legacy)failure=QString::fromStdString(rendered.error().messageKey);
+        }
+    }
+    {
+        std::lock_guard lock(snapshotMutex_);
         if(!snapshot_ || !next || snapshot_->documentId!=next->documentId || snapshot_->spec.pixelSize!=next->spec.pixelSize){
             zoom_=1;pan_={};panGesture_.reset();
         }
-        snapshot_ = next;
-        replayCount_=nextCount;
+        snapshot_=next;replayCount_=nextCount;displayFrame_=std::move(frame);
+        renderError_=failure;legacyDisplay_=legacy;
     }
+    emit renderErrorChanged();
     update();emit viewChanged();
 }
 std::optional<std::pair<NodeId, NodeId>> CanvasItem::paintTarget(const DocumentSnapshot& s) const {
@@ -80,6 +99,7 @@ QPointF CanvasItem::boundedPan(const DocumentSnapshot& snapshot,double magnifica
     const auto maxY=std::max(0.0,(rect.height()-height())*.5)+height()*.4;
     return {std::clamp(offset.x(),-maxX,maxX),std::clamp(offset.y(),-maxY,maxY)};
 }
+QString CanvasItem::renderError() const {std::lock_guard lock(snapshotMutex_);return renderError_;}
 double CanvasItem::zoom() const {std::lock_guard lock(snapshotMutex_);return zoom_;}
 QRectF CanvasItem::documentRect() const {
     std::lock_guard lock(snapshotMutex_);if(!snapshot_)return {};
@@ -144,7 +164,7 @@ void CanvasItem::beginSample(InputSample sample, bool tablet, bool eraser) {
     strokeTarget_.reset();
     tabletStroke_ = tablet;
     eraser_ = eraser;
-    if (!bridge_ || bridge_->busy() || bridge_->replaying()) return;
+    if (!bridge_ || bridge_->busy() || bridge_->replaying() || !renderError().isEmpty()) return;
     const auto snapshot = bridge_->canvasSnapshot();
     if (!snapshot) return;
     const auto target = paintTarget(*snapshot);
@@ -154,7 +174,7 @@ void CanvasItem::beginSample(InputSample sample, bool tablet, bool eraser) {
 }
 void CanvasItem::appendSample(InputSample s){if(!stroke_.empty())stroke_.push_back(s);}
 void CanvasItem::finishStroke(){
-    if(!bridge_||stroke_.empty()){stroke_.clear();return;}std::optional<DocumentSnapshot> snap;{std::lock_guard lock(snapshotMutex_);snap=snapshot_;}
+    if(!bridge_||stroke_.empty()||!renderError().isEmpty()){stroke_.clear();strokeTarget_.reset();return;}std::optional<DocumentSnapshot> snap;{std::lock_guard lock(snapshotMutex_);snap=snapshot_;}
     if(!snap||!strokeTarget_||strokeTarget_->document!=snap->documentId||
        strokeTarget_->generation!=bridge_->canvasGeneration()||
        !nativeLayerPaintable(*snap,strokeTarget_->layer)||
@@ -200,8 +220,8 @@ bool CanvasItem::event(QEvent* event){
 }
 QSGNode* CanvasItem::updatePaintNode(QSGNode* old,UpdatePaintNodeData*){
     delete old;auto*root=new QSGNode;root->appendChildNode(new QSGSimpleRectNode(QRectF(0,0,width(),height()),QColor("#323235")));
-    std::uint64_t count;double viewZoom;QPointF panOffset;std::optional<DocumentSnapshot> snap;
-    {std::lock_guard lock(snapshotMutex_);snap=snapshot_;count=replayCount_;viewZoom=zoom_;panOffset=pan_;}if(!snap||!window())return root;
+    std::uint64_t count;double viewZoom;QPointF panOffset;std::optional<DocumentSnapshot> snap;QImage frame;bool legacy;
+    {std::lock_guard lock(snapshotMutex_);snap=snapshot_;count=replayCount_;viewZoom=zoom_;panOffset=pan_;frame=displayFrame_;legacy=legacyDisplay_;}if(!snap||!window())return root;
     const auto viewTransform=documentTransform(*snap,viewZoom,panOffset);const auto scale=viewTransform.m11();if(!(scale>0))return root;
     const auto ox=viewTransform.dx(),oy=viewTransform.dy();
     root->appendChildNode(new QSGSimpleRectNode(QRectF(ox,oy,snap->spec.pixelSize.width*scale,snap->spec.pixelSize.height*scale),QColor("#faf9f6")));
@@ -214,6 +234,31 @@ QSGNode* CanvasItem::updatePaintNode(QSGNode* old,UpdatePaintNodeData*){
     documentClip->setIsRectangular(true);
     documentClip->setClipRect(QRectF(0, 0, double(snap->spec.pixelSize.width), double(snap->spec.pixelSize.height)));
     viewport->appendChildNode(documentClip);
+    if(!frame.isNull()){
+        // Texture tiles avoid hardware maximum texture dimensions on print-size canvases.
+        for(int y=0;y<frame.height();y+=int(TileSide))for(int x=0;x<frame.width();x+=int(TileSide)){
+            const QRect rect(x,y,std::min(int(TileSide),frame.width()-x),std::min(int(TileSide),frame.height()-y));
+            auto* texture=window()->createTextureFromImage(frame.copy(rect).convertToFormat(QImage::Format_RGBA8888_Premultiplied));
+            if(!texture){
+                const auto failedDocument=snap->documentId;const auto failedRevision=snap->revision;const auto failedFrameKey=frame.cacheKey();
+                QMetaObject::invokeMethod(this,[this,failedDocument,failedRevision,failedFrameKey]{
+                    {
+                        std::lock_guard lock(snapshotMutex_);
+                        if(!snapshot_ || snapshot_->documentId!=failedDocument || snapshot_->revision!=failedRevision || displayFrame_.cacheKey()!=failedFrameKey)return;
+                        renderError_=QStringLiteral("canvas.texture-allocation");displayFrame_={};legacyDisplay_=false;
+                    }
+                    emit renderErrorChanged();update();
+                },Qt::QueuedConnection);
+                delete root;auto* failed=new QSGNode;
+                failed->appendChildNode(new QSGSimpleRectNode(QRectF(0,0,width(),height()),QColor("#323235")));
+                return failed;
+            }
+            auto* node=new QSGSimpleTextureNode;node->setOwnsTexture(true);node->setTexture(texture);
+            node->setRect(QRectF(rect));documentClip->appendChildNode(node);
+        }
+        return root;
+    }
+    if(!legacy)return root;
     std::function<void(NodeId,QSGNode*)> appendNode=[&](NodeId id,QSGNode* parent){
         const auto& layer=snap->nodes->at(id);
         if(!layer.visible||layer.opacity<=0)return;
@@ -230,3 +275,4 @@ QSGNode* CanvasItem::updatePaintNode(QSGNode* old,UpdatePaintNodeData*){
 }
 }
 #endif
+

@@ -4,6 +4,7 @@
 #include "render/ReferenceRenderer.h"
 #include "view/Viewport.h"
 #include <QQuickItem>
+#include <QImage>
 #include <QPointF>
 #include <QPointer>
 #include <QTransform>
@@ -14,10 +15,14 @@ class CanvasItem : public QQuickItem {
     Q_OBJECT
     Q_PROPERTY(QObject* bridge READ studio WRITE setStudio NOTIFY studioChanged)
     Q_PROPERTY(double zoom READ zoom NOTIFY viewChanged)
+    Q_PROPERTY(QString renderError READ renderError NOTIFY renderErrorChanged)
     Q_PROPERTY(QRectF documentRect READ documentRect NOTIFY viewChanged)
     QPointer<QtBridge> bridge_;
     mutable std::mutex snapshotMutex_;
     std::optional<DocumentSnapshot> snapshot_;
+    QImage displayFrame_;
+    QString renderError_;
+    bool legacyDisplay_{false};
     std::uint64_t replayCount_{UINT64_MAX};
     double zoom_{1};
     QPointF pan_;
@@ -56,9 +61,11 @@ class CanvasItem : public QQuickItem {
   signals:
     void studioChanged();
     void viewChanged();
+    void renderErrorChanged();
   public:
     explicit CanvasItem(QQuickItem* parent = nullptr);
     double zoom() const;
+    QString renderError() const;
     QRectF documentRect() const;
     Q_INVOKABLE bool zoomAt(double factor,double x,double y);
     Q_INVOKABLE bool panBy(double x,double y);
@@ -66,3 +73,4 @@ class CanvasItem : public QQuickItem {
 };
 }
 #endif
+

@@ -233,5 +233,17 @@ if(DRAWBORAD_HEADLESS_WORKFLOW)
  set_tests_properties(B24.ReorderLayerSession PROPERTIES TIMEOUT 120)
 endif()
 
+
+if(DRAWBORAD_DESKTOP OR DRAWBORAD_HEADLESS_WORKFLOW)
+  add_executable(test_CanvasFrame platform/test_canvas_frame.cpp)
+  target_link_libraries(test_CanvasFrame PRIVATE drawborad_workflow)
+  if(MSVC)
+    target_compile_options(test_CanvasFrame PRIVATE /UNDEBUG)
+  else()
+    target_compile_options(test_CanvasFrame PRIVATE -UNDEBUG)
+  endif()
+  add_test(NAME Desktop.CanvasFrame COMMAND test_CanvasFrame)
+endif()
+
 # Register all native features before labeling the test inventory.
 include(${PROJECT_SOURCE_DIR}/cmake/TestTargets.cmake)
