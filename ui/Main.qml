@@ -22,7 +22,7 @@ ApplicationWindow {
     FileDialog { id: relinkDialog; title: qsTr("选择与原始文件哈希一致的图片"); nameFilters: ["PNG/JPEG (*.png *.jpg *.jpeg)"]; onAccepted: studio.workflow.relinkSource(selectedFile) }
     Dialog { id: fillPendingDialog; title: qsTr("填色尚未提交"); modal: true; standardButtons: Dialog.Ok; Label { text: qsTr("请等待填色完成并保存，或点击取消填色后再关闭。"); wrapMode: Text.Wrap } }
     onClosing: function(event) {
-        if (studio.fillBusy) { event.accepted = false; fillPendingDialog.open(); return }
+        if (studio.fillBusy || studio.fillPending) { event.accepted = false; fillPendingDialog.open(); return }
         if (studio.dirty && !approvedClose) { event.accepted = false; closeDialog.open() }
     }
     header: ToolBar {
@@ -67,6 +67,7 @@ ApplicationWindow {
                 TabButton { text: qsTr("绘制结果") }
             }
             NativeCanvas { id: nativeCanvas; objectName: "nativeCanvas"; anchors.fill: parent; anchors.margins: 24; anchors.topMargin: workspaceTabs.visible ? 64 : 24; visible: studio.hasDocument && !reviewPanel.visible; bridge: studio }
+            Label { objectName: "fillPreviewStatus"; anchors.top: nativeCanvas.top; anchors.horizontalCenter: nativeCanvas.horizontalCenter; visible: studio.fillPending; text: qsTr("色块预览 · 尚未提交 · 请接受或取消"); color: "#ffcf70"; z: 3 }
             Label { objectName: "strokePreviewStatus"; anchors.bottom: nativeCanvas.bottom; anchors.horizontalCenter: nativeCanvas.horizontalCenter; visible: nativeCanvas.strokePreviewActive; text: nativeCanvas.previewing ? qsTr("笔迹预览更新中 · 尚未提交") : qsTr("未提交预览 · 松手提交，Esc 取消"); color: "#ffffff"; padding: 6; background: Rectangle { color: "#c0202428" } }
             Label { objectName: "canvasRendering"; anchors.centerIn: nativeCanvas; visible: nativeCanvas.visible && nativeCanvas.rendering; text: qsTr("Rendering document…"); color: "#bcbcc4" }
             Label {
@@ -258,6 +259,7 @@ ApplicationWindow {
                             objectName: "layerVisibility_" + modelData.id
                             text: qsTr("Visible")
                             checked: modelData.visible
+                            enabled: !studio.busy
                             onToggled: studio.setLayerVisible(modelData.id, checked)
                             contentItem: Label {
                                 text: parent.text
@@ -274,7 +276,8 @@ ApplicationWindow {
             Button { objectName: "importLineartButton"; text: qsTr("空白工程 · 嵌入原线稿"); enabled: !studio.busy; onClicked: lineartDialog.open() }
             CheckBox { objectName: "lineartBucketTool"; text: qsTr("原线稿填色桶（鼠标点击）"); checked: nativeCanvas.bucketTool; onToggled: nativeCanvas.bucketTool = checked }
             Label { text: qsTr("同尺寸黑白灰 PNG，最多 2000 万像素；原图锁定、色块独立、后台填色，不缩图。导入仍为同步操作。"); color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
-            Button { objectName: "cancelLineartFill"; text: qsTr("取消正在计算的色块"); visible: studio.fillBusy; onClicked: studio.cancelFill() }
+            Button { objectName: "cancelLineartFill"; text: qsTr("取消正在计算的色块"); visible: studio.fillBusy || studio.fillPending; onClicked: studio.cancelFill() }
+            Button { objectName: "acceptLineartFill"; text: qsTr("接受当前色块预览"); visible: studio.fillPending; enabled: !nativeCanvas.rendering && nativeCanvas.renderError.length === 0; onClicked: studio.acceptFill() }
             Label { objectName: "lineartFillNotice"; text: studio.fillNotice; color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Label { text: studio.layerNotice; color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true; visible: text.length > 0 }
             Label { text: qsTr("画笔 · 原生笔迹"); color: "#f5f5f7"; font.pixelSize: 18 }
@@ -317,7 +320,7 @@ ApplicationWindow {
             Label { text: qsTr("Reference could not be displayed."); color: "#ffc2a1"; visible: studio.hasReference && referencePreview.status === Image.Error }
             Label { text: qsTr("This build includes the native tiled canvas, mouse/tablet stroke input, replay core, DPI coordinates and cache recovery foundation."); color: "#a5a5ae"; wrapMode: Text.Wrap; Layout.fillWidth: true; lineHeight: 1.45 }
             Button { text: qsTr("Check native worker"); enabled: studio.hasDocument && !studio.busy; onClicked: studio.probeWorker() }
-            BusyIndicator { running: studio.busy; visible: studio.busy }
+            BusyIndicator { running: studio.busy && !studio.fillPending; visible: running }
             Label { text: studio.message; color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             }
         }

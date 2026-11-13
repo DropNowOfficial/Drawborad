@@ -1,6 +1,7 @@
 #include "QtBridge.h"
 #include "AlphaImportPolicy.h"
 #include "brush/OriginalLineartFill.h"
+#include "brush/FillRegionReview.h"
 #include "ui/MergedDocument.h"
 #include <QFile>
 #include <QColorSpace>
@@ -60,11 +61,18 @@ QtBridge::QtBridge(QObject* parent)
     poll_.start();
 }
 QtBridge::~QtBridge(){fillStop_.request_stop();fillPool_.clear();fillPool_.waitForDone();}
-void QtBridge::cancelFill(){if(fillBusy_){fillStop_.request_stop();fillNotice_=tr("正在取消填色；原图及已提交内容不变。");emit changed();}}
-bool QtBridge::dirty() const {return app_.dirty() || workflow_->pending();}
+void QtBridge::cancelFill(){if(fillPending()){pendingFill_.reset();pendingFillPreview_.reset();pendingFillSource_.reset();fillNotice_=tr("审阅已取消，原工程未修改。");emit changed();return;}if(fillBusy_){fillStop_.request_stop();fillNotice_=tr("正在取消填色；原图及已提交内容不变。");emit changed();}}
+bool QtBridge::acceptFill(){
+    if(!pendingFill_ || !pendingFillSource_)return false;
+    const auto current=app_.snapshot();const auto source=*pendingFillSource_;
+    if(!current || current->documentId!=source.documentId || current->revision!=source.revision || canvasGeneration_!=pendingFillGeneration_ || replaying()){cancelFill();fillNotice_=tr("工程发生变化，审阅结果未提交。");emit changed();return false;}
+    auto command=std::move(*pendingFill_);pendingFill_.reset();pendingFillPreview_.reset();pendingFillSource_.reset();
+    auto committed=app_.apply(command);fillNotice_=committed?tr("已接受色块，独立图层已更新；原线稿未改，可撤销和保存。"):QString::fromStdString(committed.error().messageKey);emit changed();return bool(committed);
+}
+bool QtBridge::dirty() const {return app_.dirty() || workflow_->pending() || fillPending();}
 int QtBridge::eventCount() const {const auto s=app_.snapshot();return s?int(std::min<std::size_t>(s->eventIndex->size(),std::size_t(INT_MAX))):0;}
 int QtBridge::replayCount() const {return replayCount_<0?eventCount():std::min(replayCount_,eventCount());}
-void QtBridge::setReplayCount(int count){if(fillBusy_)return;count=std::clamp(count,0,eventCount());replayCount_=count==eventCount()?-1:count;emit changed();}
+void QtBridge::setReplayCount(int count){if(fillBusy_ || fillPending())return;count=std::clamp(count,0,eventCount());replayCount_=count==eventCount()?-1:count;emit changed();}
 bool QtBridge::undoDrawing(){
     if(busy() || workflow_->pending() || !app_.undo())return false;
     replayCount_=-1;++canvasGeneration_;resetLayerSelection();workflow_->restore(*app_.snapshot());emit changed();return true;
@@ -73,7 +81,7 @@ bool QtBridge::redoDrawing(){
     if(busy() || workflow_->pending() || !app_.redo())return false;
     replayCount_=-1;++canvasGeneration_;resetLayerSelection();workflow_->restore(*app_.snapshot());emit changed();return true;
 }
-bool QtBridge::busy() const {return fillBusy_ || running_.has_value() || workflow_->busy();}
+bool QtBridge::busy() const {return fillBusy_ || fillPending() || running_.has_value() || workflow_->busy();}
 QObject* QtBridge::workflow() const {return workflow_;}
 QString QtBridge::message() const { return !app_.message().empty()?QString::fromStdString(app_.message()):workerMessage_; }
 QString QtBridge::dimensions() const { auto s=app_.snapshot(); if(!s)return tr("No document"); return QString::number(s->spec.pixelSize.width)+" x "+QString::number(s->spec.pixelSize.height)+tr(" px / revision ")+QString::number(s->revision); }
@@ -102,6 +110,7 @@ void QtBridge::resetLayerSelection() {
     if (!order.empty()) activeLayer_ = order.back();
 }
 bool QtBridge::canAddLayer() const {
+    if(busy() || workflow_->pending())return false;
     const auto snapshot = app_.snapshot();
     if (!snapshot || snapshot->spec.colorSpec.format != PixelFormat{ColorMode::RGB, Depth::U8, true}) return false;
     auto parent = Document::rootId();
@@ -165,6 +174,7 @@ bool QtBridge::addLayer() {
     return bool(result);
 }
 bool QtBridge::setLayerVisible(const QString& text, bool visible) {
+    if(busy() || workflow_->pending())return false;
     const auto snapshot = app_.snapshot();
     const auto id = parseLayerId(text);
     if (!snapshot || !id || !snapshot->nodes->contains(*id) || snapshot->nodes->at(*id).kind != NodeKind::Layer)
@@ -320,13 +330,26 @@ bool QtBridge::fillLineartAt(double x,double y,const QColor& color) try {
     fillBusy_=true;fillNotice_=tr("正在按原尺寸线稿计算色块；尚未提交，可取消。请完成后再保存。");emit changed();
     fillPool_.start([this,snapshot,source,target,event,x,y,paint,stop,generation]{
         auto result=originalLineartFillCommand(snapshot,source,target,event,std::uint32_t(x),std::uint32_t(y),paint,stop);
-        QMetaObject::invokeMethod(this,[this,snapshot,result=std::move(result),stop,generation]() mutable {
+        std::optional<DocumentSnapshot> preview;FillRegionReview review;
+        try { if(result){
+            FillMask mask;for(const auto& op:result.value().operations)if(const auto* paint=std::get_if<Paint>(&op))for(std::size_t i=0;i+1<paint->event.geometry.size();i+=2){const auto& a=paint->event.geometry[i];const auto& b=paint->event.geometry[i+1];const auto length=std::uint32_t(b.x-a.x);mask.runs.push_back({std::uint32_t(a.y),std::uint32_t(a.x),length});mask.pixelCount+=length;}
+            auto inspected=reviewFillRegion(mask,std::uint32_t(snapshot.spec.pixelSize.width),std::uint32_t(snapshot.spec.pixelSize.height),stop);
+            if(!inspected)result=inspected.error();else{
+                review=inspected.value();auto candidate=Document::fromSnapshot(snapshot);
+                if(!candidate)result=candidate.error();else{auto applied=candidate.value().apply(result.value(),snapshot.revision);if(!applied)result=applied.error();else preview=candidate.value().snapshot();}
+            }
+        }
+        }catch(const std::bad_alloc&){preview.reset();result=error(ErrorCode::BudgetExceeded,"fill-review.allocation");}
+        QMetaObject::invokeMethod(this,[this,snapshot,result=std::move(result),preview,review,stop,generation]() mutable {
             const auto current=app_.snapshot();fillBusy_=false;
             if(stop.stop_requested()){fillNotice_=tr("填色已取消，工程未修改。");emit changed();return;}
             if(replaying() || !current || current->documentId!=snapshot.documentId || current->revision!=snapshot.revision || canvasGeneration_!=generation){fillNotice_=tr("原工程已变化，旧填色结果已丢弃。");emit changed();return;}
             if(!result){fillNotice_=tr("未填色，工程未修改：")+QString::fromStdString(result.error().messageKey);emit changed();return;}
-            auto committed=app_.apply(result.value());
-            fillNotice_=committed?tr("原尺寸色块已提交到独立色层；原线稿未改，可撤销并保存。"):QString::fromStdString(committed.error().messageKey);
+            pendingFill_=std::move(result.value());pendingFillSource_=snapshot;pendingFillPreview_=preview;pendingFillGeneration_=generation;
+            fillNotice_=tr("未提交预览：%1 像素；范围 %2×%3；%4。内部建议点 (%5,%6)，离区域外像素中心的曼哈顿距离 %7。%8请对照画面后接受或取消。")
+                .arg(qulonglong(review.pixelCount)).arg(qlonglong(review.bounds.width)).arg(qlonglong(review.bounds.height))
+                .arg(review.touchesCanvasEdge?tr("连到画布边缘，警惕背景漏选"):tr("未连画布边缘"))
+                .arg(review.seedX).arg(review.seedY).arg(review.clearance).arg(review.tiny?tr("注意：极小色块，可能点中了碎岛。 "):QString{});
             emit changed();
         },Qt::QueuedConnection);
     });
@@ -350,7 +373,7 @@ void QtBridge::openUrl(const QUrl& p){
     if(done){replayCount_=-1;referenceUrl_=QUrl{};referenceFeedback_=tr("Reference previews are not stored in .draw projects. Reimport the source image to compare.");++canvasGeneration_;resetLayerSelection();workflow_->restore(*app_.snapshot());}
     emit changed();
 }
-void QtBridge::saveUrl(const QUrl& p){if(fillBusy_){fillNotice_=tr("填色尚未提交，本次未保存；请等待完成或取消后重试。");emit changed();return;}if(!p.isLocalFile())return;if(workflow_->pending()){workflow_->fail(tr("请先接受审阅蒙版，再保存工程。未接受的修改仍然保留；也可取消关闭或明确放弃。" ));return;}auto done=app_.save(std::filesystem::path(p.toLocalFile().toStdWString()));(void)done;emit changed();}
+void QtBridge::saveUrl(const QUrl& p){if(fillBusy_ || fillPending()){fillNotice_=tr("填色尚未提交，本次未保存；请等待完成或取消后重试。");emit changed();return;}if(!p.isLocalFile())return;if(workflow_->pending()){workflow_->fail(tr("请先接受审阅蒙版，再保存工程。未接受的修改仍然保留；也可取消关闭或明确放弃。" ));return;}auto done=app_.save(std::filesystem::path(p.toLocalFile().toStdWString()));(void)done;emit changed();}
 void QtBridge::probeWorker(){if(running_||!app_.snapshot())return;auto s=*app_.snapshot();auto bytes=encodeDelta(DocumentSnapshot{},s);auto hash=stateHash(s);if(!bytes||!hash)return;JobRequest q;q.id=uuid();q.nonce=uuid();q.task="native.smoke";q.inputSnapshot={s.documentId,s.revision,hash.value()};q.snapshotBytes=std::move(bytes.value());q.resources={q.id,ResourceDevice::CPU,16*1024*1024,0,0,false};auto id=broker_.submit(q);if(id){running_=id.value();workerMessage_=tr("Connecting native worker...");}else workerMessage_=QString::fromStdString(id.error().messageKey);emit changed();}
 void QtBridge::cancelWorker(){if(workflow_->busy())workflow_->cancel();if(running_){broker_.cancel(*running_);workerMessage_=tr("Cancelling worker...");emit changed();}}
 }

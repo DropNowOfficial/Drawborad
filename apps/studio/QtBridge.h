@@ -25,6 +25,7 @@ class QtBridge : public QObject {
     Q_PROPERTY(QVariantList layers READ layers NOTIFY changed)
     Q_PROPERTY(QString activeLayerId READ activeLayerId NOTIFY changed)
     Q_PROPERTY(bool canAddLayer READ canAddLayer NOTIFY changed)
+    Q_PROPERTY(bool fillPending READ fillPending NOTIFY changed)
     Q_PROPERTY(bool fillBusy READ fillBusy NOTIFY changed)
     Q_PROPERTY(QString fillNotice READ fillNotice NOTIFY changed)
     Q_PROPERTY(QString layerNotice READ layerNotice NOTIFY changed)
@@ -44,6 +45,9 @@ class QtBridge : public QObject {
     QThreadPool fillPool_;
     std::stop_source fillStop_;
     bool fillBusy_{false};
+    std::optional<Command> pendingFill_;
+    std::optional<DocumentSnapshot> pendingFillPreview_,pendingFillSource_;
+    std::uint64_t pendingFillGeneration_{};
     std::optional<NodeId> activeLayer_;
     std::uint64_t canvasGeneration_{};
     WorkflowController* workflow_{};
@@ -53,6 +57,9 @@ class QtBridge : public QObject {
   public:
     explicit QtBridge(QObject* parent = nullptr);
     ~QtBridge() override;
+    bool fillPending() const { return pendingFill_.has_value(); }
+    Q_INVOKABLE bool acceptFill();
+    std::optional<DocumentSnapshot> displaySnapshot() const { return pendingFillPreview_?pendingFillPreview_:app_.snapshot(); }
     bool fillBusy() const { return fillBusy_; }
     Q_INVOKABLE void cancelFill();
     QString message() const;

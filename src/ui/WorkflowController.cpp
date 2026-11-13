@@ -630,6 +630,7 @@ bool WorkflowController::refineRectangle(double x0,double y0,double x1,double y1
         {"x",qint64(x)},{"y",qint64(y)},{"width",qint64(right-x)},{"height",qint64(bottom-y)}});
 }
 bool WorkflowController::exportNative(const QUrl& url,const QString& format){
+    if(bridge_.fillBusy() || bridge_.fillPending()){fail(tr("色块尚未接受，未导出。请先接受或取消当前预览。"));return false;}
     const auto snapshot=bridge_.canvasSnapshot();
     if(busy() || pending_ || !snapshot || !url.isLocalFile() || (format!="png" && format!="ora"))return false;
     // Export the full committed document, never the display cache or a scaled preview.
@@ -660,6 +661,7 @@ bool WorkflowController::exportNative(const QUrl& url,const QString& format){
     emit changed();return true;
 }
 bool WorkflowController::exportPsd(const QUrl& url){
+    if(bridge_.fillBusy() || bridge_.fillPending()){fail(tr("色块尚未接受，未导出。请先接受或取消当前预览。"));return false;}
     const auto snapshot=bridge_.canvasSnapshot();
     if(busy() || pending_ || !snapshot || !url.isLocalFile())return false;
     auto painted=renderPaintedDocument(*snapshot,{snapshot->revision});if(!painted){

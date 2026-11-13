@@ -51,8 +51,8 @@ void CanvasItem::setStudio(QObject* value) {
     emit studioChanged();
 }
 void CanvasItem::refreshSnapshot() {
-    const auto next = bridge_ ? bridge_->canvasSnapshot() : std::nullopt;
-    const auto nextCount=bridge_?std::uint64_t(bridge_->replayCount()):UINT64_MAX;
+    const auto next = bridge_ ? bridge_->displaySnapshot() : std::nullopt;
+    const auto nextCount=bridge_&&!bridge_->fillPending()?std::uint64_t(bridge_->replayCount()):UINT64_MAX;
     if(bridge_&&(bridge_->busy()||bridge_->replaying()))cancelStroke();
     if (strokeTarget_ && (!bridge_ || !next || strokeTarget_->document != next->documentId ||
                           strokeTarget_->generation != bridge_->canvasGeneration())) {
