@@ -12,6 +12,7 @@ fs::path suffix(fs::path p, const std::string& s) {
     return p;
 }
 unsigned formatGeneration(const DocumentSnapshot& s) {
+    if(std::any_of(s.eventIndex->begin(),s.eventIndex->end(),[](const auto&e){return e.engineVersion==21;}))return 21;
     if(!s.fillOperations.empty())return 20;
     if(std::any_of(s.eventIndex->begin(),s.eventIndex->end(),[](const auto& e){return e.engineVersion==19;}))return 19;
     if(std::any_of(s.resources->begin(),s.resources->end(),[](const auto& item){return hiddenBoundary::tagged(item.second);}))return 16;
@@ -70,9 +71,9 @@ Result<RecoveryResult> load(FileIO& io, const ProjectPath& p) {
             try {
                 binary::Reader peek{r.value().data};
                 const auto format=peek.text(32);
-                if(format!="DRAW-DELTA-1" && format!="DRAW-DELTA-8" && format!="DRAW-DELTA-9" && format!="DRAW-DELTA-10" && format!="DRAW-DELTA-11" && format!="DRAW-DELTA-12" && format!="DRAW-DELTA-13" && format!="DRAW-DELTA-14" && format!="DRAW-DELTA-15" && format!="DRAW-DELTA-16" && format!="DRAW-DELTA-19" && format!="DRAW-DELTA-20")
+                if(format!="DRAW-DELTA-1" && format!="DRAW-DELTA-8" && format!="DRAW-DELTA-9" && format!="DRAW-DELTA-10" && format!="DRAW-DELTA-11" && format!="DRAW-DELTA-12" && format!="DRAW-DELTA-13" && format!="DRAW-DELTA-14" && format!="DRAW-DELTA-15" && format!="DRAW-DELTA-16" && format!="DRAW-DELTA-19" && format!="DRAW-DELTA-20" && format!="DRAW-DELTA-21")
                     return error(ErrorCode::UnsupportedFeature,"project.journal-version");
-                if((format=="DRAW-DELTA-20"?20u:format=="DRAW-DELTA-19"?19u:format=="DRAW-DELTA-16"?16u:format=="DRAW-DELTA-15"?15u:format=="DRAW-DELTA-14"?14u:format=="DRAW-DELTA-13"?13u:format=="DRAW-DELTA-12"?12u:format=="DRAW-DELTA-11"?11u:format=="DRAW-DELTA-10"?10u:format=="DRAW-DELTA-9"?9u:format=="DRAW-DELTA-8"?8u:2u)!=formatGeneration(s.value()))
+                if((format=="DRAW-DELTA-21"?21u:format=="DRAW-DELTA-20"?20u:format=="DRAW-DELTA-19"?19u:format=="DRAW-DELTA-16"?16u:format=="DRAW-DELTA-15"?15u:format=="DRAW-DELTA-14"?14u:format=="DRAW-DELTA-13"?13u:format=="DRAW-DELTA-12"?12u:format=="DRAW-DELTA-11"?11u:format=="DRAW-DELTA-10"?10u:format=="DRAW-DELTA-9"?9u:format=="DRAW-DELTA-8"?8u:2u)!=formatGeneration(s.value()))
                     return error(ErrorCode::UnsupportedFeature,"project.mixed-format-journal");
                 (void)peek.id();
                 (void)peek.u64();

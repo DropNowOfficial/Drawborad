@@ -277,3 +277,7 @@ endif()
 
 # Register all native features before labeling the test inventory.
 include(${PROJECT_SOURCE_DIR}/cmake/TestTargets.cmake)
+
+lineart_repair_test(B42.ChiselInk test_chisel_ink.cpp)
+
+set_tests_properties(B42.ChiselInk PROPERTIES LABELS "CorePortable")

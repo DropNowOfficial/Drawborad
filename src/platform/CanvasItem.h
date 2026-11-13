@@ -42,10 +42,14 @@ class CanvasItem : public QQuickItem {
     Q_PROPERTY(double mouseTaper READ mouseTaper NOTIFY brushSettingsChanged)
     Q_PROPERTY(bool dryInk READ dryInk NOTIFY brushSettingsChanged)
     Q_PROPERTY(bool smoothInk READ smoothInk NOTIFY brushSettingsChanged)
+    Q_PROPERTY(bool chiselInk READ chiselInk NOTIFY brushSettingsChanged)
+    Q_PROPERTY(int chiselAngle READ chiselAngle NOTIFY brushSettingsChanged)
     Q_PROPERTY(QColor brushColor READ brushColor NOTIFY brushSettingsChanged)
     Q_PROPERTY(QString brushNotice READ brushNotice NOTIFY brushSettingsChanged)
     BrushSettings brushSettings_,gestureBrush_;
     bool dryInk_{false},gestureDryInk_{false},smoothInk_{false},gestureSmoothInk_{false},dryCommitPending_{false};
+    bool chiselInk_{false},gestureChiselInk_{false};
+    int chiselAngle_{0},gestureChiselAngle_{0};
     void commitDryStrokeAsync(DocumentSnapshot,StrokeEvent);
     void finishDryCommit();
     QTimer dryCommitTimer_;
@@ -168,6 +172,9 @@ class CanvasItem : public QQuickItem {
     Q_INVOKABLE bool configureDryInk(bool);
     bool smoothInk()const{return smoothInk_;}
     Q_INVOKABLE bool configureSmoothInk(bool);
+    bool chiselInk()const{return chiselInk_;}
+    int chiselAngle()const{return chiselAngle_;}
+    Q_INVOKABLE bool configureChiselInk(bool,int);
     Q_INVOKABLE void cancelPendingStroke(){cancelStroke();}
     QColor brushColor()const{return brushColor_;}
     QString brushNotice()const{return brushNotice_;}

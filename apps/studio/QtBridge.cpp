@@ -265,7 +265,7 @@ bool QtBridge::busy() const {return strokeCommitBusy_ || fillBusy_ || fillPendin
 QObject* QtBridge::workflow() const {return workflow_;}
 QString QtBridge::message() const {
     const auto& key=app_.message();
-    if(key=="save.format-copy-required"||key=="save.clean-copy-required")return tr("未保存：请另存为一个全新的 .draw 文件名（无旧备份或日志），保留原文件。包含填色来源记录的新格式不能覆盖旧格式，旧版程序不能打开；不要删除原文件来绕过保护。");
+    if(key=="save.format-copy-required"||key=="save.clean-copy-required")return tr("未保存：请另存为一个全新的 .draw 文件名（无旧备份或日志），保留原文件。当前工程的新格式不能覆盖旧格式，旧版程序不能打开；不要删除原文件来绕过保护。");
     return !key.empty()?QString::fromStdString(key):workerMessage_;
 }
 QString QtBridge::fillProvenanceNotice() const {

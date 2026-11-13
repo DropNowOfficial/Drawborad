@@ -1,3 +1,4 @@
+#include "core/ChiselInkEvent.h"
 #pragma once
 #include "DryInkEvent.h"
 #include "BucketEvent.h"
@@ -5,6 +6,7 @@
 #include <cmath>
 namespace drawborad {
 inline Result<void> validateRasterEvent(const StrokeEvent& e) {
+    if(e.engineVersion==21)return validateChiselInkEvent(e);
     if (e.engineVersion==8) return validateBucketEvent(e);
     if (e.engineVersion==12) return validateDryInkEvent(e);
     if (e.engineVersion != 1 && e.engineVersion != 2 && e.engineVersion != 10 && e.engineVersion != 19)

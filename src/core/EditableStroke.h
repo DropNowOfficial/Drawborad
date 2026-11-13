@@ -1,3 +1,4 @@
+#include "core/ChiselInkEvent.h"
 #pragma once
 #include "Document.h"
 #include "FreehandEvent.h"
@@ -9,10 +10,11 @@ namespace drawborad {
 // snapshot. Callers listing document events should start from a valid snapshot.
 inline Result<void> independentNativeStroke(const DocumentSnapshot& s,const StrokeEvent& e,std::stop_token stop={}) {
  if(stop.stop_requested())return error(ErrorCode::Cancelled,"stroke-edit.cancelled");
- if(e.engineVersion!=1&&e.engineVersion!=2&&e.engineVersion!=10&&e.engineVersion!=12&&e.engineVersion!=19)return error(ErrorCode::UnsupportedFeature,"stroke-edit.later-dependent-event");
+ if(e.engineVersion!=1&&e.engineVersion!=2&&e.engineVersion!=10&&e.engineVersion!=12&&e.engineVersion!=19&&e.engineVersion!=21)return error(ErrorCode::UnsupportedFeature,"stroke-edit.later-dependent-event");
  if(!s.nodes||!nativeLayerSupported(s,e.layerId)||!s.nodes->at(e.layerId).sourceResource.empty()||e.objectId!=s.nodes->at(e.layerId).objectId)return error(ErrorCode::UnsupportedFeature,"stroke-edit.later-nonnative");
  if(e.id.empty()||e.geometry.empty()||e.geometry.size()>1000000||e.color.profileId!=s.spec.colorSpec.profileId||e.color.activeChannels!=3||!std::isfinite(e.color.alpha)||e.color.alpha<0||e.color.alpha>1)return error(ErrorCode::InvalidInput,"stroke-edit.later-color-budget");
  for(auto c:e.color.channels)if(!std::isfinite(c)||c<0||c>1)return error(ErrorCode::InvalidInput,"stroke-edit.later-color");
+ if(e.engineVersion==21)return validateChiselInkEvent(e);
  if(e.engineVersion==19)return validateSmoothInkEvent(e);
  if(e.engineVersion==12)return validateDryInkEvent(e);
  if(e.engineVersion==10)return validateFreehandEvent(e);
