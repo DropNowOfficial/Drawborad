@@ -4,6 +4,22 @@
 #include "core/LineartRaster.h"
 #include "view/LayerTree.h"
 namespace drawborad {
+inline bool hollowNeutralPaintLayer(const LayerNode& l){return l.kind==NodeKind::Layer&&l.parent==Document::rootId()&&l.objectId.empty()&&l.children.empty()&&l.content.empty()&&l.sourceResource.empty()&&l.sourceKind==SourceKind::Reconstructed&&l.maskId.empty()&&l.transform==LayerTransform{}&&l.opacity==1&&l.blend==BlendMode::Normal&&l.visible&&!l.locked;}
+inline Result<void> validateOriginalWhitePaint(const StrokeEvent& e,const DocumentSnapshot& s,
+ std::span<const std::uint8_t> raw,std::stop_token stop={}){
+ auto checked=validateBucketEvent(e);if(!checked)return checked.error();
+ const auto w=s.spec.pixelSize.width,h=s.spec.pixelSize.height;
+ if(raw.size()!=w*h*4||e.color.activeChannels!=3||e.color.profileId!=s.spec.colorSpec.profileId)return error(ErrorCode::UnsupportedFeature,"derived-fill.lower-properties");
+ for(std::size_t i=0;i<e.geometry.size();i+=2){
+  if(stop.stop_requested())return error(ErrorCode::Cancelled,"derived-fill.cancelled");
+  const auto& a=e.geometry[i];const auto& b=e.geometry[i+1];
+  if(a.y>=double(h)||b.x>double(w))return error(ErrorCode::InvalidInput,"derived-fill.lower-bounds");
+  for(auto x=std::uint32_t(a.x);x<std::uint32_t(b.x);++x){const auto k=(std::size_t(a.y)*w+x)*4;
+   if(raw[k+3]&&(raw[k]!=255||raw[k+1]!=255||raw[k+2]!=255))return error(ErrorCode::UnsupportedFeature,"derived-fill.lower-outside-original-white");
+  }
+ }
+ return {};
+}
 // Compatibility validation, not provenance certification. Original resources,
 // accepted cover events and colors are never rewritten. Only temporary sampling
 // pixels are composed; existing colored paint never enters the reference.
@@ -26,14 +42,14 @@ inline Result<HollowDerivedReference> hollowDerivedReference(const DocumentSnaps
  if(source.empty()||overlay.empty()||source==overlay||(!colorLayer.empty()&&(colorLayer==source||colorLayer==overlay))||!s.nodes->contains(source)||!s.nodes->contains(overlay))return error(ErrorCode::InvalidInput,"derived-fill.ids");
  const bool existing=s.nodes->contains(colorLayer);
  if(root.children.size()!=(existing?4u:3u)||s.nodes->size()!=root.children.size()+1||root.children[1]!=source||root.children[2]!=overlay||(existing&&root.children[3]!=colorLayer)||root.children[0]==colorLayer)return error(ErrorCode::UnsupportedFeature,"derived-fill.stack");
- const auto neutral=[&](const LayerNode& l){return l.kind==NodeKind::Layer&&l.parent==Document::rootId()&&l.objectId.empty()&&l.children.empty()&&l.content.empty()&&l.sourceResource.empty()&&l.sourceKind==SourceKind::Reconstructed&&l.maskId.empty()&&l.transform==LayerTransform{}&&l.opacity==1&&l.blend==BlendMode::Normal&&l.visible&&!l.locked;};
- if(!neutral(s.nodes->at(root.children[0]))||!neutral(s.nodes->at(overlay))||(existing&&!neutral(s.nodes->at(colorLayer))))return error(ErrorCode::UnsupportedFeature,"derived-fill.layer-properties");
+ if(!hollowNeutralPaintLayer(s.nodes->at(root.children[0]))||!hollowNeutralPaintLayer(s.nodes->at(overlay))||(existing&&!hollowNeutralPaintLayer(s.nodes->at(colorLayer))))return error(ErrorCode::UnsupportedFeature,"derived-fill.layer-properties");
  const auto& ink=s.nodes->at(source);
  if(!ink.locked||!ink.visible||ink.opacity!=1||!ink.maskId.empty()||ink.transform!=LayerTransform{})return error(ErrorCode::UnsupportedFeature,"derived-fill.source");
  auto raw=lineartRasterPixels(s,source);if(!raw)return raw.error();
  std::vector<const StrokeEvent*> covers;
  for(const auto& e:*s.eventIndex){
    if(e.layerId==overlay){covers.push_back(&e);}
+  else if(e.layerId==root.children[0]){auto lowerValid=validateOriginalWhitePaint(e,s,raw.value(),stop);if(!lowerValid)return lowerValid.error();}
   else if(!existing||e.layerId!=colorLayer)return error(ErrorCode::UnsupportedFeature,"derived-fill.other-paint");
  }
  if(covers.empty())return error(ErrorCode::InvalidInput,"derived-fill.missing-overlay");

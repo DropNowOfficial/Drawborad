@@ -29,6 +29,18 @@ inline Result<Command> hollowInkOverlayCommand(const DocumentSnapshot& s,NodeId 
   Bytes{}.swap(accepted->reference.bytes);
  }
  auto raw=lineartRasterPixels(s,source);if(!raw)return raw.error();
+ if(!existing){
+  // First overlay accepts only the historical source-only stack or the
+  // controlled original-fill/source stack. No arbitrary underlying brushes.
+  const bool withLower=root.children.size()==2&&root.children[1]==source&&s.nodes->size()==3;
+  if(!withLower&&(root.children!=std::vector<NodeId>{source}||s.nodes->size()!=2))return error(ErrorCode::UnsupportedFeature,"hollow.initial-stack");
+  if(withLower&&!hollowNeutralPaintLayer(s.nodes->at(root.children[0])))return error(ErrorCode::UnsupportedFeature,"hollow.lower-properties");
+  for(const auto& e:*s.eventIndex){
+   if(!withLower||e.layerId!=root.children[0])return error(ErrorCode::UnsupportedFeature,"hollow.initial-paint");
+   auto lowerValid=validateOriginalWhitePaint(e,s,raw.value(),stop);if(!lowerValid)return lowerValid.error();
+  }
+ }
+
  const auto w=s.spec.pixelSize.width,h=s.spec.pixelSize.height;if(w>8192||h>8192||w*h>20000000)return error(ErrorCode::BudgetExceeded,"hollow.canvas-limit");
  std::vector<std::uint8_t> ink(std::size_t(w*h),0);
  for(std::size_t i=0;i<ink.size();i++){

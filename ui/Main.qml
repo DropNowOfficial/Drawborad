@@ -284,7 +284,7 @@ ApplicationWindow {
             Button { objectName: "cancelLineartFill"; text: qsTr("取消当前区域操作"); visible: studio.fillBusy || studio.fillPending; onClicked: studio.cancelFill() }
             Button { objectName: "acceptLineartFill"; text: qsTr("接受当前区域预览"); visible: studio.fillPending; enabled: !nativeCanvas.rendering && nativeCanvas.renderError.length === 0; onClicked: studio.acceptFill() }
             CheckBox { objectName: "hollowInkTool"; enabled: !studio.busy; text: qsTr("局部挖空（白纸，点墨块）"); checked: nativeCanvas.hollowTool; onToggled: nativeCanvas.hollowTool = checked }
-            Label { text: qsTr("挖空只清除所选墨块内部，保留原轮廓和细笔触；可依次选择独立墨块，已挖区域不会重复覆盖；接受后切换填色桶填其内部。不是中心线化或整页抽线。"); color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Label { text: qsTr("挖空只清除所选墨块内部，保留原轮廓和细笔触；可依次选择独立墨块，已挖区域不会重复覆盖；接受后切换填色桶可继续填内部或普通白区，自动分到上/下独立色层。不采旧颜色，不是中心线化或整页抽线。"); color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Button { objectName: "dragHollowSelection"; text: nativeCanvas.hollowDragTool ? qsTr("结束框选模式") : qsTr("在画布拖拽框选范围"); enabled: !studio.busy; onClicked: nativeCanvas.hollowDragTool = !nativeCanvas.hollowDragTool }
             Button { objectName: "lassoHollowSelection"; text: nativeCanvas.hollowLassoTool ? qsTr("结束套索模式") : qsTr("拖拽自由套索范围"); enabled: !studio.busy; onClicked: nativeCanvas.hollowLassoTool = !nativeCanvas.hollowLassoTool }
             Connections { target: nativeCanvas; function onHollowSelectionFinished() { const r = nativeCanvas.hollowBounds; hollowX.text = String(r.x); hollowY.text = String(r.y); hollowW.text = String(r.width); hollowH.text = String(r.height) } }

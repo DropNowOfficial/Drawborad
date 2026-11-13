@@ -388,7 +388,9 @@ bool QtBridge::fillLineartAt(double x,double y,const QColor& color,bool hollow,s
                 .arg(qulonglong(review.pixelCount)).arg(qlonglong(review.bounds.width)).arg(qlonglong(review.bounds.height))
                 .arg(review.touchesCanvasEdge?tr("连到画布边缘，警惕背景漏选"):tr("未连画布边缘"))
                 .arg(review.seedX).arg(review.seedY).arg(review.clearance).arg(review.tiny?tr("注意：极小色块，可能点中了碎岛。 "):QString{});
-            if(derived)fillNotice_=tr("挖空区域填色未提交预览：%1 像素。仅参考原线稿及已接受白覆盖，不以已填颜色重选边界。接受后写入上方独立色层。").arg(qulonglong(review.pixelCount))+"\n"+fillNotice_;
+            if(derived){bool lower=false;for(const auto& op:pendingFill_->operations)if(const auto* paint=std::get_if<Paint>(&op))lower=paint->event.layerId==snapshot.nodes->at(Document::rootId()).children.front();
+                fillNotice_=(lower?tr("原线稿白区填色预览：接受后写入下方色层；挖空区域和上方颜色不变。仅取样原图，不采已填颜色。"):tr("挖空内部填色预览：接受后写入上方色层；原线稿白区和下方颜色不变。仅取样原图加已接受覆盖。"))+"\n"+fillNotice_;}
+
             if(hollow)fillNotice_=tr("局部挖空未提交：选中墨块 %1 像素，仅清空安全内部 %2 像素。原轮廓、细笔触及其他区域保留；白纸覆盖，不是透明擦除。请对照预览后接受或取消。").arg(qulonglong(selectedInk)).arg(qulonglong(review.pixelCount));
             emit changed();
         },Qt::QueuedConnection);
