@@ -303,6 +303,13 @@ set_tests_properties(B46.CubicAuthoring PROPERTIES LABELS "CorePortable")
 lineart_repair_test(B47.CubicAdmission test_cubic_admission.cpp)
 set_tests_properties(B47.CubicAdmission PROPERTIES LABELS "CorePortable")
 
+lineart_repair_test(B48.CubicPathStorage test_cubic_path_storage.cpp)
+set_tests_properties(B48.CubicPathStorage PROPERTIES LABELS "CorePortable")
+lineart_repair_test(B49.CubicPathCore test_cubic_path_core.cpp)
+set_tests_properties(B49.CubicPathCore PROPERTIES LABELS "CorePortable")
+lineart_repair_test(B50.CubicPathCancellation test_cubic_path_cancellation.cpp)
+set_tests_properties(B50.CubicPathCancellation PROPERTIES LABELS "CorePortable")
+
 add_test(NAME Build.InventoryMatchesCTest COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/build/test_inventory_matches_ctest.py
   --build ${CMAKE_BINARY_DIR} --ctest ${CMAKE_CTEST_COMMAND} --config "$<CONFIG>")

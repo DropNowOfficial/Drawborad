@@ -130,14 +130,15 @@ Result<void> validateSnapshot(const DocumentSnapshot& s) {
     }
     std::set<Id> events;
     for (auto& e : *s.eventIndex) {
+        if((e.toolId=="cubic-path-open-aa"||e.toolId=="cubic-path-closed-aa")&&e.engineVersion!=24)return error(ErrorCode::UnsupportedFeature,"cubic-path.engine-tool");
         if(e.toolId=="cubic-ink-aa" && e.engineVersion!=23)return error(ErrorCode::UnsupportedFeature,"cubic.engine-tool");
         if(e.toolId=="chisel-ink-aa" && e.engineVersion!=21)return error(ErrorCode::UnsupportedFeature,"chisel-ink.engine-tool");
         if(e.toolId=="smooth-ink-aa" && e.engineVersion!=19)return error(ErrorCode::UnsupportedFeature,"smooth-ink.engine-tool");
         if(e.toolId=="dry-ink" && e.engineVersion!=12)return error(ErrorCode::UnsupportedFeature,"dry-ink.engine-tool");
         if(e.toolId=="fineliner-aa" && e.engineVersion!=10)return error(ErrorCode::UnsupportedFeature,"freehand.engine-tool");
-        if (e.engineVersion!=1 && e.engineVersion!=2 && e.engineVersion!=8 && e.engineVersion!=10 && e.engineVersion!=12 && e.engineVersion!=19 && e.engineVersion!=21 && e.engineVersion!=22 && e.engineVersion!=23)
+        if (e.engineVersion!=1 && e.engineVersion!=2 && e.engineVersion!=8 && e.engineVersion!=10 && e.engineVersion!=12 && e.engineVersion!=19 && e.engineVersion!=21 && e.engineVersion!=22 && e.engineVersion!=23 && e.engineVersion!=24)
             return error(ErrorCode::UnsupportedFeature,"event.engine-version");
-        if (e.engineVersion==23) {auto valid=validateCubicInkEvent(e);if(!valid)return valid.error();for(const auto&p:e.geometry)if(p.x < -double(s.spec.pixelSize.width)||p.x>2.*double(s.spec.pixelSize.width)||p.y < -double(s.spec.pixelSize.height)||p.y>2.*double(s.spec.pixelSize.height))return error(ErrorCode::InvalidInput,"cubic.control-bounds");}
+        if (isAuthoredCubic(e)) {auto valid=validateAuthoredCubic(e);if(!valid)return valid.error();for(const auto&p:e.geometry)if(p.x < -double(s.spec.pixelSize.width)||p.x>2.*double(s.spec.pixelSize.width)||p.y < -double(s.spec.pixelSize.height)||p.y>2.*double(s.spec.pixelSize.height))return error(ErrorCode::InvalidInput,"cubic.control-bounds");}
         if (e.engineVersion==22) {auto valid=validateContinuousEraserEvent(e);if(!valid)return valid.error();}
         if (e.engineVersion==21) {auto valid=validateChiselInkEvent(e);if(!valid)return valid.error();}
         if (e.engineVersion==12) {auto valid=validateDryInkEvent(e);if(!valid)return valid.error();}
@@ -260,7 +261,7 @@ Result<ChangeSet> Document::commitExternal(const DocumentSnapshot& next, Revisio
         const auto& e = next.eventIndex->at(i);
         // Worker snapshots have no trusted native eraser admission proof. Existing
         // prefix events remain valid, but new erasure must use CommandBus.
-        if (e.engineVersion == 23)
+        if (e.engineVersion == 23 || e.engineVersion == 24)
             return error(ErrorCode::UnsupportedFeature, "worker.cubic-not-supported");
         if (e.engineVersion == 22)
             return error(ErrorCode::UnsupportedFeature, "worker.continuous-eraser-not-supported");

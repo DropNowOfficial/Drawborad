@@ -5,9 +5,9 @@
 #include <memory>
 #include <stop_token>
 namespace drawborad {
-// Bounded per-event-list preparation for authored engine23 controls.
+// Bounded per-event-list preparation for authored engine23/24 controls.
 // Document/codec admission is separately validated; this cache grants no edit permission.
-// Authored four-control copies stay immutable; only cached render surrogates use19.
+// Authored control copies stay immutable; only cached render surrogates use19.
 // Concurrent mutation of input is unsupported. Sequential alias edits are detected.
 struct PreparedCubicEvents {
  std::shared_ptr<const EventList> source;
@@ -30,7 +30,7 @@ inline Result<std::shared_ptr<const PreparedCubicEvents>> CubicInkPreparation::p
   for(std::size_t i=0;i<source->size();++i){
    if(stop.stop_requested())return error(ErrorCode::Cancelled,"cubic.cancelled");
    const auto&e=source->at(i);auto found=cache_->authoredEvents.find(i);
-   if(e.engineVersion==23){if(found==cache_->authoredEvents.end()||e!=found->second){same=false;break;}}
+   if(isAuthoredCubic(e)){if(found==cache_->authoredEvents.end()||e!=found->second){same=false;break;}}
    else if(found!=cache_->authoredEvents.end()){same=false;break;}
   }
   if(same)return cache_;
@@ -39,9 +39,8 @@ inline Result<std::shared_ptr<const PreparedCubicEvents>> CubicInkPreparation::p
  std::size_t visits=0;
  for(std::size_t index=0;index<source->size();++index){
   if(stop.stop_requested())return error(ErrorCode::Cancelled,"cubic.cancelled");
-  const auto&e=source->at(index);if(e.engineVersion!=23)continue;
-  auto geometry=prepareCubicInkGeometry(e,stop);if(!geometry)return geometry.error();
-  auto budget=cubic_ink_detail::addExpandedBudget(geometry.value().samples.size(),geometry.value().visits,next->expandedPoints,visits);if(!budget)return budget.error();
+  const auto&e=source->at(index);if(!isAuthoredCubic(e))continue;
+  auto geometry=prepareCubicForDocument(e,next->expandedPoints,visits,stop);if(!geometry)return geometry.error();
   StrokeEvent render=e;render.engineVersion=19;render.toolId="smooth-ink-aa";render.geometry=std::move(geometry.value().samples);
   next->authoredEvents.emplace(index,e);next->renderEvents.emplace(index,std::move(render));
  }

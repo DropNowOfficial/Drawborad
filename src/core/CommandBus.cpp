@@ -1,3 +1,4 @@
+#include "EditableCubicPath.h"
 #include "EditableCubic.h"
 #include "EraserEligibility.h"
 #include "brush/CloseStrokeGap.h"
@@ -308,6 +309,14 @@ Result<ChangeSet> Document::apply(const Command& cmd, Revision expected) {
                         // Cover both old and new footprint, even when a legacy
                         // layer's declared bounds do not enclose its strokes.
                         change.dirtyRegions.push_back({0,0,next.spec.pixelSize.width,next.spec.pixelSize.height});
+                    } else if constexpr (std::is_same_v<O, AdjustCubicPathControl>) {
+                        require(cmd.operations.size()==1,ErrorCode::InvalidInput,"cubic-path-edit.single-operation");
+                        auto eligible=editableCubicPathIndex(next,o.id);if(!eligible)throw Failure{eligible.error()};
+                        const auto index=eligible.value();const auto& original=next.eventIndex->at(index);
+                        require(o.index<original.geometry.size()&&cubicControlInDocumentRange(next.spec,o.x,o.y),ErrorCode::InvalidInput,"cubic-path-edit.control-bounds");
+                        const auto layer=original.layerId;
+                        ev=std::make_shared<EventList>(*next.eventIndex);(*ev)[index].geometry[o.index].x=o.x;(*ev)[index].geometry[o.index].y=o.y;
+                        next.eventIndex=ev;mark(layer);change.dirtyRegions.push_back({0,0,next.spec.pixelSize.width,next.spec.pixelSize.height});
                     } else if constexpr (std::is_same_v<O, AdjustCubicControls>) {
                         require(cmd.operations.size()==1,ErrorCode::InvalidInput,"cubic-edit.single-operation");
                         auto eligible=editableCubicIndex(next,o.id);if(!eligible)throw Failure{eligible.error()};
@@ -347,7 +356,7 @@ Result<ChangeSet> Document::apply(const Command& cmd, Revision expected) {
                         next.fillOperations.push_back(o.operation);
                     } else if constexpr (std::is_same_v<O, Paint>) {
                         const auto& e = o.event;
-                        if(e.engineVersion==23){
+                        if(isAuthoredCubic(e)){
                             require(cmd.operations.size()==1,ErrorCode::InvalidInput,"cubic.single-operation");
                             auto admitted=validateCubicAppendBudget(*state_.eventIndex,e);if(!admitted)throw Failure{admitted.error()};
                             require(nativeLayerPaintable(state_,e.layerId)&&state_.nodes->at(e.layerId).sourceResource.empty(),ErrorCode::UnsupportedFeature,"cubic.native-layer");
@@ -377,7 +386,7 @@ Result<ChangeSet> Document::apply(const Command& cmd, Revision expected) {
                         change.dirtyRegions.push_back(o.dirty);
                         touched.insert(e.layerId);
                     } else if constexpr (std::is_same_v<O, ConvertColor>) {
-                        const auto hasCubic=[](const auto& events){return events&&std::any_of(events->begin(),events->end(),[](const auto&e){return e.engineVersion==23;});};
+                        const auto hasCubic=[](const auto& events){return events&&std::any_of(events->begin(),events->end(),[](const auto&e){return isAuthoredCubic(e);});};
                         require(!hasCubic(next.eventIndex)&&!hasCubic(o.events),ErrorCode::UnsupportedFeature,"cubic.color-convert-not-supported");
                         for (auto& [id, n] : *ns) {
                             require(!locked(*ns, id), ErrorCode::Locked, "convert.locked");

@@ -8,6 +8,7 @@
 #include <cmath>
 namespace drawborad {
 inline Result<void> validateRasterEvent(const StrokeEvent& e) {
+    if(e.engineVersion==24)return validateCubicPathEvent(e);
     if(e.engineVersion==23)return validateCubicInkEvent(e);
     if(e.engineVersion==22)return validateContinuousEraserEvent(e);
     if(e.engineVersion==21)return validateChiselInkEvent(e);
