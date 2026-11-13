@@ -1,5 +1,6 @@
 #include "Commands.h"
 #include "view/LayerTree.h"
+#include "EditableStroke.h"
 #include <algorithm>
 #include <cmath>
 #include <set>
@@ -284,19 +285,11 @@ Result<ChangeSet> Document::apply(const Command& cmd, Revision expected) {
                         next.eventIndex = ev;
                         mark(found->layerId);
                     } else if constexpr (std::is_same_v<O, AdjustStrokeSamples>) {
-                        require(next.spec.pixelSize.width>0 && next.spec.pixelSize.height>0 && next.spec.pixelSize.width<=8192 && next.spec.pixelSize.height<=8192 && next.spec.pixelSize.width*next.spec.pixelSize.height<=20000000,ErrorCode::BudgetExceeded,"stroke-edit.canvas-budget");
-                        require(cmd.operations.size()==1 && !next.eventIndex->empty() &&
-                                    next.eventIndex->back().id==o.id,
-                                ErrorCode::InvalidInput,"stroke-edit.last-only");
-                        const auto& old=next.eventIndex->back();
-                        require(old.engineVersion==19 && old.toolId=="smooth-ink-aa" &&
-                                    !o.geometry.empty() && o.geometry.size()==old.geometry.size() &&
-                                    o.geometry.size()<=4096 && next.eventIndex->size()<=8192,
-                                ErrorCode::InvalidInput,"stroke-edit.smooth-shape");
-                        std::uint64_t total=0;
-                        for(const auto& e:*next.eventIndex){require(e.geometry.size()<=1000000-total,ErrorCode::BudgetExceeded,"stroke-edit.points");total+=e.geometry.size();}
-                        exists(old.layerId);
-                        require(!locked(*ns,old.layerId)&&nativeLayerPaintable(next,old.layerId),ErrorCode::Locked,"stroke-edit.locked");
+                        require(cmd.operations.size()==1,ErrorCode::InvalidInput,"stroke-edit.single-operation");
+                        const auto eligible=editableStrokeIndex(next,o.id);
+                        if(!eligible)throw Failure{eligible.error()};
+                        const auto index=eligible.value();const auto& old=(*next.eventIndex)[index];
+                        require(!o.geometry.empty()&&o.geometry.size()==old.geometry.size(),ErrorCode::InvalidInput,"stroke-edit.smooth-shape");
                         for(std::size_t i=0;i<o.geometry.size();++i){
                             const auto& p=o.geometry[i];const auto& before=old.geometry[i];
                             require(p.timestampUs==before.timestampUs && p.tiltX==before.tiltX && p.tiltY==before.tiltY && p.deviceKind==before.deviceKind && p.capabilities==before.capabilities,
@@ -305,7 +298,7 @@ Result<ChangeSet> Document::apply(const Command& cmd, Revision expected) {
                                     ErrorCode::InvalidInput,"stroke-edit.sample-bounds");
                         }
                         ev=std::make_shared<EventList>(*next.eventIndex);
-                        ev->back().geometry=o.geometry;next.eventIndex=ev;
+                        (*ev)[index].geometry=o.geometry;next.eventIndex=ev;
                         mark(old.layerId);
                         // Cover both old and new footprint, even when a legacy
                         // layer's declared bounds do not enclose its strokes.

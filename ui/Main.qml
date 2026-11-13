@@ -399,6 +399,7 @@ ApplicationWindow {
             Label { text: qsTr("在独立细节层画笔触，可继续给下面原线稿填色。默认不采样手绘线条；可明确指定一个细节层作边界，或用补线工具封口。"); wrapMode: Text.Wrap; color: "#dbba98"; Layout.fillWidth: true }
             ListView {
                 objectName: "layerList"
+                enabled: !studio.busy && !studio.workflow.pending
                 Layout.fillWidth: true
                 Layout.preferredHeight: Math.min(240, count * 48)
                 clip: true
@@ -486,11 +487,16 @@ ApplicationWindow {
             Slider { objectName: "mouseTaperSlider"; from: 0; to: 0.5; stepSize: 0.05; value: nativeCanvas.mouseTaper; Layout.fillWidth: true; onMoved: nativeCanvas.configureBrush(nativeCanvas.brushWidth,nativeCanvas.brushColor,nativeCanvas.brushOpacity,nativeCanvas.brushHardness,value) }
             Label { text: qsTr("0 为关闭；辅助只改变鼠标笔画首尾压力，不替代数位笔真实压感。设置对下一笔生效。"); color: "#bcbcc4"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Label { text: nativeCanvas.brushNotice; visible: text.length > 0; color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
-            CheckBox { id: strokeEditMode; objectName: "strokeEditMode"; text: qsTr("修整最近实墨笔迹（不新增细节）"); enabled: !studio.busy
+            CheckBox { id: strokeEditMode; objectName: "strokeEditMode"; text: qsTr("修整所选实墨笔迹（不新增细节）"); enabled: !studio.busy
                 onToggled: { nativeCanvas.cancelStroke();strokeEditOverlay.selectedIndex=-1 }
             }
             ColumnLayout { visible: strokeEditMode.checked; Layout.fillWidth: true
-                Label { text: qsTr("蓝点为已有采样点。点击或拖动一点，再预览；范围按原笔迹弧长计算。只改最后一笔，稀疏笔迹不会插点。"); wrapMode: Text.Wrap; Layout.fillWidth: true; color: "#bcbcc4" }
+                ComboBox { id: editStrokeChoice; objectName:"editStrokeChoice"; Layout.fillWidth:true; model:studio.editableStrokes; textRole:"label"; valueRole:"id"; enabled:!studio.busy
+                    currentIndex: { const list=studio.editableStrokes, id=studio.selectedEditStroke;for(let i=0;i<list.length;i++)if(list[i].id===id)return i;return -1 }
+                    onActivated: { studio.selectEditStroke(currentValue);currentIndex=Qt.binding(function(){return indexOfValue(studio.selectedEditStroke)}) }
+                }
+                Label { text:qsTr("列出当前层最近128条安全实墨。后续若有填色、挖空或未知事件，之前的笔迹不开放修整，避免边界与色块失配。");wrapMode:Text.Wrap;Layout.fillWidth:true;color:"#bcbcc4" }
+                Label { text: qsTr("蓝点为已有采样点。点击或拖动一点，再预览；范围按原笔迹弧长计算。只改选中笔迹，稀疏笔迹不会插点。"); wrapMode: Text.Wrap; Layout.fillWidth: true; color: "#bcbcc4" }
                 Label { text: strokeEditOverlay.selectedIndex<0 ? qsTr("未选中采样点") : qsTr("采样点 ")+(strokeEditOverlay.selectedIndex+1); color: "#5dd6ff" }
                 GridLayout { columns: 2; enabled: !studio.busy; Layout.fillWidth: true
                     Label { text: qsTr("影响半径(px)"); color:"#bcbcc4" } TextField { id: editRadius; objectName:"editRadius"; text:"16"; Layout.fillWidth:true }

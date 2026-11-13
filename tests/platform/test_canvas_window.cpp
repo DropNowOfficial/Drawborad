@@ -1,6 +1,7 @@
 #include <QLineF>
 #include <array>
 #include "brush/MixedLineartStack.h"
+#include "brush/FreehandStroke.h"
 #include "core/OriginalReference.h"
 #include <QImageReader>
 #include <QColorSpace>
@@ -335,7 +336,7 @@ int main(int argc,char**argv){
  assert(QMetaObject::invokeMethod(overlay,"choose",Q_ARG(QVariant,-1.),Q_ARG(QVariant,0.)));assert(overlay->property("selectedIndex").toInt()==-1);
  QTest::mouseClick(uiWindow,Qt::LeftButton,{},overlay->mapToScene(handlePoint).toPoint());assert(overlay->property("selectedIndex").toInt()==1);
  const auto setEdit=[&](const char* name,const char* value){auto field=uiWindow->findChild<QObject*>(name);assert(field&&field->setProperty("text",value));};
- setEdit("editRadius","12");setEdit("editDx","0");setEdit("editDy","3");setEdit("editPressure","-0.2");assert(QMetaObject::invokeMethod(preview,"clicked"));assert(uiBridge.busy()&&uiBridge.canvasSnapshot()->sameContent(outline));
+ setEdit("editRadius","12");setEdit("editDx","0");setEdit("editDy","3");setEdit("editPressure","-0.2");assert(QMetaObject::invokeMethod(preview,"clicked"));assert(uiBridge.busy()&&uiBridge.canvasSnapshot()->sameContent(outline));assert(!uiBridge.selectLayer(uiBridge.activeLayerId())&&!uiWindow->findChild<QObject*>("layerList")->property("enabled").toBool());
  const auto blocked=dir.filePath("pending-stroke-edit.draw");uiBridge.saveUrl(QUrl::fromLocalFile(blocked));assert(!QFile::exists(blocked)&&!uiBridge.undoDrawing());settleFill(uiBridge);settle(*hollowCanvas);assert(uiBridge.fillPending());
  const auto proposed=*uiBridge.displaySnapshot();const auto& old=outline.eventIndex->back();const auto& edited=proposed.eventIndex->back();assert(edited.geometry[1].y==old.geometry[1].y+3&&edited.geometry[1].pressure==old.geometry[1].pressure-.2&&edited.geometry[0]==old.geometry[0]);assert(proposed.eventIndex->size()==outline.eventIndex->size()&&proposed.resources->size()==outline.resources->size());
  for(const auto&[id,res]:*outline.resources)assert(*proposed.resources->at(id).bytes==*res.bytes);
@@ -347,6 +348,18 @@ int main(int argc,char**argv){
  assert(uiBridge.previewLocalStrokeEdit(1,12,0,1,0));uiBridge.cancelFill();settleFill(uiBridge);assert(!uiBridge.fillPending()&&uiBridge.canvasSnapshot()->sameContent(corrected));
  // Return exactly to original fixture for subsequent tests.
  const auto originalPath=dir.filePath("before-local-edit.draw");ProjectStore originalStore;assert(originalStore.save(originalPath.toStdString(),outline));uiBridge.openUrl(QUrl::fromLocalFile(originalPath));assert(uiBridge.canvasSnapshot()->sameContent(outline));assert(mode->setProperty("checked",false)&&QMetaObject::invokeMethod(mode,"toggled"));hollowCanvas->fitDocument();settle(*hollowCanvas);assert(uiBridge.selectLayer(QString::fromLatin1(QByteArray(reinterpret_cast<const char*>(selectedInk.bytes.data()),16).toHex()))&&uiBridge.useActiveBoundary());
+ // Draw another independent stroke, then explicitly select and edit the earlier outline.
+ const auto originalOutline=*uiBridge.canvasSnapshot();std::vector<InputSample> laterPoints{{4,4,.5,0,0,0,0,0},{10,4,.5,0,0,10,0,0},{16,4,.5,0,0,20,0,0}};
+ const auto laterCommand=smoothInkStrokeCommand(originalOutline,selectedInk,Id::fromNumber(777777),laterPoints,2,originalOutline.eventIndex->front().color);
+ assert(laterCommand&&uiBridge.commitStroke(std::get<Paint>(laterCommand.value().operations.front()).event));settle(*hollowCanvas);const auto twoStrokes=*uiBridge.canvasSnapshot();assert(uiBridge.editableStrokes().size()==2);
+ const auto olderId=QString::fromLatin1(QByteArray(reinterpret_cast<const char*>(twoStrokes.eventIndex->front().id.bytes.data()),16).toHex());
+ assert(mode->setProperty("checked",true)&&QMetaObject::invokeMethod(mode,"toggled"));auto choice=uiWindow->findChild<QObject*>("editStrokeChoice");assert(choice&&choice->setProperty("currentIndex",1)&&QMetaObject::invokeMethod(choice,"activated",Q_ARG(int,1)));assert(uiBridge.selectedEditStroke()==olderId);
+ const auto olderHandle=hollowCanvas->localStrokeHandles()[1].toMap();QTest::mouseClick(uiWindow,Qt::LeftButton,{},overlay->mapToScene(QPointF(olderHandle["x"].toDouble(),olderHandle["y"].toDouble())).toPoint());assert(overlay->property("selectedIndex").toInt()==1);
+ assert(uiBridge.previewLocalStrokeEdit(1,12,0,2,-.1));settleFill(uiBridge);assert(uiBridge.fillPending());const auto earlierPreview=*uiBridge.displaySnapshot();assert(earlierPreview.eventIndex->back()==twoStrokes.eventIndex->back()&&earlierPreview.eventIndex->front().geometry[1].y==twoStrokes.eventIndex->front().geometry[1].y+2);assert(uiBridge.acceptFill());const auto earlierDone=*uiBridge.canvasSnapshot();const auto earlierPath=dir.filePath("earlier-stroke-edit.draw");uiBridge.saveUrl(QUrl::fromLocalFile(earlierPath));assert(uiBridge.undoDrawing()&&uiBridge.canvasSnapshot()->sameContent(twoStrokes));uiBridge.openUrl(QUrl::fromLocalFile(earlierPath));assert(uiBridge.canvasSnapshot()->sameContent(earlierDone));
+ // A subsequent sampled fill is an explicit dependency barrier, even if its image could render.
+ assert(uiBridge.selectLayer(QString::fromLatin1(QByteArray(reinterpret_cast<const char*>(selectedInk.bytes.data()),16).toHex()))&&uiBridge.useActiveBoundary());assert(uiBridge.fillLineartAt(32,32,Qt::blue));settleFill(uiBridge);assert(uiBridge.fillPending()&&uiBridge.acceptFill());const auto withDependentFill=*uiBridge.canvasSnapshot();assert(uiBridge.editableStrokes().isEmpty()&&!uiBridge.selectEditStroke(olderId)&&!uiBridge.previewLocalStrokeEdit(1,12,0,1,0)&&uiBridge.canvasSnapshot()->sameContent(withDependentFill));
+ uiBridge.openUrl(QUrl::fromLocalFile(originalPath));assert(uiBridge.selectLayer(QString::fromLatin1(QByteArray(reinterpret_cast<const char*>(selectedInk.bytes.data()),16).toHex()))&&uiBridge.useActiveBoundary());assert(mode->setProperty("checked",false)&&QMetaObject::invokeMethod(mode,"toggled"));settle(*hollowCanvas);assert(uiBridge.canvasSnapshot()->sameContent(outline));
+ std::cout<<"PASS selected earlier stroke: explicit dropdown selection, changed earlier geometry only, preserved later event, Undo/reopen, subsequent fill barrier\n";
  std::cout<<"PASS local desktop stroke edit: hit under zoom/pan, preview/cancel/accept, native pressure, Undo/reopen, bad input and cancellation (synthetic, not physical pen)\n";
  }
  assert(uiBridge.fillLineartAt(32,32,Qt::blue));settleFill(uiBridge);assert(uiBridge.fillPending());auto boundedFrame=renderCanvasFrame(*uiBridge.displaySnapshot(),UINT64_MAX);assert(boundedFrame&&boundedFrame.value().pixelColor(32,32)==QColor(Qt::blue)&&boundedFrame.value().pixelColor(2,2)==QColor(Qt::white));uiBridge.cancelFill();assert(uiBridge.canvasSnapshot()->sameContent(outline));assert(uiBridge.fillLineartAt(32,32,Qt::blue));acceptHybrid();const auto boundedDone=*uiBridge.canvasSnapshot();assert(boundedDone.eventIndex->front()==outline.eventIndex->front());assert(uiBridge.undoDrawing()&&uiBridge.canvasSnapshot()->sameContent(outline));assert(uiBridge.redoDrawing()&&uiBridge.canvasSnapshot()->sameContent(boundedDone));

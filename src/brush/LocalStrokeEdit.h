@@ -1,5 +1,6 @@
 #pragma once
 #include "core/Commands.h"
+#include "core/EditableStroke.h"
 #include "view/LayerTree.h"
 #include <cmath>
 #include <stop_token>
@@ -13,11 +14,8 @@ inline Result<Command> localStrokeEditCommand(const DocumentSnapshot& s,Id id,
  if(stop.stop_requested())return error(ErrorCode::Cancelled,"stroke-edit.cancelled");
  if(!std::isfinite(radiusPixels)||radiusPixels<=0||radiusPixels>128||!std::isfinite(dx)||!std::isfinite(dy)||std::abs(dx)>128||std::abs(dy)>128||!std::isfinite(pressureDelta)||std::abs(pressureDelta)>1)return error(ErrorCode::InvalidInput,"stroke-edit.parameters");
  const auto w=s.spec.pixelSize.width,h=s.spec.pixelSize.height;
- if(!w||!h||w>8192||h>8192||w*h>20000000||!s.nodes||!s.eventIndex||s.eventIndex->empty()||s.eventIndex->size()>8192)return error(ErrorCode::BudgetExceeded,"stroke-edit.document-budget");
- std::uint64_t count=0;for(const auto& e:*s.eventIndex){if(stop.stop_requested())return error(ErrorCode::Cancelled,"stroke-edit.cancelled");if(e.geometry.size()>1000000-count)return error(ErrorCode::BudgetExceeded,"stroke-edit.points");count+=e.geometry.size();}
- auto valid=validateSnapshot(s);if(!valid)return valid.error();const auto& e=s.eventIndex->back();
- if(e.id!=id||e.engineVersion!=19||e.toolId!="smooth-ink-aa"||e.geometry.size()>4096||centerIndex>=e.geometry.size())return error(ErrorCode::InvalidInput,"stroke-edit.last-smooth-only");
- if(!nativeLayerPaintable(s,e.layerId))return error(ErrorCode::Locked,"stroke-edit.layer-unavailable");
+ auto eligible=editableStrokeIndex(s,id,stop);if(!eligible)return eligible.error();const auto& e=(*s.eventIndex)[eligible.value()];
+ if(centerIndex>=e.geometry.size())return error(ErrorCode::InvalidInput,"stroke-edit.sample-index");
  auto geometry=e.geometry;
  auto adjust=[&](std::size_t index,double distance)->Result<void>{
   if(stop.stop_requested())return error(ErrorCode::Cancelled,"stroke-edit.cancelled");

@@ -6,6 +6,7 @@
 #include "brush/SelectedBoundaryFill.h"
 #include "brush/LocalStrokeEdit.h"
 #include "core/FreehandEvent.h"
+#include "core/EditableStroke.h"
 #include "brush/FillRegionReview.h"
 #include "brush/HollowInkCommand.h"
 #include "brush/DerivedHollowFill.h"
@@ -83,28 +84,51 @@ bool QtBridge::acceptFill(){
     const bool localEdit=command.operations.size()==1&&std::holds_alternative<AdjustStrokeSamples>(command.operations.front());
     auto committed=app_.apply(command);if(committed&&paintedLayer&&!keepDetail)activeLayer_=paintedLayer;fillNotice_=committed?(localEdit?tr("已接受原笔迹的局部修整；未新增笔迹或图层，颜色和时间不变，可撤销和保存。"):tr("已接受区域操作，独立图层已更新；原线稿未改，可撤销和保存。")):QString::fromStdString(committed.error().messageKey);emit changed();return bool(committed);
 }
+QVariantList QtBridge::editableStrokes() const try {
+    QVariantList out;const auto s=app_.snapshot();
+    if(!s||!activeLayer_||busy()||workflow_->pending()||replaying()||s->eventIndex->size()>8192||!nativeLayerPaintable(*s,*activeLayer_))return out;
+    std::uint64_t points=0;for(const auto& e:*s->eventIndex){if(e.geometry.size()>1000000-points)return {};points+=e.geometry.size();}
+    for(std::size_t i=s->eventIndex->size();i>0&&out.size()<128;--i){const auto& e=(*s->eventIndex)[i-1];
+        if(!independentNativeStroke(*s,e))break;
+        if(e.layerId==*activeLayer_&&e.engineVersion==19&&e.geometry.size()<=4096)out.push_back(QVariantMap{{"id",layerText(e.id)},{"label",tr("笔迹 %1 · %2 个采样点").arg(qulonglong(i)).arg(qulonglong(e.geometry.size()))}});
+    }
+    return out;
+}catch(const std::bad_alloc&){return {};}
+std::optional<Id> QtBridge::editStrokeId() const {
+    const auto list=editableStrokes();if(list.isEmpty())return std::nullopt;
+    if(selectedEditStroke_){for(const auto& v:list)if(v.toMap()["id"].toString()==layerText(*selectedEditStroke_))return selectedEditStroke_;return std::nullopt;}
+    return parseLayerId(list.front().toMap()["id"].toString());
+}
+QString QtBridge::selectedEditStroke() const {const auto id=editStrokeId();return id?layerText(*id):QString{};}
+bool QtBridge::selectEditStroke(const QString& text) {
+    if(busy()||workflow_->pending())return false;
+    const auto id=parseLayerId(text);if(!id)return false;
+    for(const auto& v:editableStrokes())if(v.toMap()["id"].toString()==text){selectedEditStroke_=id;emit changed();return true;}
+    fillNotice_=tr("该笔迹不在当前层可安全修整范围；有后续区域操作的旧笔迹不会被自动改写。");emit changed();return false;
+}
 QVariantList QtBridge::localStrokePoints() const try {
     QVariantList out;const auto s=app_.snapshot();
     if(!s||busy()||workflow_->pending()||replaying()||s->eventIndex->empty()||s->eventIndex->size()>8192)return out;
-    const auto& e=s->eventIndex->back();
-    if(e.engineVersion!=19||e.toolId!="smooth-ink-aa"||!nativeLayerPaintable(*s,e.layerId)||!validateSmoothInkEvent(e))return out;
+    const auto id=editStrokeId();if(!id)return out;const auto index=editableStrokeIndex(*s,*id);if(!index)return out;const auto& e=(*s->eventIndex)[index.value()];
     out.reserve(qsizetype(e.geometry.size()));for(const auto& p:e.geometry)out.push_back(QVariantMap{{"x",p.x},{"y",p.y},{"pressure",p.pressure}});return out;
 }catch(const std::bad_alloc&){return {};}
 bool QtBridge::previewLocalStrokeEdit(int sampleIndex,double radius,double dx,double dy,double pressureDelta) try {
     const auto fail=[&](const QString& reason){fillNotice_=reason;emit changed();return false;};
     const auto s=app_.snapshot();
-    if(!s||busy()||workflow_->pending()||replaying()||sampleIndex<0||s->eventIndex->empty())return fail(tr("请先结束当前任务，并选择最后一笔连续实墨的有效样本。"));
-    const auto& last=s->eventIndex->back();
-    if(last.engineVersion!=19||last.toolId!="smooth-ink-aa"||std::size_t(sampleIndex)>=last.geometry.size()||last.geometry.size()>4096||!nativeLayerPaintable(*s,last.layerId))return fail(tr("本次只允许修整全局最后一笔可写连续实墨；工程未改。"));
+    if(!s||busy()||workflow_->pending()||replaying()||sampleIndex<0||s->eventIndex->empty())return fail(tr("请先结束当前任务，并选择连续实墨的有效样本。"));
+    const auto id=editStrokeId();if(!id)return fail(tr("请选择当前层可安全修整的实墨笔迹；其后若有填色或挖空则不可修整。"));
+    const auto index=editableStrokeIndex(*s,*id);if(!index)return fail(QString::fromStdString(index.error().messageKey));
+    const auto& last=(*s->eventIndex)[index.value()];
+    if(last.engineVersion!=19||last.toolId!="smooth-ink-aa"||std::size_t(sampleIndex)>=last.geometry.size()||last.geometry.size()>4096||!nativeLayerPaintable(*s,last.layerId))return fail(tr("本次只允许修整当前层可安全修整的连续实墨；工程未改。"));
     if(!std::isfinite(radius)||radius<=0||radius>128||!std::isfinite(dx)||!std::isfinite(dy)||std::abs(dx)>128||std::abs(dy)>128||!std::isfinite(pressureDelta)||std::abs(pressureDelta)>1)return fail(tr("半径须为0到128之间的正数，位移每轴≤128原像素，压力增量绝对值≤1。"));
-    const auto snapshot=*s;const auto id=last.id;const auto generation=canvasGeneration_;
+    const auto snapshot=*s;const auto eventId=last.id;const auto generation=canvasGeneration_;
     fillPool_.setMaxThreadCount(1);fillStop_=std::stop_source{};const auto stop=fillStop_.get_token();
     {std::lock_guard lock(localEditMutex_);localEditCompletion_.reset();}
     fillBusy_=true;fillNotice_=tr("正在按原笔迹弧长计算局部修整并验收画面；尚未提交，可取消。范围外样本和原图不改。");emit changed();
-    fillPool_.start([this,snapshot,id,generation,stop,sampleIndex,radius,dx,dy,pressureDelta]{
+    fillPool_.start([this,snapshot,eventId,generation,stop,sampleIndex,radius,dx,dy,pressureDelta]{
         LocalEditCompletion done{std::nullopt,snapshot,std::nullopt,{},stop,generation};
         try {
-            auto command=localStrokeEditCommand(snapshot,id,std::size_t(sampleIndex),radius,dx,dy,pressureDelta,stop);
+            auto command=localStrokeEditCommand(snapshot,eventId,std::size_t(sampleIndex),radius,dx,dy,pressureDelta,stop);
             if(!command)done.failure=QString::fromStdString(command.error().messageKey);
             else {
                 auto candidate=Document::fromSnapshot(snapshot);
@@ -113,8 +137,9 @@ bool QtBridge::previewLocalStrokeEdit(int sampleIndex,double radius,double dx,do
                     auto applied=candidate.value().apply(command.value(),snapshot.revision);
                     if(!applied)done.failure=QString::fromStdString(applied.error().messageKey);
                     else {
-                        const auto edited=candidate.value().snapshot();const auto layer=edited.eventIndex->back().layerId;
-                        if(edited.nodes->at(layer).stage==FinishingLayerStage){auto projected=projectControlledLineart(edited,stop);if(!projected)done.failure=QString::fromStdString(projected.error().messageKey);}
+                        const auto edited=candidate.value().snapshot();const auto editedIndex=editableStrokeIndex(edited,eventId,stop);
+                        if(!editedIndex){done.failure=QString::fromStdString(editedIndex.error().messageKey);}const auto layer=editedIndex?(*edited.eventIndex)[editedIndex.value()].layerId:NodeId{};
+                        if(editedIndex&&edited.nodes->at(layer).stage==FinishingLayerStage){auto projected=projectControlledLineart(edited,stop);if(!projected)done.failure=QString::fromStdString(projected.error().messageKey);}
                         if(done.failure.isEmpty()){
                             auto frame=renderMergedDocument(edited,{edited.revision},{},stop);
                             if(!frame)done.failure=QString::fromStdString(frame.error().messageKey);
@@ -172,6 +197,7 @@ QVariantList QtBridge::layers() const {
 }
 QString QtBridge::activeLayerId() const { return activeLayer_ ? layerText(*activeLayer_) : QString{}; }
 void QtBridge::resetLayerSelection() {
+    selectedEditStroke_.reset();
     activeLayer_.reset();
     const auto snapshot = app_.snapshot();
     if (!snapshot) return;
@@ -202,12 +228,13 @@ QString QtBridge::layerNotice() const {
     return {};
 }
 bool QtBridge::selectLayer(const QString& text) {
+    if(busy()||workflow_->pending())return false;
     const auto snapshot = app_.snapshot();
     const auto id = parseLayerId(text);
     if (!snapshot || !id || !snapshot->nodes->contains(*id) || snapshot->nodes->at(*id).kind != NodeKind::Layer)
         return false;
     if (activeLayer_ == id) return true;
-    activeLayer_ = id;
+    activeLayer_ = id;selectedEditStroke_.reset();
     emit changed();
     return true;
 }
@@ -240,7 +267,7 @@ bool QtBridge::addLayer() {
     layer.bounds = {0, 0, snapshot->spec.pixelSize.width, snapshot->spec.pixelSize.height};
     command.operations.push_back(AddNode{layer, index});
     const auto result = app_.apply(command);
-    if (result) activeLayer_ = layer.id;
+    if (result) {activeLayer_ = layer.id;selectedEditStroke_.reset();}
     emit changed();
     return bool(result);
 }
@@ -249,7 +276,7 @@ bool QtBridge::addFinishingLayer() try {
  const auto id=uuid();auto command=makeFinishingLayerCommand(*s,id);
  if(!command){fillNotice_=tr("未创建细节层：需要兼容的原线稿区域工程；不会自动改写原图层。 ")+QString::fromStdString(command.error().messageKey);emit changed();return false;}
  for(auto& op:command.value().operations)if(auto* layer=std::get_if<AddNode>(&op))layer->node.name=tr("手绘细节（不作填色边界）").toUtf8().toStdString();
- auto done=app_.apply(command.value());if(done){activeLayer_=id;fillNotice_=tr("细节层已创建。其笔触原样保留，但不参与区域边界；区域填色仍按原线稿/已接受补线计算。");}else fillNotice_=QString::fromStdString(done.error().messageKey);emit changed();return bool(done);
+ auto done=app_.apply(command.value());if(done){activeLayer_=id;selectedEditStroke_.reset();fillNotice_=tr("细节层已创建。其笔触原样保留，但不参与区域边界；区域填色仍按原线稿/已接受补线计算。");}else fillNotice_=QString::fromStdString(done.error().messageKey);emit changed();return bool(done);
 }catch(const std::bad_alloc&){fillNotice_=tr("细节层创建内存不足，请核对工程状态。");emit changed();return false;}
 bool QtBridge::setLayerVisible(const QString& text, bool visible) {
     if(busy() || workflow_->pending())return false;
@@ -290,7 +317,7 @@ bool QtBridge::initializeCanvas(double w, double h, double ppi, bool whitePaper)
     Command command;
     command.operations = {AddNode{object}, AddNode{layer}};
     const auto created = app_.apply(command);
-    if (created) { replayCount_=-1; activeLayer_ = layerId; ++canvasGeneration_; }
+    if (created) { selectedEditStroke_.reset();replayCount_=-1; activeLayer_ = layerId; ++canvasGeneration_; }
     return bool(created);
 }
 void QtBridge::createDocument(double w, double h, double ppi, bool whitePaper) {
@@ -443,7 +470,7 @@ bool QtBridge::importLineartUrl(const QUrl& url) try {
     command.operations.insert(command.operations.end(),import.value().operations.begin(),import.value().operations.end());
     auto candidate=Document::fromSnapshot(*s);if(!candidate)return fail(QString::fromStdString(candidate.error().messageKey));auto applied=candidate.value().apply(command,s->revision);if(!applied)return fail(QString::fromStdString(applied.error().messageKey));auto plan=planMergedDocument(candidate.value().snapshot());if(!plan)return fail(QString::fromStdString(plan.error().messageKey));
     auto result=app_.apply(command);if(!result)return fail(QString::fromStdString(result.error().messageKey));
-    activeLayer_=fill;++canvasGeneration_;referenceUrl_=QUrl{};fillNotice_=tr("原 PNG 已嵌入并锁定；色块写入独立底层。仅按原线稿取样，不重绘、不自动补洞。");emit changed();return true;
+    selectedEditStroke_.reset();activeLayer_=fill;++canvasGeneration_;referenceUrl_=QUrl{};fillNotice_=tr("原 PNG 已嵌入并锁定；色块写入独立底层。仅按原线稿取样，不重绘、不自动补洞。");emit changed();return true;
 }catch(const std::bad_alloc&){fillNotice_=tr("内存不足，线稿未导入。");emit changed();return false;}
 QString QtBridge::selectedBoundaryName() const {
  if(!selectedBoundary_)return {};

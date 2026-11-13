@@ -81,12 +81,14 @@ void CanvasItem::refreshSnapshot() {
                           strokeTarget_->generation != bridge_->canvasGeneration())) {
         cancelStroke();
     }
+    bool unchanged=false;
     {
         std::lock_guard lock(snapshotMutex_);
-        if (snapshot_ && next && snapshot_->documentId == next->documentId &&
+        unchanged=snapshot_ && next && snapshot_->documentId == next->documentId &&
             snapshot_->revision == next->revision && snapshot_->nodes == next->nodes &&
-            snapshot_->eventIndex == next->eventIndex && replayCount_==nextCount) return;
+            snapshot_->eventIndex == next->eventIndex && replayCount_==nextCount;
     }
+    if(unchanged){emit viewChanged();return;}
     if(dryCommitPending_)cancelStroke();
     cancelHollowDrag();
     // A changed document/replay invalidates an in-progress input gesture.
@@ -147,12 +149,11 @@ QString CanvasItem::renderError() const {std::lock_guard lock(snapshotMutex_);re
 double CanvasItem::zoom() const {std::lock_guard lock(snapshotMutex_);return zoom_;}
 QVariantList CanvasItem::localStrokeHandles() const {
     QVariantList out;const auto snap=bridge_?bridge_->canvasSnapshot():std::nullopt;
-    if(!snap||!snap->eventIndex||snap->eventIndex->empty()||bridge_->replaying())return out;
-    const auto& e=snap->eventIndex->back();
-    if(e.engineVersion!=19||e.toolId!="smooth-ink-aa"||e.geometry.size()>4096||!nativeLayerPaintable(*snap,e.layerId))return out;
+    if(!snap)return out;
+    const auto points=bridge_->localStrokePoints();
     const auto r=documentRect();const auto w=snap->spec.pixelSize.width,h=snap->spec.pixelSize.height;
     if(!w||!h)return out;
-    for(const auto& p:e.geometry)out.push_back(QVariantMap{{"x",r.x()+p.x*r.width()/w},{"y",r.y()+p.y*r.height()/h},{"scale",r.width()/w},{"pressure",p.pressure}});
+    for(const auto& value:points){const auto p=value.toMap();out.push_back(QVariantMap{{"x",r.x()+p["x"].toDouble()*r.width()/w},{"y",r.y()+p["y"].toDouble()*r.height()/h},{"scale",r.width()/w},{"pressure",p["pressure"]}});}
     return out;
 }
 QRectF CanvasItem::documentRect() const {

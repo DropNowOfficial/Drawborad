@@ -42,7 +42,7 @@ struct RecolorStroke {
     Id id;
     ColorValue color;
 };
-// Only positions/pressure of the global last smooth-ink event may change.
+// Only positions/pressure of an eligible smooth-ink event may change.
 struct AdjustStrokeSamples {
     Id id;
     std::vector<InputSample> geometry;

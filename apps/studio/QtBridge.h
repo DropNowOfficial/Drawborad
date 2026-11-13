@@ -32,6 +32,8 @@ class QtBridge : public QObject {
     Q_PROPERTY(QVariantList layers READ layers NOTIFY changed)
     Q_PROPERTY(QString activeLayerId READ activeLayerId NOTIFY changed)
     Q_PROPERTY(bool canAddLayer READ canAddLayer NOTIFY changed)
+    Q_PROPERTY(QVariantList editableStrokes READ editableStrokes NOTIFY changed)
+    Q_PROPERTY(QString selectedEditStroke READ selectedEditStroke NOTIFY changed)
     Q_PROPERTY(QVariantList localStrokePoints READ localStrokePoints NOTIFY changed)
     Q_PROPERTY(bool fillPending READ fillPending NOTIFY changed)
     Q_PROPERTY(bool strokeCommitBusy READ strokeCommitBusy NOTIFY changed)
@@ -78,6 +80,8 @@ class QtBridge : public QObject {
     std::optional<DocumentSnapshot> pendingFillPreview_,pendingFillSource_;
     std::uint64_t pendingFillGeneration_{};
     std::optional<NodeId> activeLayer_;
+    std::optional<Id> selectedEditStroke_;
+    std::optional<Id> editStrokeId() const;
     std::optional<NodeId> selectedBoundary_;
     std::uint64_t canvasGeneration_{};
     WorkflowController* workflow_{};
@@ -97,6 +101,9 @@ class QtBridge : public QObject {
     Q_INVOKABLE bool acceptFill();
     Q_INVOKABLE bool previewLocalStrokeEdit(int sampleIndex,double radius,double dx,double dy,double pressureDelta);
     QVariantList localStrokePoints() const;
+    QVariantList editableStrokes() const;
+    QString selectedEditStroke() const;
+    Q_INVOKABLE bool selectEditStroke(const QString&);
     std::optional<DocumentSnapshot> displaySnapshot() const { return pendingFillPreview_?pendingFillPreview_:app_.snapshot(); }
     bool strokeCommitBusy() const { return strokeCommitBusy_; }
     void setStrokeCommitBusy(bool value) { if(value!=strokeCommitBusy_){strokeCommitBusy_=value;emit changed();} }
