@@ -30,7 +30,18 @@ static void cancelAfterOne(void* opaque, std::size_t count) noexcept {
     assert(count == 1); context.seen = true;
     assert(context.cache->generation() == context.generation);
     assert(context.cache->prepare(context.input, 257, 259, context.runtime) == Status::Busy);
+    std::array<std::uint8_t,16> previous{};
+    assert(context.cache->readTile(context.generation,1,{0,0,4,4},previous,4)==Status::Ok);
     context.stop->request_stop();
+}
+struct MutateContext { std::vector<Cache::Shape>* source; bool changed{}; };
+static void mutateCallerInput(void* opaque, std::size_t count) noexcept {
+    auto& context=*static_cast<MutateContext*>(opaque);
+    if(count==1) {
+        (*context.source)[1].controls[0]+=QPointF(100,100);
+        (*context.source)[1].id=88;
+        context.changed=true;
+    }
 }
 int main() {
     const QString runtime = QString::fromLatin1(qVersion());
@@ -76,7 +87,7 @@ int main() {
     std::stop_source during; CancelContext context{&cache,&during,changed,runtime,generation};
     assert(cache.prepare(changed,257,259,runtime,during.get_token(),cancelAfterOne,&context)==Status::Cancelled);
     assert(context.seen && cache.stats().rasterCalls==4 && tile(cache,1)==prior);
-    assert(cache.stats().peakAdmittedImageBytes==2*bytes && cache.stats().retainedImageBytes==bytes);
+    assert(cache.stats().peakAdmittedImageBytes==bytes+bytes/3 && cache.stats().retainedImageBytes==bytes);
     assert(cache.prepare(changed,257,259,runtime)==Status::Ok);
     assert(cache.generation()==generation+1 && tile(cache,1)!=prior);
     std::vector<std::uint8_t> output(256*256,199); const auto untouched=output;
@@ -98,15 +109,15 @@ int main() {
     assert(limited.readTile(limited.generation(),1,{0,0,1,1},output,1)==Status::MissingEvent);
     Cache unsupportedLimits({std::numeric_limits<std::uint64_t>::max(),8});
     assert(unsupportedLimits.prepare(shapes,257,259,runtime)==Status::InvalidInput);
-    assert(cache.stats().rasterCalls==7); // no rendering in reads/failures/cache hit
+    assert(cache.stats().rasterCalls==5); // no rendering in reads/failures/cache hit
     Cache keys; assert(keys.prepare(shapes,257,259,runtime)==Status::Ok);
     auto tiny=shapes; tiny[0].controls[1].setX(std::nextafter(tiny[0].controls[1].x(), INFINITY));
-    assert(keys.prepare(tiny,257,259,runtime)==Status::Ok && keys.stats().rasterCalls==6);
+    assert(keys.prepare(tiny,257,259,runtime)==Status::Ok && keys.stats().rasterCalls==4);
     std::swap(tiny[0],tiny[2]);
-    assert(keys.prepare(tiny,257,259,runtime)==Status::Ok && keys.stats().rasterCalls==9);
+    assert(keys.prepare(tiny,257,259,runtime)==Status::Ok && keys.stats().rasterCalls==4);
     auto duplicates=shapes; duplicates[1].controls=duplicates[0].controls;
     assert(keys.prepare(duplicates,257,259,runtime)==Status::Ok);
-    assert(keys.stats().retainedImageBytes==bytes); // same geometry, different ids still accounted
+    assert(keys.stats().retainedImageBytes==bytes/3*2); // two unique records, three ids
     const auto keyGen=keys.generation(); const auto keyCalls=keys.stats().rasterCalls;
     bad=shapes; bad[0].controls[0].setY(INFINITY);
     assert(keys.prepare(bad,257,259,runtime)==Status::InvalidInput);
@@ -115,6 +126,43 @@ int main() {
     assert(keys.generation()==keyGen && keys.stats().rasterCalls==keyCalls);
     assert(keys.readTile(keyGen+1,1,{0,0,1,1},output,1)==Status::StaleGeneration);
     assert(output==untouched);
+    // Identity changes do not change masks, but must publish the new mapping/token.
+    const auto beforeRename=keys.stats().rasterCalls;
+    duplicates[0].id=10;
+    assert(keys.prepare(duplicates,257,259,runtime)==Status::Ok);
+    assert(keys.stats().rasterCalls==beforeRename);
+    assert(keys.readTile(keys.generation(),1,{0,0,1,1},output,1)==Status::MissingEvent);
+    assert(tile(keys,10)==tile(keys,2));
+    const auto sharedPixels=tile(keys,2);
+    duplicates[0].controls[1]+=QPointF(21,8);
+    assert(keys.prepare(duplicates,257,259,runtime)==Status::Ok);
+    assert(keys.stats().rasterCalls==beforeRename+1 && tile(keys,2)==sharedPixels);
+    assert(tile(keys,10)!=sharedPixels); // no detach/write through shared aliases
+    duplicates.erase(duplicates.begin());
+    assert(keys.prepare(duplicates,257,259,runtime)==Status::Ok);
+    assert(keys.stats().retainedImageBytes==bytes/3*2 && keys.stats().rasterCalls==beforeRename+1);
+    assert(keys.prepare({},257,259,runtime)==Status::Ok && keys.stats().retainedImageBytes==0);
+    Cache dedup; std::vector<Cache::Shape> equal{shape(1),shape(2),shape(3)};
+    assert(dedup.prepare(equal,257,259,runtime)==Status::Ok);
+    assert(dedup.stats().rasterCalls==1 && dedup.stats().retainedImageBytes==bytes/3);
+    assert(tile(dedup,1)==tile(dedup,3));
+    auto newEqual=equal;
+    for(auto& item:newEqual) item.controls[1]+=QPointF(11,2);
+    assert(dedup.prepare(newEqual,257,259,runtime)==Status::Ok);
+    assert(dedup.stats().rasterCalls==2 && dedup.stats().peakAdmittedImageBytes==bytes/3*2);
+    assert(dedup.prepare(newEqual,258,259,runtime)==Status::Ok && dedup.stats().rasterCalls==3);
+    const auto unchangedGeneration=dedup.generation();
+    assert(dedup.prepare(newEqual,258,259,QStringLiteral("different-qt"))==Status::UnsupportedBackend);
+    assert(dedup.generation()==unchangedGeneration);
+    Cache inputAlias; auto mutableInput=shapes; const auto authored=mutableInput;
+    MutateContext mutation{&mutableInput};
+    assert(inputAlias.prepare(mutableInput,257,259,runtime,{},mutateCallerInput,&mutation)==Status::Ok);
+    assert(mutation.changed && inputAlias.eventCount()==3);
+    const auto expectedAlias=whole(authored[1],257,259);
+    const auto aliasTile=tile(inputAlias,2);
+    for(int y=0;y<256;++y)for(int x=0;x<256;++x)
+        assert(aliasTile[y*256+x]==expectedAlias.constScanLine(y)[x]);
+    assert(inputAlias.readTile(inputAlias.generation(),88,{0,0,1,1},output,1)==Status::MissingEvent);
     for (const auto [width,height,count] : {std::array<int,3>{1725,2625,3}, std::array<int,3>{3300,5100,2}}) {
         Cache native;
         std::vector<Cache::Shape> inputs;
@@ -138,18 +186,27 @@ int main() {
         inputs.front().controls[1]+=QPointF(7,11);
         if(count==2) {
             assert(total==33660000 && 2*total>64ULL*1024*1024);
-            assert(native.prepare(inputs,width,height,runtime)==Status::BudgetExceeded);
+            auto bothChanged=inputs; bothChanged[1].controls[1]+=QPointF(13,9);
+            assert(native.prepare(bothChanged,width,height,runtime)==Status::BudgetExceeded);
             assert(native.generation()==oldGeneration && native.stats().rasterCalls==2);
             std::vector<std::uint8_t> nativeAfter(128*128);
             assert(native.readTile(oldGeneration,1,{width/2,height/2,128,128},nativeAfter,128)==Status::Ok);
             assert(nativeAfter==nativeBefore);
+            assert(native.prepare(inputs,width,height,runtime)==Status::Ok);
+            assert(native.stats().rasterCalls==3 && native.stats().retainedImageBytes==total);
+            assert(native.stats().peakAdmittedImageBytes==50490000);
+            // Untouched second large record still has original whole-image pixels.
+            const auto unchanged=whole(inputs[1],width,height);
+            assert(native.readTile(native.generation(),2,{width/2,height/2,128,128},nativeAfter,128)==Status::Ok);
+            for(int y=0;y<128;++y)for(int x=0;x<128;++x)
+                assert(nativeAfter[y*128+x]==unchanged.constScanLine(height/2+y)[width/2+x]);
         } else {
             assert(total==13608000);
             assert(native.prepare(inputs,width,height,runtime)==Status::Ok);
-            assert(native.stats().peakAdmittedImageBytes==2*total);
+            assert(native.stats().peakAdmittedImageBytes==total+total/3);
         }
         std::cout<<"native "<<width<<"x"<<height<<" events="<<count<<" initial_ms="<<elapsed
-                 <<" retained_image_bytes="<<total<<" replacement="<<(count==2?"budget-refused-old-preserved":"accepted")<<"\n";
+                 <<" retained_image_bytes="<<total<<" replacement="<<"changed-one-accepted; changed-both-large-refused"<<"\n";
     }
     std::cout<<"PASS Qt wholemask cohort: three overlapping events, exact crops, no tile reraster; atomic cancel and old+candidate budget; generation and caller-buffer guards; no format integration\n";
 }

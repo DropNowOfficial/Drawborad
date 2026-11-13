@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <memory>
 #include <stop_token>
 #include <vector>
 
@@ -42,7 +43,8 @@ public:
         std::uint64_t rasterCalls{};
         std::uint64_t publications{};
     };
-    // Called after a completed, uninterruptible Qt fillPath, before stop check.
+    // Called after each newly rasterized unique mask (not reused entries), before stop check.
+    // completed counts new unique masks in this transaction.
     // May request stop and inspect the old cohort; reentrant prepare returns Busy.
     using Progress = void (*)(void*, std::size_t completed) noexcept;
     QtSolidMaskCache();
@@ -65,7 +67,14 @@ public:
     Stats stats() const noexcept { return stats_; }
     std::size_t eventCount() const noexcept { return entries_.size(); }
 private:
-    struct Entry { Shape shape; QImage mask; };
+    struct MaskRecord {
+        std::array<QPointF, 6> controls;
+        int width{}, height{};
+        QString runtime;
+        QImage mask;
+    };
+    // No mutable image or shared record handles leave this class.
+    struct Entry { Shape shape; std::shared_ptr<const MaskRecord> record; };
     Limits limits_;
     Stats stats_;
     std::vector<Entry> entries_;

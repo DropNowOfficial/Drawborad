@@ -14,6 +14,11 @@ bool multiply(std::uint64_t a, std::uint64_t b, std::uint64_t& result) {
     result = a * b;
     return true;
 }
+bool sameControls(const std::array<QPointF, 6>& a, const std::array<QPointF, 6>& b) {
+    for (std::size_t i = 0; i < a.size(); ++i)
+        if (a[i].x() != b[i].x() || a[i].y() != b[i].y()) return false;
+    return true;
+}
 QPainterPath makePath(const std::array<QPointF, 6>& p) {
     QPainterPath path;
     path.setFillRule(Qt::OddEvenFill);
@@ -40,10 +45,9 @@ QtSolidMaskCache::Status QtSolidMaskCache::prepare(
     if (width < 1 || height < 1 || width > 8192 || height > 8192) return Status::InvalidInput;
     const auto w = static_cast<std::uint64_t>(width);
     const auto h = static_cast<std::uint64_t>(height);
-    std::uint64_t pixels{}, imageBytes{}, candidateBytes{};
+    std::uint64_t pixels{}, imageBytes{};
     if (!multiply(w, h, pixels) || pixels > 20000000ULL ||
-        !multiply((w + 3) & ~std::uint64_t(3), h, imageBytes) ||
-        !multiply(imageBytes, shapes.size(), candidateBytes)) return Status::BudgetExceeded;
+        !multiply((w + 3) & ~std::uint64_t(3), h, imageBytes)) return Status::BudgetExceeded;
     for (std::size_t i = 0; i < shapes.size(); ++i) {
         if (stop.stop_requested()) return Status::Cancelled;
         if (!shapes[i].id) return Status::InvalidInput;
@@ -58,40 +62,76 @@ QtSolidMaskCache::Status QtSolidMaskCache::prepare(
         shapes.size() == entries_.size() && std::equal(shapes.begin(), shapes.end(), entries_.begin(),
             [](const Shape& a, const Entry& b) { return a == b.shape; });
     if (identical) return Status::Reused;
-    if (stats_.retainedImageBytes > limits_.maxResidentImageBytes ||
-        candidateBytes > limits_.maxResidentImageBytes - stats_.retainedImageBytes)
+    // Fixed-size metadata: compute unique geometry and reuse before any image allocation.
+    std::array<std::size_t, 8> representative{};
+    std::array<std::shared_ptr<const MaskRecord>, 8> records{};
+    std::size_t uniqueCount = 0, newCount = 0;
+    for (std::size_t i = 0; i < shapes.size(); ++i) {
+        representative[i] = i;
+        for (std::size_t j = 0; j < i; ++j) {
+            if (sameControls(shapes[i].controls, shapes[j].controls)) {
+                representative[i] = representative[j];
+                break;
+            }
+        }
+        if (representative[i] != i) continue;
+        ++uniqueCount;
+        for (const auto& old : entries_) {
+            const auto& record = *old.record;
+            if (record.width == width && record.height == height && record.runtime == requiredQtRuntime &&
+                sameControls(record.controls, shapes[i].controls)) {
+                records[i] = old.record;
+                break;
+            }
+        }
+        if (!records[i]) ++newCount;
+    }
+    std::uint64_t newBytes{}, candidateBytes{};
+    if (!multiply(imageBytes, newCount, newBytes) || !multiply(imageBytes, uniqueCount, candidateBytes) ||
+        stats_.retainedImageBytes > limits_.maxResidentImageBytes ||
+        newBytes > limits_.maxResidentImageBytes - stats_.retainedImageBytes)
         return Status::BudgetExceeded;
     preparing_ = true;
     struct Reset { bool& value; ~Reset() { value = false; } } reset{preparing_};
     stats_.peakAdmittedImageBytes = std::max(stats_.peakAdmittedImageBytes,
-                                            stats_.retainedImageBytes + candidateBytes);
+                                            stats_.retainedImageBytes + newBytes);
     try {
-        // Copy all authored input before callbacks. No QImage aliases are exported.
+        // Copy input before callbacks. Shared records remain const through preparation.
         std::vector<Entry> candidate;
         candidate.reserve(shapes.size());
         for (const auto& shape : shapes) candidate.push_back({shape, {}});
         QString runtime = requiredQtRuntime;
+        std::size_t completed = 0;
         for (std::size_t i = 0; i < candidate.size(); ++i) {
             if (stop.stop_requested()) return Status::Cancelled;
-            auto& entry = candidate[i];
-            entry.mask = QImage(width, height, QImage::Format_Alpha8);
-            if (entry.mask.isNull()) return Status::AllocationFailed;
-            if (entry.mask.sizeInBytes() < 0 ||
-                static_cast<std::uint64_t>(entry.mask.sizeInBytes()) != imageBytes)
+            if (representative[i] != i || records[i]) continue;
+            // Only this fresh, unpublished record is ever writable or passed to QPainter.
+            auto record = std::make_shared<MaskRecord>();
+            record->controls = candidate[i].shape.controls;
+            record->width = width;
+            record->height = height;
+            record->runtime = runtime;
+            record->mask = QImage(width, height, QImage::Format_Alpha8);
+            if (record->mask.isNull()) return Status::AllocationFailed;
+            if (record->mask.sizeInBytes() < 0 ||
+                static_cast<std::uint64_t>(record->mask.sizeInBytes()) != imageBytes)
                 return Status::UnsupportedBackend;
-            entry.mask.fill(0);
-            QPainter painter(&entry.mask);
+            record->mask.fill(0);
+            QPainter painter(&record->mask);
             if (!painter.isActive()) return Status::UnsupportedBackend;
             painter.setRenderHint(QPainter::Antialiasing);
-            const auto path = makePath(entry.shape.controls);
+            const auto path = makePath(record->controls);
             if (stop.stop_requested()) { painter.end(); return Status::Cancelled; }
             ++stats_.rasterCalls;
             // Qt's CPU call cannot be interrupted. Never publish before next stop check.
             painter.fillPath(path, Qt::black);
             if (!painter.end()) return Status::RasterFailed;
-            if (progress) progress(progressContext, i + 1);
+            if (progress) progress(progressContext, ++completed);
             if (stop.stop_requested()) return Status::Cancelled;
+            records[i] = std::move(record); // mutable owner is consumed; const record only
         }
+        for (std::size_t i = 0; i < candidate.size(); ++i)
+            candidate[i].record = records[representative[i]];
         if (stop.stop_requested()) return Status::Cancelled;
         entries_.swap(candidate);
         runtime_.swap(runtime);
@@ -120,7 +160,7 @@ QtSolidMaskCache::Status QtSolidMaskCache::readTile(
         output.size() < tail + static_cast<std::size_t>(rw)) return Status::InvalidInput;
     for (int row = 0; row < rh; ++row)
         std::memcpy(output.data() + static_cast<std::size_t>(row) * stride,
-                    it->mask.constScanLine(rect.y() + row) + rect.x(), static_cast<std::size_t>(rw));
+                    it->record->mask.constScanLine(rect.y() + row) + rect.x(), static_cast<std::size_t>(rw));
     return Status::Ok;
 }
 }
