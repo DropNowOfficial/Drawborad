@@ -20,7 +20,12 @@ inline Result<View> parse(const DocumentSnapshot&s,const LayerNode&n){
  for(std::size_t i=0;i<count;i++){Point p{std::bit_cast<double>(croppedRaster::get(b,69+i*16,8)),std::bit_cast<double>(croppedRaster::get(b,77+i*16,8))};if(!std::isfinite(p.x)||!std::isfinite(p.y)||p.x<0||p.y<0||p.x>=s.spec.pixelSize.width||p.y>=s.spec.pixelSize.height)return error(ErrorCode::InvalidInput,"boundary.point");v.points.push_back(p);}return v;
 }
 inline Resource resource(NodeId source,Hash sourceHash,const std::vector<Point>&points,double radius,bool enabled){
- Bytes b(Magic,Magic+8);b.insert(b.end(),source.bytes.begin(),source.bytes.end());b.insert(b.end(),sourceHash.bytes.begin(),sourceHash.bytes.end());b.push_back(enabled?1:0);croppedRaster::put(b,std::bit_cast<std::uint64_t>(radius),8);croppedRaster::put(b,points.size(),4);for(const auto&p:points){croppedRaster::put(b,std::bit_cast<std::uint64_t>(p.x),8);croppedRaster::put(b,std::bit_cast<std::uint64_t>(p.y),8);}Resource r;r.kind=ResourceKind::Reference;r.id=sha256(b);r.dependencies={sourceHash};r.bytes=std::make_shared<const Bytes>(std::move(b));return r;
+ // Size the fixed prefix before copying; repeated growth triggers GCC -O3 overflow diagnostics.
+ Bytes b(57);
+ std::copy_n(Magic,8,b.begin());
+ std::copy(source.bytes.begin(),source.bytes.end(),b.begin()+8);
+ std::copy(sourceHash.bytes.begin(),sourceHash.bytes.end(),b.begin()+24);
+ b[56]=enabled?1:0;croppedRaster::put(b,std::bit_cast<std::uint64_t>(radius),8);croppedRaster::put(b,points.size(),4);for(const auto&p:points){croppedRaster::put(b,std::bit_cast<std::uint64_t>(p.x),8);croppedRaster::put(b,std::bit_cast<std::uint64_t>(p.y),8);}Resource r;r.kind=ResourceKind::Reference;r.id=sha256(b);r.dependencies={sourceHash};r.bytes=std::make_shared<const Bytes>(std::move(b));return r;
 }
 inline Result<Command> add(const DocumentSnapshot&s,NodeId id,NodeId source,const std::vector<Point>&points,double radius){
  if(!s.nodes||!s.resources||id.empty()||s.nodes->contains(id)||points.size()<2||points.size()>256)return error(ErrorCode::InvalidInput,"boundary.input");
