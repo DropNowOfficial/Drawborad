@@ -57,7 +57,11 @@ void CanvasItem::refreshSnapshot() {
     QImage frame;QString failure;bool legacy=false;
     if(next){
         auto rendered=renderCanvasFrame(*next,nextCount);
-        if(rendered)frame=std::move(rendered.value());
+        if(rendered){
+            // Cache display-ready pixels once per document revision, not on every pan.
+            frame=rendered.value().convertToFormat(QImage::Format_RGBA8888_Premultiplied);
+            if(frame.isNull())failure=QStringLiteral("canvas.image-allocation");
+        }
         else {
             // Preserve transformed native-only documents handled by the old scene graph.
             // Never fall back when a raster layer would silently disappear.
@@ -242,7 +246,9 @@ QSGNode* CanvasItem::updatePaintNode(QSGNode* old,UpdatePaintNodeData*){
         const int displayTileSide=window()->rendererInterface()->graphicsApi()==QSGRendererInterface::Software ? std::max(frame.width(),frame.height()) : int(TileSide);
         for(int y=0;y<frame.height();y+=displayTileSide)for(int x=0;x<frame.width();x+=displayTileSide){
             const QRect rect(x,y,std::min(displayTileSide,frame.width()-x),std::min(displayTileSide,frame.height()-y));
-            auto* texture=window()->createTextureFromImage(frame.copy(rect).convertToFormat(QImage::Format_RGBA8888_Premultiplied));
+            // Full software frame is implicitly shared; only GPU subtiles need copying.
+            const QImage textureImage=rect==frame.rect()?frame:frame.copy(rect);
+            auto* texture=window()->createTextureFromImage(textureImage);
             if(!texture){
                 const auto failedDocument=snap->documentId;const auto failedRevision=snap->revision;const auto failedFrameKey=frame.cacheKey();
                 QMetaObject::invokeMethod(this,[this,failedDocument,failedRevision,failedFrameKey]{
