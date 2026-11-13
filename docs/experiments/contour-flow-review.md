@@ -44,7 +44,7 @@ c++ -std=c++20 -O1 -Wall -Wextra -Wpedantic -Werror \
   -fno-fast-math -ffp-contract=off -Isrc -Itests/support \
   tests/support/TestMain.cpp tests/reconstruct/PlanningTests.cpp \
   src/core/DocumentSpec.cpp src/core/Document.cpp src/core/CommandBus.cpp src/core/Digest.cpp \
-  src/render/ReferenceRenderer.cpp src/render/CoverageRasterizer.cpp src/render/PixelBlend.cpp \
+  src/render/ReferenceRenderer.cpp src/render/CoverageRasterizer.cpp src/render/FineLineCoverage.cpp src/render/DryInkCoverage.cpp src/render/ChiselInkCoverage.cpp src/render/PixelBlend.cpp \
   src/reconstruct/ReconstructionService.cpp src/reconstruct/EventWriter.cpp \
   src/reconstruct/ContourPlanner.cpp src/reconstruct/RegionPlanner.cpp src/reconstruct/StrokeScheduler.cpp \
   -o /tmp/drawborad-test-E02
@@ -58,3 +58,9 @@ For the hollow-form evidence executable, replace the two tests/*.cpp entry files
 The current Qt ReconstructionJob still creates guides/base/empty-detail placeholders and completes each object's guide/base before proceeding to the next object. Those files were inspected but are unchanged. The patch does not add scene-wide phase ordering, meaningful shadow/highlight/detail decisions, anatomical linework, learned artist reasoning, or a user-visible artist workflow. The scheduler still assigns fixed per-sample timing. A separate authored native control can demonstrate the engine's ability to execute those choices, but cannot establish that this generic planner makes them.
 
 Do not enable this policy across production inputs based only on the hollow-form result. More complex images can increase event count, hit budgets, and need artist-level composition/color-region decisions beyond mask-following bands.
+
+## Current-build command maintenance (2026-11-13)
+
+The portable command now includes all coverage dependencies dispatched by the current native renderer. This only repairs its build recipe; the historical experiment results above are unchanged and are not newly measured artwork. The complete pinned f96 repository tree was reconstructed and every694 blob SHA/file mode verified before this update; the prior partial local copy omitted this document.
+
+On that complete source tree, the updated portable E02 command linked and passed18/18 cases; the derived contour-evidence command also linked but was not run to generate artwork. All other eight independently compiled renderer outputs linked, with automatic15/15, flow15/15, hybrid15/15 and locality20/20 tests passing. A fresh Release HEADLESS/QT build and109/109 CTest cases passed (31.71s, Qt19.72s). These are local build/non-regression results, not a claim that the historical reconstruction has artist-level quality or that Windows was tested.
