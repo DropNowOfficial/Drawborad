@@ -47,7 +47,8 @@ footer{color:#98a1ac;font-size:11px;margin-top:25px;line-height:1.7}.errors{colo
 </div>
 <div class="nativegrid">
 <div>
-<div id="nativeCanvasHost" class="viewport" style="min-height:400px;position:relative"><canvas id="nativeBoundaryOverlay" hidden style="position:absolute;inset:0;pointer-events:none"></canvas><canvas id="nativeStrokeDraft" hidden style="position:absolute;inset:0;pointer-events:none"></canvas><img id="nativePreview" alt="Native painting preview" hidden style="max-width:100%;max-height:560px;object-fit:contain"><p id="nativeEmpty">Open a .draw project to edit its original brush strokes.</p></div>
+<div class="row"><label>View <select id="nativeZoom"><option value="fit">Fit</option><option value="0.5">50%</option><option value="1">100% (1 document px = 1 CSS px)</option><option value="2">200%</option><option value="4">400%</option></select></label><label><input type="checkbox" id="nativePan">Pan view (no paint)</label><span id="nativeZoomStatus"></span></div>
+<div id="nativeCanvasHost" class="viewport" style="height:560px;min-height:320px;position:relative;display:block;padding:0;overflow:hidden;touch-action:none"><canvas id="nativeBoundaryOverlay" hidden style="position:absolute;inset:0;pointer-events:none;z-index:2"></canvas><canvas id="nativeStrokeDraft" hidden style="position:absolute;inset:0;pointer-events:none;z-index:2"></canvas><img id="nativePreview" alt="Native painting preview" hidden style="position:absolute;max-width:none;max-height:none;object-fit:fill"><p id="nativeEmpty">Open a .draw project to edit its original brush strokes.</p></div>
 <div class="panelbody"><label class="fieldlabel" for="nativeReplay">Native-event replay · <span id="nativeReplayCount">0</span> events</label><input id="nativeReplay" type="range" min="0" max="0" value="0" disabled style="width:100%"><p class="fine">Replay controls native brush events only. Imported ink and MyPaint raster layers remain visible; their pixels are not replayed by this slider.</p></div>
 </div>
 <aside class="panelbody native-sidebar">
@@ -180,6 +181,45 @@ by('token').onchange=refreshCapability;refreshCapability();
 let nativeState=null, nativeBusy=false, nativeImageUrl=null, nativeSelectedNodeId=null, nativePreviewKey=null;
 let nativeStrokeScopes=new Map(), nativePenDrag=null;
 const nativeActionIds=['nativeImport','nativeNew','nativeUndo','nativeRedo','nativeSave','nativeSaveCopy','nativeAddFillLayer','nativeRecolor','nativeDownload','nativePng','nativeOra','nativeClose'];
+// NATIVE_VIEW_HELPERS_BEGIN
+function nativeViewLayout(hw,hh,w,h,zoom,px,py){
+ if(![hw,hh,w,h,px,py].every(Number.isFinite)||Math.min(hw,hh,w,h)<=0)return null;
+ const scale=zoom==='fit'?Math.min(hw/w,hh/h):['0.5','1','2','4'].includes(zoom)?Number(zoom):NaN;
+ if(!Number.isFinite(scale))return null;
+ const width=w*scale,height=h*scale,mx=Math.max(0,(width-hw)/2),my=Math.max(0,(height-hh)/2);
+ const panX=Math.max(-mx,Math.min(mx,px)),panY=Math.max(-my,Math.min(my,py));
+ return {scale,width,height,panX,panY,left:(hw-width)/2+panX,top:(hh-height)/2+panY};
+}
+// NATIVE_VIEW_HELPERS_END
+let nativeViewX=0,nativeViewY=0,nativeViewScale=1,nativePanDrag=null;
+function nativeApplyView(){
+ if(!nativeState)return;
+ const host=by('nativeCanvasHost').getBoundingClientRect(),image=by('nativePreview');
+ const v=nativeViewLayout(host.width,host.height,Number(nativeState.width),Number(nativeState.height),by('nativeZoom').value,nativeViewX,nativeViewY);
+ if(!v)return;nativeViewX=v.panX;nativeViewY=v.panY;nativeViewScale=v.scale;
+ Object.assign(image.style,{width:v.width+'px',height:v.height+'px',left:v.left+'px',top:v.top+'px'});
+ by('nativeZoomStatus').textContent=Math.round(v.scale*100)+'% · view only';nativeBoundaryOverlay();
+}
+by('nativeZoom').onchange=()=>{
+ if(nativeBusy)return;
+ const next=by('nativeZoom').value,scale=Number(next);
+ if(next==='fit'){nativeViewX=0;nativeViewY=0;}else{nativeViewX*=scale/nativeViewScale;nativeViewY*=scale/nativeViewScale;}
+ nativeApplyView();
+};
+by('nativePan').onchange=()=>{by('nativeCanvasHost').style.cursor=by('nativePan').checked?'grab':'';};
+const nativeViewHost=by('nativeCanvasHost');
+nativeViewHost.addEventListener('pointerdown',e=>{
+ if(!by('nativePan').checked||nativeBusy||!nativeState||e.button!==0)return;
+ e.preventDefault();nativePanDrag={id:e.pointerId,x:e.clientX,y:e.clientY,px:nativeViewX,py:nativeViewY};
+ nativeBusy=true;nativeControls();nativeViewHost.setPointerCapture(e.pointerId);
+});
+nativeViewHost.addEventListener('pointermove',e=>{
+ if(!nativePanDrag||nativePanDrag.id!==e.pointerId)return;e.preventDefault();
+ nativeViewX=nativePanDrag.px+e.clientX-nativePanDrag.x;nativeViewY=nativePanDrag.py+e.clientY-nativePanDrag.y;nativeApplyView();
+});
+function nativeEndPan(event){if(!nativePanDrag||(event?.pointerId!==undefined&&event.pointerId!==nativePanDrag.id))return;const id=nativePanDrag.id;nativePanDrag=null;nativeBusy=false;if(nativeViewHost.hasPointerCapture(id))nativeViewHost.releasePointerCapture(id);nativeControls();}
+for(const name of ['pointerup','pointercancel','lostpointercapture'])nativeViewHost.addEventListener(name,nativeEndPan);
+window.addEventListener('resize',()=>{nativeEndPan();nativePenCancel('View resized; unfinished stroke cancelled.');nativeBoundaryCancel('View resized; helper cancelled.');nativeApplyView();});
 // BUCKET_HELPERS_BEGIN
 function nativeFillTarget(state,id){
  if(!state?.capabilities?.includes('bucket_fill'))return null;
@@ -249,7 +289,7 @@ function nativeBoundaryOverlay(){
  }
 }
 function nativeBoundaryCancel(message){if(!nativeBoundaryDrag)return;nativeBoundaryDrag=null;nativeBusy=false;nativeControls();if(message)nativeError(message);}
-function nativeBoundaryPoint(e){return nativePenPoint(by('nativePreview').getBoundingClientRect(),Number(nativeState.width),Number(nativeState.height),e.clientX,e.clientY);}
+function nativeBoundaryPoint(e){const r=by('nativeCanvasHost').getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)return null;return nativePenPoint(by('nativePreview').getBoundingClientRect(),Number(nativeState.width),Number(nativeState.height),e.clientX,e.clientY);}
 function nativeBoundaryDown(e){
  if(!nativeBoundaryReady()||e.button!==0)return;
  const point=nativeBoundaryPoint(e),radius=Number(by('nativeBoundaryRadius').value),lineart_id=by('nativeBoundarySource').value;
@@ -368,6 +408,7 @@ function nativeControls(){
  by('nativePreview').style.touchAction=by('nativePen').checked?'none':'auto';
  if(!nativeBusy&&!fillReady)by('nativeBucket').checked=false;
  by('nativePreview').style.cursor=fillReady&&(by('nativeBucket').checked||by('nativePen').checked)?'crosshair':'default';
+ by('nativeZoom').disabled=nativeBusy||!nativeState;by('nativePan').disabled=nativeBusy||!nativeState;
  by('nativeReplay').disabled=nativeBusy||!nativeState||!nativeState.strokes.length;
  by('nativeAllStrokes').disabled=nativeBusy||!nativeState;
  by('nativeShowSublayers').disabled=nativeBusy||!nativeState;
@@ -381,7 +422,7 @@ async function nativePreview(limit){
  if(!response.ok)throw new Error('Native preview failed: '+await response.text());
  const url=URL.createObjectURL(await response.blob());
  by('nativePreview').src=url;by('nativePreview').hidden=false;by('nativeEmpty').hidden=true;
- await by('nativePreview').decode();
+ await by('nativePreview').decode();nativeApplyView();
  if(response.headers.get('X-Drawborad-Revision')===nativeState.revision)nativePreviewKey=requested;
  if(nativeImageUrl)URL.revokeObjectURL(nativeImageUrl);nativeImageUrl=url;
 }
@@ -419,6 +460,7 @@ function nativeSelectNode(id){
 }
 async function nativeShow(value){
  const sameProject=nativeState?.id===value.id, selected=sameProject?by('nativeStrokes').value:'';
+ if(!sameProject){by('nativeZoom').value='fit';nativeViewX=0;nativeViewY=0;}
  if(!sameProject||!value.nodes.some(n=>n.id===nativeSelectedNodeId)){nativeSelectedNodeId=null;by('nativeBucket').checked=false;}
  const oldSource=by('nativeBoundarySource').value;by('nativeBoundarySource').replaceChildren();
  for(const n of value.nodes.filter(n=>n.stage==='drawborad.lineart.rgba.v1')){const option=document.createElement('option');option.value=n.id;option.textContent=n.name;by('nativeBoundarySource').append(option);}
@@ -543,6 +585,7 @@ let nativeMyPaintRendering=false;
 by('nativeCancelBrush').onclick=async()=>{try{await nativePost('/'+nativeState.id+'/cancel-brush',{});nativeError('Cancellation requested; waiting for worker to stop.')}catch(e){nativeError(e.message)}};
 by('nativeBrush').onchange=()=>{const dry=by('nativeBrush').value==='dry_ink',broad=dry||by('nativeBrush').value==='smooth_ink';by('nativePenWidth').min=dry?'0.25':'0.05';by('nativePenWidth').max=broad?'128':'8';by('nativePenWidth').value=String(Math.max(dry?.25:.05,Math.min(broad?128:8,Number(by('nativePenWidth').value))));nativeControls();};
 by('nativePreview').onclick=event=>{
+ if(by('nativePan').checked)return;
  if(by('nativeBoundaryMode').value==='draw')return;
  if(by('nativeBoundaryMode').value==='fill'){nativeBoundaryFill(event);return;}
  if(by('nativeEyedropper').checked){nativePickColor(event);return;}
@@ -565,6 +608,8 @@ function nativePenCancel(message){
 }
 function nativePenSample(event,forceEndpoint=false){
  const drag=nativePenDrag;if(!drag)return false;
+ const visible=by('nativeCanvasHost').getBoundingClientRect();
+ if(event.clientX<visible.left||event.clientX>visible.right||event.clientY<visible.top||event.clientY>visible.bottom){nativePenCancel('Stroke cancelled outside the visible viewport.');return false;}
  const point=nativePenPoint(by('nativePreview').getBoundingClientRect(),Number(nativeState.width),Number(nativeState.height),event.clientX,event.clientY);
  if(!point){nativePenCancel('Stroke cancelled because the pointer left the canvas.');return false;}
  if(drag.body.brush==='mypaint_ink'){if(drag.startedAt===undefined)drag.startedAt=event.timeStamp;point.time_ms=Math.max(0,Math.round(event.timeStamp-drag.startedAt));}
@@ -580,6 +625,7 @@ function nativePenSample(event,forceEndpoint=false){
  ctx.lineTo(x,y);ctx.stroke();drag.lastView={x,y};return true;
 }
 by('nativePreview').onpointerdown=event=>{
+ if(by('nativePan').checked)return;
  if(by('nativeBoundaryMode').value==='draw'){nativeBoundaryDown(event);return;}
  if(by('nativeBoundaryMode').value==='fill')return;
  if(by('nativeEyedropper').checked)return;
@@ -621,7 +667,7 @@ by('nativePreview').onpointerup=event=>{
 by('nativePreview').onpointercancel=()=>{nativeBoundaryCancel('Helper cancelled; nothing saved');nativePenCancel('Stroke cancelled; nothing was saved.');};
 by('nativePreview').onlostpointercapture=()=>{nativeBoundaryCancel('Helper cancelled; nothing saved');nativePenCancel('Stroke cancelled; nothing was saved.');};
 by('nativePreview').ondragstart=event=>event.preventDefault();
-window.addEventListener('blur',()=>{nativeBoundaryCancel('Helper cancelled; nothing saved');nativePenCancel('Stroke cancelled; nothing was saved.');});
+window.addEventListener('blur',()=>{nativeEndPan();nativeBoundaryCancel('Helper cancelled; nothing saved');nativePenCancel('Stroke cancelled; nothing was saved.');});
 // PEN_INPUT_END
 by('nativeReplay').onchange=()=>nativeRun(async()=>{await nativePreview(by('nativeReplay').value);by('nativeReplayCount').textContent=by('nativeReplay').value});
 for(const [id,path,name] of [['nativeDownload','download','painting.draw'],['nativePng','preview.png','painting.png'],['nativeOra','export.ora','painting.ora']])by(id).onclick=()=>nativeRun(()=>downloadUrl('/projects/'+nativeState.id+'/'+path,name));

@@ -171,6 +171,8 @@ jobs:
           out/api-venv/bin/pip install 'playwright>=1.50,<2'
           out/api-venv/bin/python -m playwright install --with-deps chromium
           PYTHONPATH="$PWD" out/api-venv/bin/python tests/batch/acceptance.py out/linux-headless/DrawboradHeadless out/evidence/real-input/source.png out/evidence/batch --browser
+      - name: Native viewport real Chromium acceptance (synthetic canvas)
+        run: PYTHONPATH="$PWD" out/api-venv/bin/python tests/cloud/native_view_browser.py out/linux-headless/DrawboradHeadless out/evidence/native-viewport
       - name: Upload build evidence
         if: always()
         uses: actions/upload-artifact@v4
