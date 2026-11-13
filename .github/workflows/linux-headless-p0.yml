@@ -173,6 +173,9 @@ jobs:
           PYTHONPATH="$PWD" out/api-venv/bin/python tests/batch/acceptance.py out/linux-headless/DrawboradHeadless out/evidence/real-input/source.png out/evidence/batch --browser
       - name: Native viewport real Chromium acceptance (synthetic canvas)
         run: PYTHONPATH="$PWD" out/api-venv/bin/python tests/cloud/native_view_browser.py out/linux-headless/DrawboradHeadless out/evidence/native-viewport
+      - name: Native poster combined workflow in Chromium (synthetic 3300x5100)
+        timeout-minutes: 8
+        run: PYTHONPATH="$PWD" out/api-venv/bin/python tests/cloud/native_view_browser.py out/linux-headless/DrawboradHeadless out/evidence/poster-workflow --poster
       - name: Upload build evidence
         if: always()
         uses: actions/upload-artifact@v4
