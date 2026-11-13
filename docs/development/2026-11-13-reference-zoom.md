@@ -1,0 +1,9 @@
+# Read-only reference zoom and pan
+
+The original-color reference previously fit the window only, preventing close inspection of line edges and shape proportions while drawing. This change targets observation, not source reconstruction: it cannot add original detail or improve an artwork by itself.
+
+Design: keep the decoded original and stored attachment unchanged; change only Image display geometry in a clipped viewport. Provide Fit and explicitly **one original pixel per logical display pixel** (not a physical high-DPI pixel promise). Zoom is anchored to the pointer's original coordinate, with bounded scale and finite coordinates. Middle-button drag pans; left click only preselects a color. A single inverse transform maps viewport clicks to original pixel coordinates, rejecting clipped/outside/letterbox and half-open right/bottom edges. No enlarged saved bitmap or changed sourceSize is created.
+
+New reference sources reset Fit/pan/pick. Ordinary document edits do not reset the inspection view. Existing original-file persistence, decoded-pixel sampling and explicit Apply RGB behavior remain; only Apply changes the brush, and source alpha remains displayed separately. This is not a tracing overlay and never silently aligns the reference to the artwork.
+
+Reviewed Release full suite passed 105/105 (-j4,29.09s); actual Qt/QML18.02s. Checks cover mouse pick at Fit and resized Fit, precise original-pixel picking at logical1:1 / anchored4× / panned view, actual middle-button drag without picking, original cache identity and snapshot unchanged, ordinary add/Undo retaining view, half-open right edge and viewport-outside rejection, source removal/reset, and tiny1×1 Fit>64 zoom not reversing direction. Excessive pan is rejected. Review added finite-state-before-assignment safeguards and source-identity protection during an ongoing drag. Windows/physical high-DPI displays remain untested; tests must distinguish logical from physical pixel semantics.

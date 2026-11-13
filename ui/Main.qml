@@ -20,17 +20,99 @@ ApplicationWindow {
         id: originalReferenceWindow; objectName: "originalReferenceWindow"; title: qsTr("原彩参考 · 只读对照，不是作品输出")
         width: 600; height: 800; visible: false; color: "#29292c"
         property var picked: ({ valid: false })
+        property bool fitMode: true
+        property real customScale: 1
+        property real panX: 0
+        property real panY: 0
+        readonly property real imageWidth: originalReferenceImage.sourceSize.width
+        readonly property real imageHeight: originalReferenceImage.sourceSize.height
+        readonly property real fitScale: imageWidth > 0 && imageHeight > 0 && originalReferenceViewport.width > 0 && originalReferenceViewport.height > 0 ? Math.min(originalReferenceViewport.width / imageWidth, originalReferenceViewport.height / imageHeight) : 1
+        readonly property real viewScale: fitMode ? fitScale : customScale
+        property string referenceIdentity: studio.originalReferenceUrl.toString()
+        onReferenceIdentityChanged: fitReference()
         Connections { target: studio; function onChanged() { originalReferenceWindow.picked = { valid: false } } }
+        function fitReference() {
+            fitMode = true; panX = 0; panY = 0; picked = { valid: false }
+        }
+        function nativeReference() {
+            customScale = 1; fitMode = false; panX = 0; panY = 0; picked = { valid: false }
+        }
+        function insideViewport(x, y) {
+            return isFinite(x) && isFinite(y) && x >= 0 && y >= 0 && x < originalReferenceViewport.width && y < originalReferenceViewport.height
+        }
+        function zoomReference(factor, x, y) {
+            if (!insideViewport(x,y) || !isFinite(factor) || factor <= 0 || originalReferenceImage.status !== Image.Ready) return
+            const old = viewScale
+            if (!isFinite(old) || old <= 0) return
+            const ix = (x-originalReferenceImage.x)/old, iy = (y-originalReferenceImage.y)/old
+            // A tiny image can fit at more than 64x. Never make zoom-in
+            // jump backwards merely because that fit exceeded the usual cap.
+            const maxZoom = Math.max(64,fitScale,old)
+            if (!isFinite(maxZoom)) return
+            const next = Math.max(Math.min(0.0001,old),Math.min(maxZoom,old*factor))
+            const nextX = x-(originalReferenceViewport.width-imageWidth*next)/2-ix*next
+            const nextY = y-(originalReferenceViewport.height-imageHeight*next)/2-iy*next
+            if (!isFinite(next) || !isFinite(nextX) || !isFinite(nextY) || Math.abs(nextX)>1000000 || Math.abs(nextY)>1000000) return
+            customScale = next; fitMode = false; panX = nextX; panY = nextY
+            picked = { valid: false }
+        }
+        function panReference(dx, dy) {
+            if (!isFinite(dx) || !isFinite(dy) || originalReferenceImage.status !== Image.Ready) return
+            const old = viewScale
+            if (!isFinite(old) || old <= 0) return
+            const nextX = panX+dx, nextY = panY+dy
+            if (!isFinite(nextX) || !isFinite(nextY) || Math.abs(nextX)>1000000 || Math.abs(nextY)>1000000) return
+            customScale = old; fitMode = false; panX = nextX; panY = nextY; picked = { valid: false }
+        }
         function pickAt(x, y) {
-            const pw = originalReferenceImage.paintedWidth, ph = originalReferenceImage.paintedHeight
-            const left = (originalReferenceImage.width - pw) / 2, top = (originalReferenceImage.height - ph) / 2
-            if (originalReferenceImage.status !== Image.Ready || pw <= 0 || ph <= 0 || x < left || y < top || x >= left + pw || y >= top + ph) { picked = { valid: false }; return }
-            picked = studio.sampleOriginalReference(studio.originalReferenceUrl.toString(), (x-left)*originalReferenceImage.sourceSize.width/pw, (y-top)*originalReferenceImage.sourceSize.height/ph)
+            if (!insideViewport(x,y) || originalReferenceImage.status !== Image.Ready || !isFinite(viewScale) || viewScale <= 0) { picked = { valid: false }; return }
+            if (x < originalReferenceImage.x || y < originalReferenceImage.y || x >= originalReferenceImage.x+originalReferenceImage.width || y >= originalReferenceImage.y+originalReferenceImage.height) { picked = { valid: false }; return }
+            const ix = (x-originalReferenceImage.x)/viewScale, iy = (y-originalReferenceImage.y)/viewScale
+            if (ix < 0 || iy < 0 || ix >= imageWidth || iy >= imageHeight) { picked = { valid: false }; return }
+            picked = studio.sampleOriginalReference(referenceIdentity,ix,iy)
         }
         ColumnLayout { anchors.fill: parent; anchors.margins: 12
             Label { text: studio.originalReferenceInfo; color: "white"; wrapMode: Text.Wrap; Layout.fillWidth: true }
-            Image { id: originalReferenceImage; objectName: "originalReferenceImage"; source: studio.originalReferenceUrl; asynchronous: false; cache: false; fillMode: Image.PreserveAspectFit; Layout.fillWidth: true; Layout.fillHeight: true
-                MouseArea { anchors.fill: parent; onClicked: function(mouse) { originalReferenceWindow.pickAt(mouse.x,mouse.y) } }
+            RowLayout {
+                Layout.fillWidth: true
+                Button { objectName: "referenceFitButton"; text: qsTr("适配"); onClicked: originalReferenceWindow.fitReference() }
+                Button { objectName: "referenceNativeButton"; text: qsTr("1原像素 = 1逻辑像素"); onClicked: originalReferenceWindow.nativeReference() }
+                Label { text: Math.round(originalReferenceWindow.viewScale*100)+"%"; color: "white" }
+            }
+            Item {
+                id: originalReferenceViewport; objectName: "originalReferenceViewport"
+                Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 32; clip: true
+                Image {
+                    id: originalReferenceImage; objectName: "originalReferenceImage"
+                    source: studio.originalReferenceUrl; asynchronous: false; cache: false
+                    // sourceSize is never changed by viewing. Only display geometry scales.
+                    width: Math.max(0,sourceSize.width)*originalReferenceWindow.viewScale
+                    height: Math.max(0,sourceSize.height)*originalReferenceWindow.viewScale
+                    x: (originalReferenceViewport.width-width)/2+originalReferenceWindow.panX
+                    y: (originalReferenceViewport.height-height)/2+originalReferenceWindow.panY
+                    fillMode: Image.Stretch
+                }
+                MouseArea {
+                    anchors.fill: parent; acceptedButtons: Qt.LeftButton | Qt.MiddleButton; preventStealing: true
+                    property real pressX: 0; property real pressY: 0
+                    property real lastX: 0; property real lastY: 0
+                    property bool moved: false
+                    property string pressedSource: ""
+                    onPressed: function(mouse) { pressX=lastX=mouse.x; pressY=lastY=mouse.y; moved=false; pressedSource=originalReferenceWindow.referenceIdentity }
+                    onPositionChanged: function(mouse) {
+                        if (!pressed || pressedSource !== originalReferenceWindow.referenceIdentity) return
+                        if (Math.hypot(mouse.x-pressX,mouse.y-pressY)>4) moved=true
+                        if (pressedButtons & Qt.MiddleButton) originalReferenceWindow.panReference(mouse.x-lastX,mouse.y-lastY)
+                        lastX=mouse.x; lastY=mouse.y
+                    }
+                    onReleased: function(mouse) { if (mouse.button===Qt.LeftButton && !moved && pressedSource===originalReferenceWindow.referenceIdentity) originalReferenceWindow.pickAt(mouse.x,mouse.y) }
+                    onCanceled: { moved=true; pressedSource="" }
+                    onWheel: function(wheel) {
+                        const delta=wheel.angleDelta.y!==0 ? wheel.angleDelta.y : wheel.pixelDelta.y
+                        if (delta!==0) originalReferenceWindow.zoomReference(Math.pow(1.0015,delta),wheel.x,wheel.y)
+                        wheel.accepted=true
+                    }
+                }
             }
             RowLayout {
                 Rectangle { width: 28; height: 28; color: originalReferenceWindow.picked.valid ? originalReferenceWindow.picked.color : "transparent"; border.color: "#aaaaaa" }
@@ -41,7 +123,7 @@ ApplicationWindow {
                 onClicked: nativeCanvas.configureBrush(nativeCanvas.brushWidth,originalReferenceWindow.picked.color,nativeCanvas.brushOpacity,nativeCanvas.brushHardness,nativeCanvas.mouseTaper)
             }
             Label { text: qsTr("取解码原像素 RGB，不取屏幕插值色；源 alpha 仅展示，不复制。当前工具不透明度 %1%，叠色后不保证相同观感；无色彩配置时未校准。").arg(Math.round(nativeCanvas.brushOpacity*100)); color: "#e0c1a0"; wrapMode: Text.Wrap; Layout.fillWidth: true }
-            Label { text: qsTr("将此只读窗放在当前分层作品旁对照。仅适配窗口显示，不重采样保存，不自动对齐。") ; color: "#e0c1a0"; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Label { text: qsTr("滚轮缩放，中键拖动，左键点击取色。1:1指逻辑像素，不承诺屏幕物理像素。仅改变显示，不重采样保存，不自动对齐作品。") ; color: "#e0c1a0"; wrapMode: Text.Wrap; Layout.fillWidth: true }
         }
     }
     FileDialog { id: lineartDialog; title: qsTr("嵌入同尺寸黑白灰 PNG 线稿"); nameFilters: ["PNG (*.png)"]; onAccepted: studio.importLineartUrl(selectedFile) }
