@@ -15,6 +15,16 @@ ApplicationWindow {
     property bool approvedClose: false
     property bool closeAfterSave: false
     Timer { id: replayTimer; interval: 100; repeat: true; onTriggered: { if (studio.busy || studio.replayCount >= studio.eventCount) stop(); else studio.setReplayCount(studio.replayCount + 1) } }
+    FileDialog { id: originalReferenceDialog; title: qsTr("附加原彩到工程（分享 .draw 将包含此图）"); nameFilters: ["PNG/JPEG (*.png *.jpg *.jpeg)"]; onAccepted: studio.attachOriginalReferenceUrl(selectedFile) }
+    Window {
+        id: originalReferenceWindow; objectName: "originalReferenceWindow"; title: qsTr("原彩参考 · 只读对照，不是作品输出")
+        width: 600; height: 800; visible: false; color: "#29292c"
+        ColumnLayout { anchors.fill: parent; anchors.margins: 12
+            Label { text: studio.originalReferenceInfo; color: "white"; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Image { objectName: "originalReferenceImage"; source: studio.originalReferenceUrl; asynchronous: false; cache: false; fillMode: Image.PreserveAspectFit; Layout.fillWidth: true; Layout.fillHeight: true }
+            Label { text: qsTr("将此只读窗放在当前分层作品旁对照。仅适配窗口显示，不重采样保存，不自动对齐。") ; color: "#e0c1a0"; wrapMode: Text.Wrap; Layout.fillWidth: true }
+        }
+    }
     FileDialog { id: lineartDialog; title: qsTr("嵌入同尺寸黑白灰 PNG 线稿"); nameFilters: ["PNG (*.png)"]; onAccepted: studio.importLineartUrl(selectedFile) }
     FileDialog { id: pngExportDialog; title: qsTr("导出原尺寸 RGB PNG（新文件名）"); fileMode: FileDialog.SaveFile; defaultSuffix: "png"; nameFilters: ["PNG (*.png)"]; onAccepted: studio.workflow.exportNative(selectedFile, "png") }
     FileDialog { id: oraExportDialog; title: qsTr("导出叶图层 ORA（组展开、蒙版烘焙；新文件名）"); fileMode: FileDialog.SaveFile; defaultSuffix: "ora"; nameFilters: ["OpenRaster (*.ora)"]; onAccepted: studio.workflow.exportNative(selectedFile, "ora") }
@@ -339,6 +349,9 @@ ApplicationWindow {
             Label { text: qsTr("滚轮缩放；鼠标中键拖动画布。百分比以适合窗口为基准。"); color: "#b5b5bd"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Label { text: qsTr("Alpha：自动分割与人工审阅验证中"); color: "#d9c59e"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Label { text: qsTr("Reference image is preview-only; .draw saves paint events, not the imported source image."); color: "#d6b1a6"; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Button { text: qsTr("附加原彩（不改变画布）"); enabled: studio.hasDocument && !studio.busy; onClicked: originalReferenceDialog.open(); Layout.fillWidth: true }
+            Button { text: qsTr("打开只读原彩对照窗"); enabled: studio.originalReferenceUrl.toString().length > 0; onClicked: originalReferenceWindow.show(); Layout.fillWidth: true }
+            Label { text: studio.originalReferenceNotice; visible: text.length > 0; color: "#dbba98"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Switch { id: showReference; text: qsTr("Show reference overlay"); checked: true; enabled: studio.hasReference }
             Label { text: qsTr("Reference opacity"); color: "#b5b5bd"; visible: studio.hasReference }
             Slider { id: referenceOpacity; from: 0; to: 0.75; value: 0.35; enabled: studio.hasReference; visible: studio.hasReference; Layout.fillWidth: true }

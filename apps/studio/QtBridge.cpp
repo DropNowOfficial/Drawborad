@@ -1,5 +1,6 @@
 #include "QtBridge.h"
 #include "AlphaImportPolicy.h"
+#include "core/OriginalReference.h"
 #include "brush/OriginalLineartFill.h"
 #include "brush/FillRegionReview.h"
 #include "brush/HollowInkCommand.h"
@@ -232,6 +233,47 @@ void QtBridge::createDocument(double w, double h, double ppi, bool whitePaper) {
     }
     emit changed();
 }
+namespace {
+QImage decodeOriginalReference(const QByteArray& bytes) {
+ QBuffer buffer;buffer.setData(bytes);buffer.open(QIODevice::ReadOnly);QImageReader reader(&buffer);reader.setAutoTransform(true);
+ const auto fmt=reader.format();const auto size=reader.size();
+ if((fmt!="png"&&fmt!="jpeg")||size.width()<=0||size.height()<=0||size.width()>8192||size.height()>8192||qint64(size.width())*size.height()>20000000)return {};
+ auto image=reader.read();if(image.isNull()||image.width()>8192||image.height()>8192||qint64(image.width())*image.height()>20000000)return {};
+ return image;
+}
+}
+void QtBridge::refreshOriginalReference() const try {
+ const auto s=app_.snapshot();const auto* map=s?s->resources.get():nullptr;if(map==referenceCacheResources_)return;
+ const auto oldKey=referenceCacheKey_;const auto oldImage=referenceCacheImage_;const auto oldInfo=referenceCacheInfo_;
+ referenceCacheResources_=map;referenceCacheOwner_=s?s->resources:nullptr;referenceCacheKey_.clear();referenceCacheInfo_.clear();referenceCacheImage_={};if(!s){referenceCacheBytes_.reset();return;}
+ auto ref=originalReference(*s,false);if(!ref){referenceCacheInfo_=tr("原彩附件损坏，不能显示；未改动画作。");return;}if(!ref.value()){referenceCacheBytes_.reset();return;}
+ const auto& r=*ref.value();const auto key=QString::fromLatin1(QByteArray(reinterpret_cast<const char*>(r.encoded.bytes.data()),32).toHex());
+ if(key==oldKey&&s->resources->at(r.encoded).bytes==referenceCacheBytes_&&oldImage.width()==int(r.width)&&oldImage.height()==int(r.height)&&!oldImage.isNull()){referenceCacheKey_=oldKey;referenceCacheImage_=oldImage;referenceCacheInfo_=oldInfo;return;}
+ if(!originalReference(*s)){referenceCacheInfo_=tr("原彩附件哈希不匹配；未改动画作。");return;}
+ const auto& b=*s->resources->at(r.encoded).bytes;
+ auto image=decodeOriginalReference(QByteArray(reinterpret_cast<const char*>(b.data()),qsizetype(b.size())));
+ if(image.isNull()||image.width()!=int(r.width)||image.height()!=int(r.height)){referenceCacheInfo_=tr("原彩附件尺寸/解码不匹配；未改动画作。");return;}
+ const bool profile=image.colorSpace().isValid();if(profile)image.convertToColorSpace(QColorSpace::SRgb);
+ if(image.isNull()){referenceCacheInfo_=tr("原彩屏幕色彩转换失败；工程字节仍保留。");return;}
+ referenceCacheBytes_=s->resources->at(r.encoded).bytes;referenceCacheImage_=image;referenceCacheKey_=QString::fromLatin1(QByteArray(reinterpret_cast<const char*>(r.encoded.bytes.data()),32).toHex());
+ referenceCacheInfo_=tr("原彩参考 %1 × %2 px；显示缩放不增加细节。%3 原始文件字节随工程保存，导出画作不含参考；不是生成作品或作者证明。") .arg(r.width).arg(r.height).arg(profile?tr("屏幕按 sRGB 显示，非印刷校色。 "):tr("原图无已识别色彩配置，颜色未校准。 "));
+}catch(const std::bad_alloc&){referenceCacheImage_={};referenceCacheKey_.clear();referenceCacheInfo_=tr("原彩显示内存不足；工程内容未因此修改。");}
+QUrl QtBridge::originalReferenceUrl() const {refreshOriginalReference();return referenceCacheKey_.isEmpty()?QUrl{}:QUrl("image://original-reference/"+referenceCacheKey_);}
+QString QtBridge::originalReferenceInfo() const {refreshOriginalReference();return referenceCacheInfo_;}
+QImage QtBridge::originalReferenceImage(const QString& key) const {refreshOriginalReference();return key==referenceCacheKey_?referenceCacheImage_:QImage{};}
+bool QtBridge::attachOriginalReferenceUrl(const QUrl& url) try {
+ const auto fail=[&](const QString& message){originalReferenceNotice_=message;emit changed();return false;};
+ if(busy()||workflow_->pending()||replaying()||!app_.snapshot())return fail(tr("请先结束预览/回放并打开工程；原图未改变。"));
+ if(!url.isLocalFile())return fail(tr("只接受本地 PNG/JPEG。"));
+ QFile file(url.toLocalFile());if(!file.open(QIODevice::ReadOnly)||file.size()<=0||file.size()>32*1024*1024)return fail(tr("原彩文件须在 32 MiB 以内。"));
+ const auto expectedSize=file.size();const auto bytes=file.read(32*1024*1024+1);if(bytes.size()!=expectedSize||file.error()!=QFileDevice::NoError||bytes.isEmpty()||bytes.size()>32*1024*1024||!file.atEnd())return fail(tr("读取失败或超过预算。"));
+ const auto image=decodeOriginalReference(bytes);if(image.isNull())return fail(tr("需可解码 PNG/JPEG，单边 ≤8192、总像素 ≤2000 万；不会偷偷缩小。"));
+ Bytes encoded(reinterpret_cast<const std::uint8_t*>(bytes.constData()),reinterpret_cast<const std::uint8_t*>(bytes.constData())+bytes.size());
+ const auto s=*app_.snapshot();auto existing=originalReference(s);if(!existing)return fail(tr("已有参考附件结构损坏，拒绝覆盖。"));
+ if(existing.value()){if(existing.value()->encoded==sha256(encoded)){originalReferenceNotice_=tr("同一原彩已保存，没有重复导入。");emit changed();return true;}return fail(tr("本版每工程仅一份原彩；如刚导入错误可撤销，不会替换或覆盖。"));}
+ auto command=attachOriginalReference(s,std::move(encoded),image.width(),image.height());if(!command||!app_.apply(command.value()))return fail(tr("保存原彩附件失败，画作未改变。"));
+ originalReferenceNotice_=tr("已嵌入原始文件，请保存工程。分享 .draw 会同时分享这份原彩；PNG/ORA 画作不含它。");emit changed();return true;
+}catch(const std::bad_alloc&){originalReferenceNotice_=tr("原彩导入内存不足，请核对附件状态；未缩小原图。");emit changed();return false;}
 bool QtBridge::importReferenceUrl(const QUrl& url) {
     if(busy() || workflow_->pending())return false;
     if (!url.isLocalFile()) {

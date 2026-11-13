@@ -10,11 +10,15 @@
 #include <QThreadPool>
 #include <stop_token>
 #include <QVariantList>
+#include <QImage>
 namespace drawborad {
 class WorkflowController;
 class QtBridge : public QObject {
     Q_OBJECT
     friend class WorkflowController;
+    Q_PROPERTY(QUrl originalReferenceUrl READ originalReferenceUrl NOTIFY changed)
+    Q_PROPERTY(QString originalReferenceInfo READ originalReferenceInfo NOTIFY changed)
+    Q_PROPERTY(QString originalReferenceNotice READ originalReferenceNotice NOTIFY changed)
     Q_PROPERTY(QObject* workflow READ workflow CONSTANT)
     Q_PROPERTY(QString message READ message NOTIFY changed)
     Q_PROPERTY(QString dimensions READ dimensions NOTIFY changed)
@@ -44,6 +48,13 @@ class QtBridge : public QObject {
     QUrl referenceUrl_;
     QString referenceFeedback_;
     QString fillNotice_;
+    QString originalReferenceNotice_;
+    mutable const ResourceMap* referenceCacheResources_{};
+    mutable std::shared_ptr<const ResourceMap> referenceCacheOwner_;
+    mutable QImage referenceCacheImage_;
+    mutable std::shared_ptr<const Bytes> referenceCacheBytes_;
+    mutable QString referenceCacheKey_, referenceCacheInfo_;
+    void refreshOriginalReference() const;
     QThreadPool fillPool_;
     std::stop_source fillStop_;
     bool fillBusy_{false};
@@ -57,6 +68,11 @@ class QtBridge : public QObject {
     bool initializeCanvas(double width, double height, double ppi, bool whitePaper = false);
     void resetLayerSelection();
   public:
+    Q_INVOKABLE bool attachOriginalReferenceUrl(const QUrl&);
+    QUrl originalReferenceUrl() const;
+    QString originalReferenceInfo() const;
+    QString originalReferenceNotice() const { return originalReferenceNotice_; }
+    QImage originalReferenceImage(const QString& key) const;
     explicit QtBridge(QObject* parent = nullptr);
     ~QtBridge() override;
     bool fillPending() const { return pendingFill_.has_value(); }
