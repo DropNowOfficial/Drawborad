@@ -208,5 +208,10 @@ if(DRAWBORAD_HEADLESS_WORKFLOW)
  set_tests_properties(B20.RecolorLayerSession PROPERTIES TIMEOUT 120)
 endif()
 
+if(DRAWBORAD_HEADLESS_WORKFLOW)
+ add_test(NAME B21.SmoothInkSession COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/headless/test_smooth_ink_session.py $<TARGET_FILE:DrawboradHeadless>)
+ set_tests_properties(B21.SmoothInkSession PROPERTIES TIMEOUT 120)
+endif()
+
 # Register all native features before labeling the test inventory.
 include(${PROJECT_SOURCE_DIR}/cmake/TestTargets.cmake)

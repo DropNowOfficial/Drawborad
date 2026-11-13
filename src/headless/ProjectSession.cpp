@@ -142,7 +142,7 @@ public:
                 {"geometry_count",number(e.geometry.size())}});
         }
         QJsonArray capabilities{"recolor_layer","recolor_stroke","set_properties","bucket_fill","add_fill_layer","draw_stroke","update_layer","undo","redo","save","save_copy","replay","png"};
-        capabilities.append("ora");capabilities.append("append_brush_layer");capabilities.append("append_brush_crop");capabilities.append("append_brush_normal");capabilities.append("cropped_stroke_mask");capabilities.append("hidden_fill_boundary");
+        capabilities.append("smooth_ink");capabilities.append("ora");capabilities.append("append_brush_layer");capabilities.append("append_brush_crop");capabilities.append("append_brush_normal");capabilities.append("cropped_stroke_mask");capabilities.append("hidden_fill_boundary");
         return {{"document_id",idText(s.documentId)},{"revision",number(s.revision)},
             {"saved_revision",saved?QJsonValue(number(*saved)):QJsonValue(QJsonValue::Null)},
             {"dirty",controller->dirty()},{"hidden_boundaries",boundaries},{"nodes",nodes},{"strokes",events},
@@ -377,10 +377,11 @@ public:
                 }
                 const auto brush=p.value("brush").toString("fine");
                 need(!p.contains("brush") || p.value("brush").isString(),"session.brush");
-                need(brush=="fine" || brush=="dry_ink","session.brush");
+                need(brush=="fine" || brush=="dry_ink" || brush=="smooth_ink","session.brush");
                 const auto layer=parseId(p.value("layer_id"));const auto event=newEventId();
                 const auto color=browserColor(s,p.value("color"));
                 command=checked(brush=="dry_ink" ? dryInkStrokeCommand(s,layer,event,samples,width.toDouble(),color)
+                    : brush=="smooth_ink" ? smoothInkStrokeCommand(s,layer,event,samples,width.toDouble(),color)
                     : freehandStrokeCommand(s,layer,event,samples,width.toDouble(),color));
             } else if(type=="update_layer") {
                 const auto id=parseId(p.value("node_id"));bool any=false;

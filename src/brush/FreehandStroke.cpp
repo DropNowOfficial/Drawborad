@@ -4,8 +4,8 @@
 #include <algorithm>
 #include <cmath>
 namespace drawborad {
-Result<Command> freehandStrokeCommand(const DocumentSnapshot& s,NodeId layer,Id event,
- std::span<const InputSample> points,double width,ColorValue color,double opacity,std::stop_token stop) try {
+static Result<Command> roundInkStrokeCommand(const DocumentSnapshot& s,NodeId layer,Id event,
+ std::span<const InputSample> points,double width,ColorValue color,double opacity,std::stop_token stop,bool broad) try {
  if(stop.stop_requested())return error(ErrorCode::Cancelled,"freehand.cancelled");
  if(!s.nodes||!s.resources||!s.eventIndex)return error(ErrorCode::CorruptData,"document.structure");
  if(s.nodes->size()>4096||s.eventIndex->size()>=8192||points.empty()||points.size()>4096)return error(ErrorCode::BudgetExceeded,"freehand.document-budget");
@@ -25,9 +25,9 @@ Result<Command> freehandStrokeCommand(const DocumentSnapshot& s,NodeId layer,Id 
   return error(ErrorCode::InvalidInput,"freehand.color");
  for(auto c:color.channels)if(!std::isfinite(c)||c<0||c>1)return error(ErrorCode::InvalidInput,"freehand.color");
  StrokeEvent e;e.id=event;e.layerId=layer;e.objectId=s.nodes->at(layer).objectId;e.parentRevision=s.revision;
- e.engineVersion=10;e.toolId="fineliner-aa";e.color=color;e.style.width=width;e.style.opacity=opacity;
+ e.engineVersion=broad?19:10;e.toolId=broad?"smooth-ink-aa":"fineliner-aa";e.color=color;e.style.width=width;e.style.opacity=opacity;
  e.geometry.assign(points.begin(),points.end());e.startUs=points.front().timestampUs;e.endUs=points.back().timestampUs;
- valid=validateFreehandEvent(e);if(!valid)return valid.error();
+ valid=broad?validateSmoothInkEvent(e):validateFreehandEvent(e);if(!valid)return valid.error();
  const auto duration=e.endUs-e.startUs;
  if(duration>UINT64_MAX-tick)return error(ErrorCode::Overflow,"freehand.timeline");
  double x0=points.front().x,x1=x0,y0=points.front().y,y1=y0;
@@ -43,4 +43,12 @@ Result<Command> freehandStrokeCommand(const DocumentSnapshot& s,NodeId layer,Id 
  const auto bottom=std::min(double(s.spec.pixelSize.height),std::ceil(y1+width/2+1));
  return Command(Paint{std::move(e),{std::int64_t(left),std::int64_t(top),std::uint64_t(right-left),std::uint64_t(bottom-top)}});
 }catch(const std::bad_alloc&){return error(ErrorCode::BudgetExceeded,"freehand.allocation");}
+Result<Command> freehandStrokeCommand(const DocumentSnapshot& s,NodeId layer,Id event,
+ std::span<const InputSample> points,double width,ColorValue color,double opacity,std::stop_token stop){
+ return roundInkStrokeCommand(s,layer,event,points,width,color,opacity,stop,false);
+}
+Result<Command> smoothInkStrokeCommand(const DocumentSnapshot& s,NodeId layer,Id event,
+ std::span<const InputSample> points,double width,ColorValue color,double opacity,std::stop_token stop){
+ return roundInkStrokeCommand(s,layer,event,points,width,color,opacity,stop,true);
+}
 }

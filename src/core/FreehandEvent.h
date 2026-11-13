@@ -2,10 +2,10 @@
 #include "Document.h"
 #include <cmath>
 namespace drawborad {
-inline Result<void> validateFreehandEvent(const StrokeEvent& e){
- if(e.engineVersion!=10 || e.toolId!="fineliner-aa")return error(ErrorCode::UnsupportedFeature,"freehand.engine-tool");
+inline Result<void> validateRoundInkEvent(const StrokeEvent& e,std::uint32_t engine,const char* tool,double maxWidth){
+ if(e.engineVersion!=engine || e.toolId!=tool)return error(ErrorCode::UnsupportedFeature,"freehand.engine-tool");
  const auto& s=e.style;
- if(!std::isfinite(s.width)||s.width<.05||s.width>8||!std::isfinite(s.opacity)||s.opacity<0||s.opacity>1||
+ if(!std::isfinite(s.width)||s.width<.05||s.width>maxWidth||!std::isfinite(s.opacity)||s.opacity<0||s.opacity>1||
     s.hardness!=1||s.shape!=NibShape::Round||s.angle!=0||!s.grain.empty())return error(ErrorCode::InvalidInput,"freehand.style");
  if(e.geometry.empty()||e.geometry.size()>4096)return error(ErrorCode::BudgetExceeded,"freehand.points");
  if(e.startUs>e.endUs||e.geometry.front().timestampUs!=e.startUs||e.geometry.back().timestampUs!=e.endUs)
@@ -20,4 +20,6 @@ inline Result<void> validateFreehandEvent(const StrokeEvent& e){
  }
  return {};
 }
+inline Result<void> validateFreehandEvent(const StrokeEvent& e){return validateRoundInkEvent(e,10,"fineliner-aa",8);}
+inline Result<void> validateSmoothInkEvent(const StrokeEvent& e){return validateRoundInkEvent(e,19,"smooth-ink-aa",128);}
 }

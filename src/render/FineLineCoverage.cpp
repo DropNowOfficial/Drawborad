@@ -5,7 +5,7 @@ namespace drawborad {
 Result<std::vector<std::uint16_t>> fineLineCoverage(const StrokeEvent& e,Rect rect,std::uint64_t time,std::stop_token stop){
  if(stop.stop_requested())return error(ErrorCode::Cancelled,"fine-line.cancelled");
  auto valid=validateRasterEvent(e);if(!valid)return valid.error();
- if(e.engineVersion!=10 || e.toolId!="fineliner-aa")return error(ErrorCode::UnsupportedFeature,"fine-line.engine");
+ if(!((e.engineVersion==10 && e.toolId=="fineliner-aa") || (e.engineVersion==19 && e.toolId=="smooth-ink-aa")))return error(ErrorCode::UnsupportedFeature,"fine-line.engine");
  if(!rect.width||!rect.height||rect.width>TileSide||rect.height>TileSide || rect.x < -1000000000ll || rect.y < -1000000000ll || rect.x>1000000000ll || rect.y>1000000000ll)
   return error(ErrorCode::BudgetExceeded,"fine-line.region");
  try{
