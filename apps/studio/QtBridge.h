@@ -23,6 +23,7 @@ class QtBridge : public QObject {
     Q_PROPERTY(QObject* workflow READ workflow CONSTANT)
     Q_PROPERTY(QString message READ message NOTIFY changed)
     Q_PROPERTY(QString dimensions READ dimensions NOTIFY changed)
+    Q_PROPERTY(QString fillProvenanceNotice READ fillProvenanceNotice NOTIFY changed)
     Q_PROPERTY(bool hasDocument READ hasDocument NOTIFY changed)
     Q_PROPERTY(bool dirty READ dirty NOTIFY changed)
     Q_PROPERTY(bool busy READ busy NOTIFY changed)
@@ -118,6 +119,7 @@ class QtBridge : public QObject {
     bool fillBusy() const { return fillBusy_; }
     Q_INVOKABLE void cancelFill();
     QString message() const;
+    QString fillProvenanceNotice() const;
     QString dimensions() const;
     bool hasDocument() const { return bool(app_.snapshot()); }
     bool dirty() const;

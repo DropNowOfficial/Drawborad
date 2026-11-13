@@ -25,7 +25,7 @@ inline Result<MixedLineartView> projectControlledLineart(const DocumentSnapshot&
  auto checked=validateRasterEvent(e);if(!checked)return checked.error();}
  for(auto id:finishing){nodes->erase(id);}
  auto& children=nodes->at(Document::rootId()).children;children.resize(children.size()-finishing.size());
- DocumentSnapshot controlled=s;controlled.nodes=nodes;controlled.eventIndex=events;
+ DocumentSnapshot controlled=s;controlled.fillOperations.clear();controlled.nodes=nodes;controlled.eventIndex=events;
  if(children.size()<2||children.size()>4||nodes->size()!=children.size()+1)return error(ErrorCode::UnsupportedFeature,"mixed.controlled-stack");
  if(children.size()>=3){auto ref=hollowDerivedReference(controlled,children[1],children[2],children.size()==4?children[3]:NodeId{},stop);if(!ref)return ref.error();}
  else {const auto& r=nodes->at(Document::rootId());const auto& source=nodes->at(children[1]);if(r.locked||!r.visible||r.opacity!=1||r.blend!=BlendMode::Normal||!r.maskId.empty()||r.transform!=LayerTransform{}||!hollowNeutralPaintLayer(nodes->at(children[0]))||!source.locked||!source.visible||source.opacity!=1||!source.maskId.empty()||source.transform!=LayerTransform{})return error(ErrorCode::UnsupportedFeature,"mixed.controlled-properties");

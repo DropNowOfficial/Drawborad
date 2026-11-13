@@ -1,6 +1,7 @@
 #include "Commands.h"
 #include "view/LayerTree.h"
 #include "EditableStroke.h"
+#include "FillProvenance.h"
 #include <algorithm>
 #include <cmath>
 #include <set>
@@ -303,6 +304,22 @@ Result<ChangeSet> Document::apply(const Command& cmd, Revision expected) {
                         // Cover both old and new footprint, even when a legacy
                         // layer's declared bounds do not enclose its strokes.
                         change.dirtyRegions.push_back({0,0,next.spec.pixelSize.width,next.spec.pixelSize.height});
+                    } else if constexpr (std::is_same_v<O, RecordClosedInkFill>) {
+                        require(!cmd.operations.empty() && std::holds_alternative<RecordClosedInkFill>(cmd.operations.back()),ErrorCode::InvalidInput,"fill-source.record-last");
+                        require(std::count_if(cmd.operations.begin(),cmd.operations.end(),[](const auto&x){return std::holds_alternative<RecordClosedInkFill>(x);})==1,ErrorCode::InvalidInput,"fill-source.one-record");
+                        auto boundary=std::find_if(state_.eventIndex->begin(),state_.eventIndex->end(),[&](const auto&e){return e.id==o.operation.boundaryEvent;});
+                        require(boundary!=state_.eventIndex->end() && boundary->layerId==o.operation.boundaryLayer && boundary->engineVersion==19 && fill_provenance::eventDigest(*boundary)==o.operation.boundaryDigest,ErrorCode::InvalidInput,"fill-source.preexisting-boundary");
+                        require(state_.nodes->contains(o.operation.source)&&state_.nodes->contains(o.operation.target)&&state_.nodes->contains(o.operation.boundaryLayer),ErrorCode::InvalidInput,"fill-source.preexisting-nodes");
+                        require(state_.nodes->at(o.operation.source).sourceResource==o.operation.sourceResource && state_.resources->contains(o.operation.sourceResource),ErrorCode::InvalidInput,"fill-source.creation-resource");
+                        require(sha256(*state_.resources->at(o.operation.sourceResource).bytes)==o.operation.sourceDigest,ErrorCode::InvalidInput,"fill-source.creation-resource");
+                        require(fill_provenance::contextDigest(state_,o.operation)==o.operation.contextDigest,ErrorCode::InvalidInput,"fill-source.creation-context");
+                        require(next.fillOperations.size()<256,ErrorCode::BudgetExceeded,"fill-source.record-budget");
+                        require(cmd.operations.size()==o.operation.members.size()+1,ErrorCode::InvalidInput,"fill-source.atomic-members");
+                        std::set<Id> painted;
+                        for(const auto& member:cmd.operations)if(const auto*p=std::get_if<Paint>(&member))painted.insert(p->event.id);else require(std::holds_alternative<RecordClosedInkFill>(member),ErrorCode::InvalidInput,"fill-source.atomic-members");
+                        require(painted.size()==o.operation.members.size(),ErrorCode::InvalidInput,"fill-source.atomic-members");
+                        for(const auto&[id,digest]:o.operation.members){(void)digest;require(painted.contains(id),ErrorCode::InvalidInput,"fill-source.atomic-members");}
+                        next.fillOperations.push_back(o.operation);
                     } else if constexpr (std::is_same_v<O, Paint>) {
                         const auto& e = o.event;
                         exists(e.layerId);

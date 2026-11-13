@@ -84,12 +84,12 @@ bool QtBridge::acceptFill(){
     std::optional<NodeId> paintedLayer;for(const auto& op:command.operations)if(const auto* p=std::get_if<Paint>(&op))paintedLayer=p->event.layerId;
     const auto retained=activeLayer_;const bool keepDetail=retained&&current->nodes->contains(*retained)&&current->nodes->at(*retained).stage==FinishingLayerStage&&nativeLayerPaintable(*current,*retained);
     const bool localEdit=command.operations.size()==1&&std::holds_alternative<AdjustStrokeSamples>(command.operations.front());
-    auto committed=app_.apply(command);if(committed&&paintedLayer&&!keepDetail)activeLayer_=paintedLayer;fillNotice_=committed?(localEdit?tr("已接受原笔迹的局部修整；未新增笔迹或图层，颜色和时间不变，可撤销和保存。"):closedInk?tr("已接受闭合墨块内区填充；原轮廓和其他图层内容未改，可撤销和保存。半透明上层的合成外观可能随底色改变。"):tr("已接受区域操作，独立图层已更新；原线稿未改，可撤销和保存。")):QString::fromStdString(committed.error().messageKey);emit changed();return bool(committed);
+    auto committed=app_.apply(command);if(committed&&paintedLayer&&!keepDetail)activeLayer_=paintedLayer;fillNotice_=committed?(localEdit?tr("已接受原笔迹的局部修整；未新增笔迹或图层，颜色和时间不变，可撤销和保存。"):closedInk?tr("已接受闭合墨块内区填充及来源记录；原轮廓和其他层内容未改，可撤销。请首次另存新文件名，旧版不能打开；尚无单区撤回。半透明上层合成可能改变。"):tr("已接受区域操作，独立图层已更新；原线稿未改，可撤销和保存。")):QString::fromStdString(committed.error().messageKey);emit changed();return bool(committed);
 }
 void QtBridge::refreshEditCache() const {
     const auto s=app_.snapshot();
     if(!s)return;
-    if(editCacheSource_&&editCacheSource_->documentId==s->documentId&&editCacheSource_->revision==s->revision&&editCacheSource_->nodes==s->nodes&&editCacheSource_->resources==s->resources&&editCacheSource_->eventIndex==s->eventIndex&&editCacheSource_->spec==s->spec&&editCacheLayer_==activeLayer_)return;
+    if(editCacheSource_&&editCacheSource_->documentId==s->documentId&&editCacheSource_->revision==s->revision&&editCacheSource_->nodes==s->nodes&&editCacheSource_->resources==s->resources&&editCacheSource_->eventIndex==s->eventIndex&&editCacheSource_->spec==s->spec&&editCacheSource_->fillOperations==s->fillOperations&&editCacheLayer_==activeLayer_)return;
     QVariantList out;
     if(activeLayer_&&s->eventIndex->size()<=8192&&nativeLayerPaintable(*s,*activeLayer_)){
         std::uint64_t points=0;bool bounded=true;for(const auto& e:*s->eventIndex){if(e.geometry.size()>1000000-points){bounded=false;break;}points+=e.geometry.size();}
@@ -201,7 +201,7 @@ void QtBridge::finishLocalStrokeEdit() try {
     if(!current||replaying()||current->documentId!=done->source.documentId||current->revision!=done->source.revision||canvasGeneration_!=done->generation){fillNotice_=tr("工程已改变，旧操作结果已丢弃。");emit changed();return;}
     if(!done->failure.isEmpty()||!done->command||!done->preview){fillNotice_=(done->closedInk?tr("闭合墨块填充被拒绝，原工程未改："):tr("局部修整未提交，工程未改："))+done->failure;emit changed();return;}
     pendingFill_=std::move(done->command);pendingFillSource_=std::move(done->source);pendingFillPreview_=std::move(done->preview);pendingFillGeneration_=done->generation;pendingClosedInk_=done->closedInk;
-    fillNotice_=done->closedInk?tr("闭合墨块预览，尚未提交：以所选单笔墨色填几何内区，原轮廓及其他层内容不变；半透明上层可透出底色。请接受或取消。"):tr("局部修整预览，尚未提交：仅沿原笔迹弧长附近调整位置/压力，未新增图层；范围外样本、颜色及时间不变。请接受或取消。");emit changed();
+    fillNotice_=done->closedInk?tr("闭合墨块预览，尚未提交：以所选单笔墨色填几何内区，原轮廓及其他层内容不变；半透明上层可透出底色。接受后记录来源并采用新格式，首次须另存全新文件名，旧版不能打开；来源边界/成员受保护，尚无单区撤回。请接受或取消。"):tr("局部修整预览，尚未提交：仅沿原笔迹弧长附近调整位置/压力，未新增图层；范围外样本、颜色及时间不变。请接受或取消。");emit changed();
 }catch(const std::bad_alloc&){fillBusy_=false;pendingFill_.reset();pendingFillSource_.reset();pendingFillPreview_.reset();fillNotice_=tr("预览内存不足，未提交工程。");emit changed();}
 bool QtBridge::dirty() const {return app_.dirty() || workflow_->pending() || fillPending();}
 int QtBridge::eventCount() const {const auto s=app_.snapshot();return s?int(std::min<std::size_t>(s->eventIndex->size(),std::size_t(INT_MAX))):0;}
@@ -217,7 +217,18 @@ bool QtBridge::redoDrawing(){
 }
 bool QtBridge::busy() const {return strokeCommitBusy_ || fillBusy_ || fillPending() || running_.has_value() || workflow_->busy();}
 QObject* QtBridge::workflow() const {return workflow_;}
-QString QtBridge::message() const { return !app_.message().empty()?QString::fromStdString(app_.message()):workerMessage_; }
+QString QtBridge::message() const {
+    const auto& key=app_.message();
+    if(key=="save.format-copy-required"||key=="save.clean-copy-required")return tr("未保存：请另存为一个全新的 .draw 文件名（无旧备份或日志），保留原文件。包含填色来源记录的新格式不能覆盖旧格式，旧版程序不能打开；不要删除原文件来绕过保护。");
+    return !key.empty()?QString::fromStdString(key):workerMessage_;
+}
+QString QtBridge::fillProvenanceNotice() const {
+    const auto s=app_.snapshot();if(!s)return {};
+    if(s->fillOperations.empty())return tr("未记录可返工的填色来源；旧色块不按颜色或时间猜分组。当前仍不能安全地单区撤回重填。");
+    auto text=tr("已持久记录 %1 次闭合实墨填色的成员与来源。请首次另存全新 .draw 副本，旧版程序不能打开；原边界/成员受保护，尚未开放单区撤回或自动重算。其他未记录色块仍不可推断。").arg(s->fillOperations.size());
+    text+=tr(" 记录只表示当时条件，不证明当前图层条件相同或可安全返工。");
+    return text;
+}
 QString QtBridge::dimensions() const { auto s=app_.snapshot(); if(!s)return tr("No document"); return QString::number(s->spec.pixelSize.width)+" x "+QString::number(s->spec.pixelSize.height)+tr(" px / revision ")+QString::number(s->revision); }
 QVariantList QtBridge::layers() const {
     QVariantList result;

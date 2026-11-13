@@ -1,3 +1,4 @@
+#include "core/FillProvenance.h"
 #pragma once
 #include "MixedLineartStack.h"
 #include "ClipPolygonSelection.h"
@@ -107,6 +108,9 @@ inline Result<Command> closedInkFillCommand(const DocumentSnapshot& full,NodeId 
   if(!e.geometry.empty())command.operations.emplace_back(Paint{std::move(e),{x0,y0,rw,rh}});
  }
  if(full.eventIndex->size()+command.operations.size()>8192)return error(ErrorCode::BudgetExceeded,"closed-ink.event-budget");
- return restoreControlledCommand(full,view,std::move(command),stop);
+ auto restored=restoreControlledCommand(full,view,std::move(command),stop);if(!restored)return restored.error();
+ FillOperation record;record.target=target;record.source=source;record.boundaryLayer=selected;record.boundaryEvent=outline->id;record.boundaryDigest=fill_provenance::eventDigest(*outline);record.sourceResource=full.nodes->at(source).sourceResource;record.sourceDigest=sha256(*full.resources->at(record.sourceResource).bytes);record.contextDigest=fill_provenance::contextDigest(full,record);
+ for(const auto&op:restored.value().operations){const auto&p=std::get<Paint>(op);record.members.emplace_back(p.event.id,fill_provenance::eventDigest(p.event));}if(record.members.empty())return error(ErrorCode::InvalidInput,"fill-source.empty");record.id=record.members.front().first;restored.value().operations.emplace_back(RecordClosedInkFill{std::move(record)});return restored;
+
 }catch(const std::bad_alloc&){return error(ErrorCode::BudgetExceeded,"closed-ink.allocation");}
 }

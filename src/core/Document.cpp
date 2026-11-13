@@ -1,3 +1,4 @@
+#include "FillProvenance.h"
 #include "core/HiddenBoundary.h"
 #include "core/CroppedStrokeMask.h"
 #include "Commands.h"
@@ -174,7 +175,7 @@ Result<void> validateSnapshot(const DocumentSnapshot& s) {
         return error(ErrorCode::BudgetExceeded,"crop.document-resources");
     for(const auto& e:*s.eventIndex)if(ns.contains(e.layerId) && croppedRaster::isStage(ns.at(e.layerId).stage))
         return error(ErrorCode::UnsupportedFeature,"crop.paint-events");
-    return {};
+    return fill_provenance::validate(s);
 }
 Result<Document> Document::create(const DocumentSpec& s, DocumentId id) {
     DocumentSnapshot snap;
@@ -236,6 +237,8 @@ Result<ChangeSet> Document::commitExternal(const DocumentSnapshot& next, Revisio
     if (state_.revision != expected || expected == UINT64_MAX || next.revision != expected + 1 ||
         next.documentId != state_.documentId)
         return error(ErrorCode::StaleRevision, "worker.revision");
+    if (next.fillOperations != state_.fillOperations)
+        return error(ErrorCode::InvalidInput,"worker.fill-record-rewrite");
     if (next.spec != state_.spec)
         return error(ErrorCode::InvalidInput, "worker.cannot-change-document-spec");
     auto valid = validateSnapshot(next);
