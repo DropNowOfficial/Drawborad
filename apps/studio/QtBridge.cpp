@@ -5,6 +5,7 @@
 #include "brush/HollowInkCommand.h"
 #include "brush/DerivedHollowFill.h"
 #include "brush/ClipFillSelection.h"
+#include "brush/ClipPolygonSelection.h"
 #include "ui/MergedDocument.h"
 #include <QFile>
 #include <QColorSpace>
@@ -324,10 +325,11 @@ bool QtBridge::importLineartUrl(const QUrl& url) try {
     auto result=app_.apply(command);if(!result)return fail(QString::fromStdString(result.error().messageKey));
     activeLayer_=fill;++canvasGeneration_;referenceUrl_=QUrl{};fillNotice_=tr("原 PNG 已嵌入并锁定；色块写入独立底层。仅按原线稿取样，不重绘、不自动补洞。");emit changed();return true;
 }catch(const std::bad_alloc&){fillNotice_=tr("内存不足，线稿未导入。");emit changed();return false;}
-bool QtBridge::fillLineartAt(double x,double y,const QColor& color,bool hollow,std::optional<QRectF> limit) try {
+bool QtBridge::fillLineartAt(double x,double y,const QColor& color,bool hollow,std::optional<QRectF> limit,std::vector<DocumentPoint> polygon) try {
     auto s=app_.snapshot();
     const auto fail=[&](const QString& reason){fillNotice_=reason;emit changed();return false;};
     if(!s || busy() || replaying() || workflow_->pending() || !activeLayer_ || !color.isValid() || !std::isfinite(x) || !std::isfinite(y) || x<0 || y<0 || x>=double(s->spec.pixelSize.width) || y>=double(s->spec.pixelSize.height))return fail(tr("填色未执行：请选可编辑色层并结束当前操作。"));
+    if(!polygon.empty()&&(!hollow||limit))return fail(tr("套索与矩形限制不能同时应用；工程未修改。"));
     std::optional<Rect> bounds;
     if(limit){
         const auto r=*limit;const double values[]={r.x(),r.y(),r.width(),r.height()};
@@ -344,7 +346,7 @@ bool QtBridge::fillLineartAt(double x,double y,const QColor& color,bool hollow,s
     if((ordered.size()==3||ordered.size()==4) && ordered[1]==source){hollowOverlay=ordered[2];if(!hollow){derived=true;target=ordered.size()==4?ordered[3]:uuid();}}
     const auto event=uuid();const auto generation=canvasGeneration_;
     fillBusy_=true;fillNotice_=tr("正在按原尺寸线稿计算区域；尚未提交，可取消。请接受预览后再保存。");emit changed();
-    fillPool_.start([this,snapshot,source,target,event,x,y,paint,stop,generation,hollow,derived,hollowOverlay,bounds]{
+    fillPool_.start([this,snapshot,source,target,event,x,y,paint,stop,generation,hollow,derived,hollowOverlay,bounds,polygon=std::move(polygon)]{
         Result<Command> result=error(ErrorCode::InvalidInput,"hollow.selection");
         std::uint64_t selectedInk=0;
         try{
@@ -357,7 +359,7 @@ bool QtBridge::fillLineartAt(double x,double y,const QColor& color,bool hollow,s
                     for(std::size_t i=0;i<pixels.size();i++){if(i%16384==0&&stop.stop_requested()){cancelled=true;break;}const auto p=raw.value().subspan(i*4,4);const auto v=std::uint8_t(p[3]&&p[0]<255?0:255);pixels[i]={v,v,v,255};}
                     if(cancelled)result=error(ErrorCode::Cancelled,"hollow.cancelled");
                     else if(pixels[std::size_t(y)*w+std::size_t(x)].r!=0)result=error(ErrorCode::InvalidInput,"hollow.click-ink-not-paper");
-                    else{auto selection=floodFill(pixels,std::uint32_t(w),std::uint32_t(h),std::uint32_t(x),std::uint32_t(y),0,{},stop);if(selection&&bounds)selection=clipFillSelection(selection.value(),std::uint32_t(w),std::uint32_t(h),*bounds,stop);if(!selection)result=selection.error();else{selectedInk=selection.value().pixelCount;std::vector<Rgba8>().swap(pixels);result=hollowInkOverlayCommand(snapshot,source,hollowOverlay.empty()?event:hollowOverlay,uuid(),selection.value(),1,stop);}}
+                    else{auto selection=floodFill(pixels,std::uint32_t(w),std::uint32_t(h),std::uint32_t(x),std::uint32_t(y),0,{},stop);if(selection&&bounds)selection=clipFillSelection(selection.value(),std::uint32_t(w),std::uint32_t(h),*bounds,stop);if(selection&&!polygon.empty()){selection=clipPolygonSelection(selection.value(),std::uint32_t(w),std::uint32_t(h),polygon,stop);if(selection){bool inside=false;for(const auto& run:selection.value().runs)if(run.y==std::uint32_t(y)&&std::uint32_t(x)>=run.x&&std::uint32_t(x)<run.x+run.length){inside=true;break;}if(!inside)selection=error(ErrorCode::InvalidInput,"clip-polygon.seed-outside");}}if(!selection)result=selection.error();else{selectedInk=selection.value().pixelCount;std::vector<Rgba8>().swap(pixels);result=hollowInkOverlayCommand(snapshot,source,hollowOverlay.empty()?event:hollowOverlay,uuid(),selection.value(),1,stop);}}
                 }
             }
         }catch(const std::bad_alloc&){result=error(ErrorCode::BudgetExceeded,"hollow.selection-allocation");}

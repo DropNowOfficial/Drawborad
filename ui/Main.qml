@@ -67,7 +67,11 @@ ApplicationWindow {
                 TabButton { text: qsTr("绘制结果") }
             }
             NativeCanvas { id: nativeCanvas; objectName: "nativeCanvas"; anchors.fill: parent; anchors.margins: 24; anchors.topMargin: workspaceTabs.visible ? 64 : 24; visible: studio.hasDocument && !reviewPanel.visible; bridge: studio }
-            Rectangle { objectName: "hollowBoundsOverlay"; x: nativeCanvas.x + nativeCanvas.hollowItemRect.x; y: nativeCanvas.y + nativeCanvas.hollowItemRect.y; width: nativeCanvas.hollowItemRect.width; height: nativeCanvas.hollowItemRect.height; visible: nativeCanvas.visible && nativeCanvas.hollowTool && (nativeCanvas.hollowBounded || nativeCanvas.hollowDragActive); color: "transparent"; border.color: "#ffcf70"; border.width: 2; z: 2 }
+            Rectangle { objectName: "hollowBoundsOverlay"; x: nativeCanvas.x + nativeCanvas.hollowItemRect.x; y: nativeCanvas.y + nativeCanvas.hollowItemRect.y; width: nativeCanvas.hollowItemRect.width; height: nativeCanvas.hollowItemRect.height; visible: nativeCanvas.visible && nativeCanvas.hollowTool && (nativeCanvas.hollowBounded || nativeCanvas.hollowDragActive) && nativeCanvas.hollowLassoPoints.length === 0; color: "transparent"; border.color: "#ffcf70"; border.width: 2; z: 2 }
+            Canvas { id: lassoGuide; objectName: "hollowLassoGuide"; x: nativeCanvas.x; y: nativeCanvas.y; width: nativeCanvas.width; height: nativeCanvas.height; z: 2; visible: nativeCanvas.visible && nativeCanvas.hollowTool && nativeCanvas.hollowLassoPoints.length > 0
+                onPaint: { const c = getContext("2d"); c.clearRect(0,0,width,height); const p = nativeCanvas.hollowLassoPoints; if (p.length < 2) return; c.strokeStyle = "#ffcf70"; c.lineWidth = 2; c.beginPath(); c.moveTo(p[0].x,p[0].y); for (let i=1;i<p.length;i++) c.lineTo(p[i].x,p[i].y); c.closePath(); c.stroke() }
+                Connections { target: nativeCanvas; function onViewChanged() { lassoGuide.requestPaint() } function onBrushSettingsChanged() { lassoGuide.requestPaint() } }
+            }
             Label { objectName: "fillPreviewStatus"; anchors.top: nativeCanvas.top; anchors.horizontalCenter: nativeCanvas.horizontalCenter; visible: studio.fillPending; text: qsTr("区域操作预览 · 尚未提交 · 请接受或取消"); color: "#ffcf70"; z: 3 }
             Label { objectName: "strokePreviewStatus"; anchors.bottom: nativeCanvas.bottom; anchors.horizontalCenter: nativeCanvas.horizontalCenter; visible: nativeCanvas.strokePreviewActive; text: nativeCanvas.previewing ? qsTr("笔迹预览更新中 · 尚未提交") : qsTr("未提交预览 · 松手提交，Esc 取消"); color: "#ffffff"; padding: 6; background: Rectangle { color: "#c0202428" } }
             Label { objectName: "canvasRendering"; anchors.centerIn: nativeCanvas; visible: nativeCanvas.visible && nativeCanvas.rendering; text: qsTr("Rendering document…"); color: "#bcbcc4" }
@@ -282,8 +286,9 @@ ApplicationWindow {
             CheckBox { objectName: "hollowInkTool"; enabled: !studio.busy; text: qsTr("局部挖空（白纸，点墨块）"); checked: nativeCanvas.hollowTool; onToggled: nativeCanvas.hollowTool = checked }
             Label { text: qsTr("挖空只清除所选墨块内部，保留原轮廓和细笔触；可依次选择独立墨块，已挖区域不会重复覆盖；接受后切换填色桶填其内部。不是中心线化或整页抽线。"); color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Button { objectName: "dragHollowSelection"; text: nativeCanvas.hollowDragTool ? qsTr("结束框选模式") : qsTr("在画布拖拽框选范围"); enabled: !studio.busy; onClicked: nativeCanvas.hollowDragTool = !nativeCanvas.hollowDragTool }
+            Button { objectName: "lassoHollowSelection"; text: nativeCanvas.hollowLassoTool ? qsTr("结束套索模式") : qsTr("拖拽自由套索范围"); enabled: !studio.busy; onClicked: nativeCanvas.hollowLassoTool = !nativeCanvas.hollowLassoTool }
             Connections { target: nativeCanvas; function onHollowSelectionFinished() { const r = nativeCanvas.hollowBounds; hollowX.text = String(r.x); hollowY.text = String(r.y); hollowW.text = String(r.width); hollowH.text = String(r.height) } }
-            CheckBox { id: hollowLimit; objectName: "hollowLimit"; checked: nativeCanvas.hollowBounded; text: qsTr("限制挖空矩形（原图像素）"); enabled: !studio.busy && !nativeCanvas.hollowDragTool; onToggled: nativeCanvas.hollowBounded = checked }
+            CheckBox { id: hollowLimit; objectName: "hollowLimit"; checked: nativeCanvas.hollowBounded; text: qsTr("限制挖空范围（原图像素）"); enabled: !studio.busy && !nativeCanvas.hollowDragTool; onToggled: nativeCanvas.hollowBounded = checked }
             GridLayout {
                 columns: 2; Layout.fillWidth: true; enabled: !studio.busy && !nativeCanvas.hollowDragTool
                 TextField { id: hollowX; objectName: "hollowX"; text: "0"; placeholderText: "X"; Layout.fillWidth: true }
@@ -292,7 +297,7 @@ ApplicationWindow {
                 TextField { id: hollowH; objectName: "hollowH"; text: "64"; placeholderText: qsTr("高"); Layout.fillWidth: true }
             }
             Binding { target: nativeCanvas; property: "hollowBounds"; when: !nativeCanvas.hollowDragTool; value: Qt.rect(Number(hollowX.text.trim() || "NaN"),Number(hollowY.text.trim() || "NaN"),Number(hollowW.text.trim() || "NaN"),Number(hollowH.text.trim() || "NaN")) }
-            Label { text: qsTr("顺序 X、Y、宽、高。可拖拽框选，按原图整像素向外吸附；完成后再点框内墨块。Esc 或越界取消本次拖动，可重拖；按钮可结束框选模式。黄框仅为范围，不修改画面，挖空仍须接受实际预览。不是自由套索。"); color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Label { text: qsTr("顺序 X、Y、宽、高。可拖拽框选，按原图整像素向外吸附；完成后再点框内墨块。Esc 或越界取消本次拖动，可重拖；按钮可结束框选模式。黄框仅为范围，不修改画面，挖空仍须接受实际预览。自由套索自动闭合、最多512点，自交或越界拒绝；数字框为外接矩形，修改数字会切回矩形。"); color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Label { objectName: "lineartFillNotice"; text: studio.fillNotice; color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Label { text: studio.layerNotice; color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true; visible: text.length > 0 }
             Label { text: qsTr("画笔 · 原生笔迹"); color: "#f5f5f7"; font.pixelSize: 18 }

@@ -1,6 +1,7 @@
 #include "CanvasItem.h"
 #include "CanvasFrame.h"
 #include "brush/PressureTaper.h"
+#include "brush/ClipPolygonSelection.h"
 #ifdef DRAWBORAD_HAS_QT
 #include "apps/studio/QtBridge.h"
 #include "view/Viewport.h"
@@ -265,9 +266,20 @@ void CanvasItem::finishStroke(){
     }else{brushNotice_=tr("笔迹未提交，工程未修改：")+QString::fromStdString(event.error().messageKey);emit brushSettingsChanged();}
 }
 void CanvasItem::setHollowDragTool(bool value){
- cancelStroke();hollowDragTool_=value;
+ cancelStroke();hollowDragTool_=value;hollowLassoTool_=false;
  if(value){hollowTool_=true;bucketTool_=false;}
  emit brushSettingsChanged();emit viewChanged();
+}
+void CanvasItem::setHollowLassoTool(bool value){
+ cancelStroke();hollowDragTool_=value;hollowLassoTool_=value;
+ if(value){hollowTool_=true;bucketTool_=false;}
+ emit brushSettingsChanged();emit viewChanged();
+}
+QVariantList CanvasItem::hollowLassoPoints() const {
+ QVariantList out;if(hollowDrag_&&!hollowLassoTool_)return out;const auto snap=bridge_?bridge_->canvasSnapshot():std::nullopt;if(!snap)return out;
+ const auto& points=hollowDrag_&&hollowLassoTool_?hollowDrag_->points:hollowPolygon_;
+ if(!hollowBounded_&&!hollowDrag_)return out;
+ const auto r=documentRect();for(const auto& p:points)out.push_back(QVariant::fromValue(QPointF(r.x()+p.x*r.width()/snap->spec.pixelSize.width,r.y()+p.y*r.height()/snap->spec.pixelSize.height)));return out;
 }
 void CanvasItem::cancelHollowDrag(){
  if(!hollowDrag_)return;
@@ -287,7 +299,9 @@ bool CanvasItem::updateHollowDrag(QPointF point){
     snap->documentId!=hollowDrag_->document||snap->revision!=hollowDrag_->revision||bridge_->canvasGeneration()!=hollowDrag_->generation){cancelHollowDrag();return false;}
  const auto p=itemToDocument(point,*snap);
  if(!p){cancelHollowDrag();return false;}
- hollowDrag_->current={p->x,p->y};emit viewChanged();return true;
+ hollowDrag_->current={p->x,p->y};
+ if(hollowLassoTool_){auto& points=hollowDrag_->points;if(points.empty()||std::hypot(points.back().x-p->x,points.back().y-p->y)>=1){if(points.size()>=512){brushNotice_=tr("套索超过512点，已取消本次选择；旧范围和工程未改。");cancelHollowDrag();return false;}points.push_back(*p);}}
+ emit viewChanged();return true;
 }
 QRectF CanvasItem::hollowItemRect() const {
  const auto snap=bridge_?bridge_->canvasSnapshot():std::nullopt;if(!snap)return {};
@@ -301,14 +315,14 @@ void CanvasItem::mousePressEvent(QMouseEvent* e){
         cancelStroke();const auto snap=bridge_?bridge_->canvasSnapshot():std::nullopt;
         if(e->button()==Qt::LeftButton&&snap&&!bridge_->busy()&&!bridge_->replaying()&&!rendering()&&renderError().isEmpty())
             if(const auto p=itemToDocument(e->position(),*snap)){
-                forceActiveFocus();hollowDrag_=HollowDrag{{p->x,p->y},{p->x,p->y},snap->documentId,snap->revision,bridge_->canvasGeneration()};
+                forceActiveFocus();hollowDrag_=HollowDrag{{p->x,p->y},{p->x,p->y},snap->documentId,snap->revision,bridge_->canvasGeneration(),{{p->x,p->y}}};
                 emit brushSettingsChanged();emit viewChanged();
             }
         e->accept();return;
     }
     if(bucketTool_ || hollowTool_){
         cancelStroke();const auto snap=bridge_?bridge_->canvasSnapshot():std::nullopt;
-        if(e->button()==Qt::LeftButton && snap && !rendering() && renderError().isEmpty())if(auto point=itemToDocument(e->position(),*snap)){auto color=brushColor_;color.setAlphaF(color.alphaF()*brushOpacity());bridge_->fillLineartAt(point->x,point->y,color,hollowTool_,hollowTool_&&hollowBounded_?std::optional<QRectF>(hollowBounds_):std::nullopt);}
+        if(e->button()==Qt::LeftButton && snap && !rendering() && renderError().isEmpty())if(auto point=itemToDocument(e->position(),*snap)){auto color=brushColor_;color.setAlphaF(color.alphaF()*brushOpacity());bridge_->fillLineartAt(point->x,point->y,color,hollowTool_,hollowTool_&&hollowBounded_&&hollowPolygon_.empty()?std::optional<QRectF>(hollowBounds_):std::nullopt,hollowTool_&&hollowBounded_?hollowPolygon_:std::vector<DocumentPoint>{});}
         e->accept();return;
     }
     const auto s=bridge_?bridge_->canvasSnapshot():std::nullopt;if(tabletStroke_||!s||!itemToDocument(e->position(),*s)){e->ignore();return;}beginSample(mouseSample(e),false,false);e->accept();
@@ -325,12 +339,18 @@ void CanvasItem::mouseReleaseEvent(QMouseEvent* e){
     if(e->button()==Qt::MiddleButton){panGesture_.reset();e->accept();return;}
     if(hollowDragTool_){
         if(e->button()==Qt::LeftButton&&updateHollowDrag(e->position())){
-            const auto bounds=hollowDragRect();
+            auto bounds=hollowDragRect();std::vector<DocumentPoint> polygon;
+            if(hollowLassoTool_){
+                polygon=hollowDrag_->points;if(polygon.size()>1&&std::hypot(polygon.front().x-polygon.back().x,polygon.front().y-polygon.back().y)<1)polygon.pop_back();
+                const auto snap=bridge_->canvasSnapshot();auto valid=validateClipPolygon(polygon,std::uint32_t(snap->spec.pixelSize.width),std::uint32_t(snap->spec.pixelSize.height));
+                if(!valid){brushNotice_=tr("套索无效（自交、退化或越界）；旧范围和工程未改：")+QString::fromStdString(valid.error().messageKey);cancelHollowDrag();e->accept();return;}
+                double left=polygon.front().x,right=left,top=polygon.front().y,bottom=top;for(const auto& p:polygon){left=std::min(left,p.x);right=std::max(right,p.x);top=std::min(top,p.y);bottom=std::max(bottom,p.y);}bounds={std::floor(left),std::floor(top),std::ceil(right)-std::floor(left),std::ceil(bottom)-std::floor(top)};
+            }
             if(bounds.width()>0&&bounds.height()>0){
-                hollowBounds_=bounds;hollowBounded_=true;hollowDrag_.reset();
+                hollowPolygon_=std::move(polygon);hollowBounds_=bounds;hollowBounded_=true;hollowDrag_.reset();
                 // Keep tool true while QML synchronizes text fields; restoring
                 // its numeric Binding earlier would overwrite this selection.
-                emit hollowSelectionFinished();hollowDragTool_=false;
+                emit hollowSelectionFinished();hollowDragTool_=false;hollowLassoTool_=false;
                 emit brushSettingsChanged();emit viewChanged();
             }else cancelHollowDrag();
         }
