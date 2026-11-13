@@ -139,7 +139,8 @@ std::optional<DocumentPoint> CanvasItem::itemToDocument(const QPointF& p,const D
     if(width()<=0 || height()<=0)return std::nullopt;
     double viewZoom;QPointF panOffset;{std::lock_guard lock(snapshotMutex_);viewZoom=zoom_;panOffset=pan_;}
     bool invertible=false;const auto inverse=documentTransform(s,viewZoom,panOffset).inverted(&invertible);
-    if(!invertible)return std::nullopt;const auto point=inverse.map(p);
+    if(!invertible)return std::nullopt;
+    const auto point=inverse.map(p);
     DocumentPoint docPoint{point.x(),point.y()};
     if(docPoint.x<0||docPoint.y<0||docPoint.x>=double(s.spec.pixelSize.width)||docPoint.y>=double(s.spec.pixelSize.height))return std::nullopt;
     return docPoint;

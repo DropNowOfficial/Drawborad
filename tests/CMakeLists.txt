@@ -245,5 +245,23 @@ if(DRAWBORAD_DESKTOP OR DRAWBORAD_HEADLESS_WORKFLOW)
   add_test(NAME Desktop.CanvasFrame COMMAND test_CanvasFrame)
 endif()
 
+if(DRAWBORAD_QT_CANVAS_TESTS)
+  if(NOT DRAWBORAD_HEADLESS_WORKFLOW OR WIN32)
+    message(FATAL_ERROR "Qt software canvas smoke requires Linux headless workflow")
+  endif()
+  find_package(Qt6 6.4 REQUIRED COMPONENTS Quick QuickControls2 Test)
+  add_executable(test_CanvasWindow platform/test_canvas_window.cpp
+    ${PROJECT_SOURCE_DIR}/apps/studio/QtBridge.cpp ${PROJECT_SOURCE_DIR}/apps/studio/QtBridge.h
+    ${PROJECT_SOURCE_DIR}/src/ui/WorkflowController.cpp ${PROJECT_SOURCE_DIR}/src/ui/WorkflowController.h
+    ${PROJECT_SOURCE_DIR}/src/platform/CanvasItem.cpp ${PROJECT_SOURCE_DIR}/src/platform/CanvasItem.h)
+  set_target_properties(test_CanvasWindow PROPERTIES AUTOMOC ON)
+  target_include_directories(test_CanvasWindow PRIVATE ${PROJECT_SOURCE_DIR})
+  target_compile_definitions(test_CanvasWindow PRIVATE DRAWBORAD_HAS_QT)
+  target_compile_options(test_CanvasWindow PRIVATE -UNDEBUG)
+  target_link_libraries(test_CanvasWindow PRIVATE drawborad_workflow drawborad_render Qt6::Quick Qt6::QuickControls2 Qt6::Test)
+  add_test(NAME Desktop.QtSoftwareCanvas COMMAND test_CanvasWindow)
+  set_tests_properties(Desktop.QtSoftwareCanvas PROPERTIES TIMEOUT 60 ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+endif()
+
 # Register all native features before labeling the test inventory.
 include(${PROJECT_SOURCE_DIR}/cmake/TestTargets.cmake)

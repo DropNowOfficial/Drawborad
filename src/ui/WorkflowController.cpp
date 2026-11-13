@@ -14,12 +14,14 @@
 #include <QImage>
 #include <QFileInfo>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QSaveFile>
 #include <QStringList>
 #include <QUuid>
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <set>
 namespace drawborad {
 namespace {
 Id uuid(){const auto bytes=QUuid::createUuid().toRfc4122();Id id;std::copy_n(reinterpret_cast<const std::uint8_t*>(bytes.constData()),16,id.bytes.begin());return id;}
@@ -136,17 +138,20 @@ QVariantList WorkflowController::promptPoints() const{
     QVariantList result;for(const auto& p:promptPoints_)result.push_back(QVariantMap{{"x",p.x},{"y",p.y},{"positive",p.positive}});return result;
 }
 QVariantList WorkflowController::promptBox() const{
-    if(!promptBox_)return {};return {promptBox_->x0,promptBox_->y0,promptBox_->x1,promptBox_->y1};
+    if(!promptBox_)return {};
+    return {promptBox_->x0,promptBox_->y0,promptBox_->x1,promptBox_->y1};
 }
 bool WorkflowController::addPromptPoint(double x,double y,bool positive){
     if(busy() || !review_ || !std::isfinite(x) || !std::isfinite(y) || x<0 || y<0 || x>=imageWidth() || y>=imageHeight() || promptPoints_.size()>=64)return false;
     promptPoints_.push_back({x,y,positive});message_=tr("已设置 %1 个点提示；红色排除、绿色包含。设置提示框后可请求新候选。" ).arg(promptPoints_.size());emit changed();return true;
 }
 bool WorkflowController::setPromptBox(double x0,double y0,double x1,double y1){
-    if(busy() || !review_)return false;for(const auto value:{x0,y0,x1,y1})if(!std::isfinite(value))return false;
+    if(busy() || !review_)return false;
+    for(const auto value:{x0,y0,x1,y1})if(!std::isfinite(value))return false;
     const auto left=std::clamp(std::min(x0,x1),0.0,double(imageWidth())),top=std::clamp(std::min(y0,y1),0.0,double(imageHeight()));
     const auto right=std::clamp(std::max(x0,x1),0.0,double(imageWidth())),bottom=std::clamp(std::max(y0,y1),0.0,double(imageHeight()));
-    if(right<=left || bottom<=top)return false;promptBox_=PromptBox{left,top,right,bottom};
+    if(right<=left || bottom<=top)return false;
+    promptBox_=PromptBox{left,top,right,bottom};
     message_=tr("已设置提示框 (%1,%2)–(%3,%4)，现有候选和笔迹保持不变。" ).arg(left).arg(top).arg(right).arg(bottom);emit changed();return true;
 }
 void WorkflowController::clearPrompts(){if(busy())return;promptPoints_.clear();promptBox_.reset();emit changed();}
@@ -420,7 +425,8 @@ bool WorkflowController::loadPromptResult(const DocumentSnapshot& snapshot){
     MaskSet masks;masks.dimensions=review_->masks().dimensions;ProposalSet proposals;proposals.sourceSize=masks.dimensions;std::vector<double> scores;
     for(const auto& value:array){
         const auto candidate=value.toObject();const auto hash=parseHash(candidate.value("mask").toString());
-        if(!hash || !snapshot.resources->contains(*hash))return false;const auto& resource=snapshot.resources->at(*hash);
+        if(!hash || !snapshot.resources->contains(*hash))return false;
+        const auto& resource=snapshot.resources->at(*hash);
         const auto score=candidate.value("score").toDouble(std::numeric_limits<double>::quiet_NaN());
         if(resource.kind!=ResourceKind::Mask || resource.bytes->size()!=masks.dimensions.width*masks.dimensions.height || !std::isfinite(score))return false;
         masks.fullResolutionMasks.push_back(*resource.bytes);proposals.candidates.push_back({Id::fromNumber(proposals.candidates.size()+1),{},{},score});scores.push_back(score);
@@ -432,7 +438,7 @@ bool WorkflowController::loadPromptResult(const DocumentSnapshot& snapshot){
     activeIndex_=int(oldSize);pending_=true;message_=tr("已追加 %1 个真实提示候选，原有候选、蒙版编辑和笔迹未替换。请检查后勾选。" ).arg(scores.size());updateOverlay();return true;
 }
 void WorkflowController::updateOverlay(){
-    overlayUrl_={};
+    overlayUrl_=QUrl{};
     if(!review_ || (activeIndex_>=0 && std::size_t(activeIndex_)>=review_->masks().fullResolutionMasks.size()) || !directory_->isValid())return;
     const auto& masks=review_->masks();Bytes unassigned;
     if(activeIndex_<0){
@@ -477,7 +483,8 @@ bool WorkflowController::mergeIncluded(){
     names_.erase(names_.begin()+std::ptrdiff_t(other));scores_.erase(scores_.begin()+std::ptrdiff_t(other));selected_.erase(selected_.begin()+std::ptrdiff_t(other));
     objects_.erase(objects_.begin()+std::ptrdiff_t(other));baseMasks_.erase(baseMasks_.begin()+std::ptrdiff_t(other));background_.erase(background_.begin()+std::ptrdiff_t(other));
     reviewAudit_.append(QJsonObject{{"operation","merge-visible-parts"},{"target",activeIndex_},{"other",qint64(other)}});
-    if(other<std::size_t(activeIndex_))--activeIndex_;pending_=true;updateOverlay();emit changed();return true;
+    if(other<std::size_t(activeIndex_))--activeIndex_;
+    pending_=true;updateOverlay();emit changed();return true;
 }
 bool WorkflowController::undo(){
     if(busy() || !review_ || undoUi_.empty() || !review_->undo())return false;
@@ -539,7 +546,7 @@ bool WorkflowController::accept(){
     if(!included){fail(tr("请明确勾选至少一个需要接受的对象。"));return false;}
     const auto applied=editingExisting()?bridge_.app_.apply(command):next.apply(command);
     if(!applied){fail(QString::fromStdString(applied.error().messageKey));return false;}
-    if(!editingExisting()){bridge_.app_=std::move(next);bridge_.replayCount_=-1;++bridge_.canvasGeneration_;bridge_.referenceUrl_={};bridge_.referenceFeedback_.clear();bridge_.resetLayerSelection();}
+    if(!editingExisting()){bridge_.app_=std::move(next);bridge_.replayCount_=-1;++bridge_.canvasGeneration_;bridge_.referenceUrl_=QUrl{};bridge_.referenceFeedback_.clear();bridge_.resetLayerSelection();}
     const auto accepted=*bridge_.app_.snapshot();restore(accepted);
     message_=tr("已应用勾选对象和蒙版；已有笔迹保留，新增绘制层为空。未勾选的已有对象保持原样。");emit changed();return true;
 }
@@ -550,7 +557,7 @@ void WorkflowController::reset(){
     if(running_)broker_.workerFailed(running_->id);
     running_.reset();analysis_.reset();jobDirectory_.reset();review_.reset();names_.clear();scores_.clear();selected_.clear();objects_.clear();baseMasks_.clear();sourceMetadata_.reset();undoUi_.clear();
     background_.clear();promptPoints_.clear();promptBox_.reset();reviewAudit_={};appendPrompt_=false;promptBaseRevision_=0;
-    sourceUrl_={};overlayUrl_={};baseDocument_.reset();baseRevision_=0;activeIndex_=-1;pending_=false;progressCompleted_=0;progressTotal_=0;message_.clear();emit changed();
+    sourceUrl_=QUrl{};overlayUrl_=QUrl{};baseDocument_.reset();baseRevision_=0;activeIndex_=-1;pending_=false;progressCompleted_=0;progressTotal_=0;message_.clear();emit changed();
 }
 bool WorkflowController::startPaintJob(QJsonObject options){
     const auto current=bridge_.canvasSnapshot();
@@ -659,3 +666,4 @@ void WorkflowController::restore(const DocumentSnapshot& snapshot){
     updateOverlay();emit changed();
 }
 }
+
