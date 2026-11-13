@@ -1,4 +1,5 @@
 #include "brush/CubicInkStroke.h"
+#include "brush/CubicPathStroke.h"
 #include "core/EditableCubic.h"
 #include "brush/CloseStrokeGap.h"
 #include "brush/WithdrawClosedInkFill.h"
@@ -92,11 +93,12 @@ bool QtBridge::acceptFill(){
     const auto retained=activeLayer_;const bool keepDetail=retained&&current->nodes->contains(*retained)&&current->nodes->at(*retained).stage==FinishingLayerStage&&nativeLayerPaintable(*current,*retained);
     const bool localEdit=command.operations.size()==1&&std::holds_alternative<AdjustStrokeSamples>(command.operations.front());
     auto committed=app_.apply(command);if(committed&&paintedLayer&&!keepDetail)activeLayer_=paintedLayer;if(committed && kind!=PreviewKind::Existing){cubicSource_.reset();cubicEvent_.reset();cubicLayer_.reset();emit cubicControlsChanged();}
-    fillNotice_=committed?(kind!=PreviewKind::Existing?tr("已接受原生四控点曲线；可撤销。首次保存请另存新文件，旧版不能读取23格式。"):closeStroke?tr("已追加所选笔迹的短首尾连接；原样本及其他笔迹未改，可撤销。端点合成外观会变化；过细或低压线仍可能不能填色。"):withdrawal?tr("已撤回最近已记录的完整闭合填色组；原图及其他笔迹保留，可撤销恢复。若保存提示格式不同，请另存新文件名，保留原文件。"):localEdit?tr("已接受原笔迹的局部修整；未新增笔迹或图层，颜色和时间不变，可撤销和保存。"):closedInk?tr("已接受闭合墨块内区填充及来源记录；原轮廓和其他层内容未改，可撤销。请首次另存新文件名，旧版不能打开；仅支持已核验记录组的受限撤回。半透明上层合成可能改变。"):tr("已接受区域操作，独立图层已更新；原线稿未改，可撤销和保存。")):QString::fromStdString(committed.error().messageKey);emit changed();return bool(committed);
+    fillNotice_=committed?((kind==PreviewKind::CubicPathCreate||kind==PreviewKind::CubicPathEdit)?tr("已接受共享锚点轮廓；可撤销。首次请另存新文件，旧版不能读取24格式。闭合不保证可填色；后续填色可能锁定轮廓编辑。"):kind!=PreviewKind::Existing?tr("已接受原生四控点曲线；可撤销。首次保存请另存新文件，旧版不能读取23格式。"):closeStroke?tr("已追加所选笔迹的短首尾连接；原样本及其他笔迹未改，可撤销。端点合成外观会变化；过细或低压线仍可能不能填色。"):withdrawal?tr("已撤回最近已记录的完整闭合填色组；原图及其他笔迹保留，可撤销恢复。若保存提示格式不同，请另存新文件名，保留原文件。"):localEdit?tr("已接受原笔迹的局部修整；未新增笔迹或图层，颜色和时间不变，可撤销和保存。"):closedInk?tr("已接受闭合墨块内区填充及来源记录；原轮廓和其他层内容未改，可撤销。请首次另存新文件名，旧版不能打开；仅支持已核验记录组的受限撤回。半透明上层合成可能改变。"):tr("已接受区域操作，独立图层已更新；原线稿未改，可撤销和保存。")):QString::fromStdString(committed.error().messageKey);emit changed();return bool(committed);
 }
 QVariantList QtBridge::cubicControls() const {
     QVariantList out;if(!cubicSource_)return out;
-    for(const auto& p:cubicPoints_){out.push_back(QVariantMap{{"x",p[0]},{"y",p[1]}});}
+    if(cubicPath_){for(const auto& p:cubicPathPoints_)out.push_back(QVariantMap{{"x",p[0]},{"y",p[1]}});}
+    else for(const auto& p:cubicPoints_){out.push_back(QVariantMap{{"x",p[0]},{"y",p[1]}});}
     return out;
 }
 QVariantList QtBridge::editableCubics() const {
@@ -104,32 +106,48 @@ QVariantList QtBridge::editableCubics() const {
     if(cubicMenuSource_&&cubicMenuSource_->documentId==s->documentId&&cubicMenuSource_->revision==s->revision&&cubicMenuSource_->nodes==s->nodes&&cubicMenuSource_->resources==s->resources&&cubicMenuSource_->eventIndex==s->eventIndex&&cubicMenuSource_->spec==s->spec&&cubicMenuSource_->fillOperations==s->fillOperations&&cubicMenuLayer_==activeLayer_)return cubicMenu_;
     QVariantList out;
     if(activeLayer_&&s->eventIndex->size()<=8192)for(auto it=s->eventIndex->rbegin();it!=s->eventIndex->rend()&&out.size()<128;++it)
-        if(it->engineVersion==23&&it->layerId==*activeLayer_&&editableCubicIndex(*s,it->id))out.push_back(QVariantMap{{"id",layerText(it->id)},{"name",tr("原生曲线 ")+layerText(it->id).left(8)}});
+        if(it->layerId==*activeLayer_&&((it->engineVersion==23&&editableCubicIndex(*s,it->id))||(it->engineVersion==24&&editableCubicPathIndex(*s,it->id))))out.push_back(QVariantMap{{"id",layerText(it->id)},{"name",(it->engineVersion==24?tr("共享锚点%1 · %2段（逐点编辑） ").arg(drawborad::cubicPathClosed(*it)?tr("闭合轮廓"):tr("开放路径")).arg(qulonglong(cubicPathSegmentCount(*it))):tr("原生四点曲线 "))+layerText(it->id).left(8)}});
     cubicMenuSource_=*s;cubicMenuLayer_=activeLayer_;cubicMenu_=out;return out;
 }
 bool QtBridge::beginCubicDraft(double width,const QColor& color){
     const auto s=app_.snapshot();if(!s||busy()||workflow_->pending()||replaying()||!activeLayer_||!nativeLayerPaintable(*s,*activeLayer_)||!std::isfinite(width)||width<.5||width>128||!color.isValid())return false;
     const double w=s->spec.pixelSize.width,h=s->spec.pixelSize.height;
+    cubicPath_=false;cubicPathEditIndex_.reset();cubicPathPoints_.clear();
     cubicPoints_={{{w*.2,h*.7},{w*.2,h*.3},{w*.8,h*.3},{w*.8,h*.7}}};
     cubicSource_=*s;cubicEvent_.reset();cubicLayer_=*activeLayer_;cubicWidth_=width;cubicColor_=color;
     fillNotice_=tr("四点曲线草稿：拖动端点或控制点；放开后精确预览，接受前不改工程。");emit cubicControlsChanged();emit changed();return true;
 }
+bool QtBridge::beginCubicPathDraft(double width,const QColor& color){
+    const auto s=app_.snapshot();if(!s||busy()||workflow_->pending()||replaying()||!activeLayer_||!nativeLayerPaintable(*s,*activeLayer_)||!std::isfinite(width)||width<.5||width>128||!color.isValid())return false;
+    const double w=s->spec.pixelSize.width,h=s->spec.pixelSize.height;
+    cubicPathPoints_={{w*.5,h*.2},{w*.8,h*.3},{w*.85,h*.65},{w*.5,h*.8},{w*.2,h*.65},{w*.25,h*.3}};
+    cubicPath_=true;cubicPathClosed_=true;cubicPathEditIndex_.reset();cubicSource_=*s;cubicEvent_.reset();cubicLayer_=*activeLayer_;cubicWidth_=width;cubicColor_=color;
+    fillNotice_=tr("两段闭合轮廓草稿：蓝色共享锚点、黄色独立手柄。实际为固定圆笔描边，不是自动挖空或保证可填色；接受前可调全部六点。");emit cubicControlsChanged();emit changed();return true;
+}
 bool QtBridge::selectCubic(const QString& text){
     const auto s=app_.snapshot();const auto id=parseLayerId(text);if(!s||!id||busy()||workflow_->pending()||replaying())return false;
-    auto index=editableCubicIndex(*s,*id);if(!index)return false;const auto& e=(*s->eventIndex)[index.value()];if(!activeLayer_||e.layerId!=*activeLayer_)return false;
-    cubicSource_=*s;cubicEvent_=*id;cubicLayer_=e.layerId;for(std::size_t i=0;i<4;++i)cubicPoints_[i]={e.geometry[i].x,e.geometry[i].y};
-    fillNotice_=tr("已选择原生四点曲线；拖柄后预览，接受前原笔迹不变。");emit cubicControlsChanged();emit changed();return true;
+    auto found=std::find_if(s->eventIndex->begin(),s->eventIndex->end(),[&](const auto&e){return e.id==*id;});if(found==s->eventIndex->end())return false;
+    const bool path=found->engineVersion==24;
+    auto index=path?editableCubicPathIndex(*s,*id):editableCubicIndex(*s,*id);if(!index)return false;const auto& e=(*s->eventIndex)[index.value()];if(!activeLayer_||e.layerId!=*activeLayer_)return false;
+    cubicSource_=*s;cubicEvent_=*id;cubicLayer_=e.layerId;cubicPath_=path;cubicPathEditIndex_.reset();cubicPathPoints_.clear();
+    if(path){cubicPathClosed_=drawborad::cubicPathClosed(e);for(const auto&p:e.geometry)cubicPathPoints_.push_back({p.x,p.y});}
+    else for(std::size_t i=0;i<4;++i)cubicPoints_[i]={e.geometry[i].x,e.geometry[i].y};
+    fillNotice_=path?tr("已选共享锚点轮廓：本次只能调整一个点，可反复微调同一点；接受或取消后才能改另一点，不改变开闭拓扑。"):tr("已选择原生四点曲线；拖柄后预览，接受前原笔迹不变。");emit cubicControlsChanged();emit changed();return true;
 }
 bool QtBridge::moveCubicControl(int i,double x,double y){
-    if(!cubicSource_||fillBusy_||fillPending()||i<0||i>3||!std::isfinite(x)||!std::isfinite(y))return false;
+    if(!cubicSource_||fillBusy_||fillPending()||i<0||std::size_t(i)>=(cubicPath_?cubicPathPoints_.size():4)||!std::isfinite(x)||!std::isfinite(y))return false;
     const double w=cubicSource_->spec.pixelSize.width,h=cubicSource_->spec.pixelSize.height;
     if(x < -w||x>2*w||y < -h||y>2*h)return false;
-    cubicPoints_[std::size_t(i)]={x,y};emit cubicControlsChanged();return true;
+    if(cubicPath_){
+        if(cubicEvent_&&cubicPathEditIndex_&&*cubicPathEditIndex_!=std::size_t(i)){fillNotice_=tr("本次只能调整已改动的那个点；请先接受或取消，其他点未改变。");emit changed();return false;}
+        cubicPathPoints_[std::size_t(i)]={x,y};
+        if(cubicEvent_){const auto& events=*cubicSource_->eventIndex;const auto original=std::find_if(events.begin(),events.end(),[&](const auto&e){return e.id==*cubicEvent_;});const auto& p=original->geometry[std::size_t(i)];if(x==p.x&&y==p.y)cubicPathEditIndex_.reset();else cubicPathEditIndex_=std::size_t(i);}
+    }else cubicPoints_[std::size_t(i)]={x,y};emit cubicControlsChanged();return true;
 }
 bool QtBridge::resumeCubicDraft(){
     if(!cubicDraftActive()||fillBusy_||!fillPending()||pendingKind_==PreviewKind::Existing)return false;
     pendingFill_.reset();pendingFillSource_.reset();pendingFillPreview_.reset();pendingKind_=PreviewKind::Existing;
-    fillNotice_=tr("已返回调柄，四个草稿点保留；尚未提交，仍须预览后接受或明确放弃。");emit changed();return true;
+    fillNotice_=tr("已返回调柄，全部草稿点保留；尚未提交，仍须预览后接受或明确放弃。");emit changed();return true;
 }
 void QtBridge::cancelCubic(){
     if(!cubicDraftActive())return;
@@ -141,15 +159,17 @@ bool QtBridge::previewCubic() try {
     if(!cubicSource_||!cubicLayer_||fillBusy_||fillPending()||strokeCommitBusy_||running_||workflow_->pending()||replaying())return false;
     const auto current=app_.snapshot();const auto source=*cubicSource_;
     if(!current||current->documentId!=source.documentId||current->revision!=source.revision){cancelCubic();return false;}
-    const auto points=cubicPoints_;const auto event=cubicEvent_;const auto layer=*cubicLayer_;const auto id=uuid();const auto width=cubicWidth_;const auto generation=canvasGeneration_;
+    const auto points=cubicPoints_;const auto pathPoints=cubicPathPoints_;const bool path=cubicPath_;const bool closed=cubicPathClosed_;const auto editIndex=cubicPathEditIndex_;
+    if(path&&cubicEvent_&&!editIndex){fillNotice_=tr("尚未调整任何控制点；请调一个点再预览，或取消草稿。");emit changed();return false;}
+    const auto event=cubicEvent_;const auto layer=*cubicLayer_;const auto id=uuid();const auto width=cubicWidth_;const auto generation=canvasGeneration_;
     ColorValue color;color.activeChannels=3;color.profileId=source.spec.colorSpec.profileId;color.channels={cubicColor_.redF(),cubicColor_.greenF(),cubicColor_.blueF(),0};color.alpha=cubicColor_.alphaF();
     fillPool_.setMaxThreadCount(1);fillStop_=std::stop_source{};const auto stop=fillStop_.get_token();
     {std::lock_guard lock(localEditMutex_);localEditCompletion_.reset();}
-    fillBusy_=true;fillNotice_=tr("正在验收原生四点曲线预览；可取消，尚未提交。");emit changed();
-    fillPool_.start([this,source,points,event,layer,id,width,generation,color,stop]{
-        LocalEditCompletion done{std::nullopt,source,std::nullopt,{},stop,generation};done.kind=event?PreviewKind::CubicEdit:PreviewKind::CubicCreate;
+    fillBusy_=true;fillNotice_=tr("正在验收原生曲线预览；可取消，尚未提交。");emit changed();
+    fillPool_.start([this,source,points,pathPoints,path,closed,editIndex,event,layer,id,width,generation,color,stop]{
+        LocalEditCompletion done{std::nullopt,source,std::nullopt,{},stop,generation};done.kind=path?(event?PreviewKind::CubicPathEdit:PreviewKind::CubicPathCreate):(event?PreviewKind::CubicEdit:PreviewKind::CubicCreate);
         try{
-            auto command=event?adjustCubicControlsCommand(source,*event,points,stop):cubicInkStrokeCommand(source,layer,id,points,width,color,1,stop);
+            auto command=path?(event?adjustCubicPathControlCommand(source,*event,*editIndex,pathPoints[*editIndex][0],pathPoints[*editIndex][1],stop):cubicPathStrokeCommand(source,layer,id,pathPoints,closed,width,color,1,stop)):(event?adjustCubicControlsCommand(source,*event,points,stop):cubicInkStrokeCommand(source,layer,id,points,width,color,1,stop));
             if(!command)done.failure=QString::fromStdString(command.error().messageKey);
             else {auto candidate=Document::fromSnapshot(source);if(!candidate)done.failure=QString::fromStdString(candidate.error().messageKey);
                 else {auto applied=candidate.value().apply(command.value(),source.revision);if(!applied)done.failure=QString::fromStdString(applied.error().messageKey);
@@ -317,7 +337,7 @@ void QtBridge::finishLocalStrokeEdit() try {
     if(!done->failure.isEmpty()||!done->command||!done->preview){fillNotice_=(done->kind!=PreviewKind::Existing?tr("曲线预览被拒绝，草稿保留，工程未改："):done->closeStroke?tr("闭合被拒绝，原工程未改："):done->withdrawal?tr("撤回被拒绝，原工程未改："):done->closedInk?tr("闭合墨块填充被拒绝，原工程未改："):tr("局部修整未提交，工程未改："))+done->failure;emit changed();return;}
     pendingKind_=done->kind;
     pendingFill_=std::move(done->command);pendingFillSource_=std::move(done->source);pendingFillPreview_=std::move(done->preview);pendingFillGeneration_=done->generation;pendingClosedInk_=done->closedInk;pendingWithdrawal_=done->withdrawal;pendingCloseStroke_=done->closeStroke;
-    fillNotice_=done->kind!=PreviewKind::Existing?tr("原生四控点曲线精确预览，尚未提交。请接受或取消；保留四点，不转成采样折线。"):done->closeStroke?tr("短缺口闭合预览，尚未提交：只追加所选笔迹首尾之间的直线连接，不挪动或简化原样本。连接≤32原像素且≤路径5%，自交拒绝。请看端点形状后接受或取消；闭合不保证低压/过细线可填色。"):done->withdrawal?tr("撤回预览尚未提交：删除最近已记录闭合填色组的全部底色成员，保留原线稿和其后独立手绘；半透明合成可能改变。接受时须同步重算，可能短暂等待。若移除最后记录，须另存新文件名保留原20格式文件。请明确接受或取消。"):done->closedInk?tr("闭合墨块预览，尚未提交：以所选单笔墨色填几何内区，原轮廓及其他层内容不变；半透明上层可透出底色。接受后记录来源并采用新格式，首次须另存全新文件名，旧版不能打开；来源边界/成员受保护，仅支持已核验记录组的受限撤回。请接受或取消。"):tr("局部修整预览，尚未提交：仅沿原笔迹弧长附近调整位置/压力，未新增图层；范围外样本、颜色及时间不变。请接受或取消。");emit changed();
+    fillNotice_=done->kind!=PreviewKind::Existing?tr("原生曲线精确预览，尚未提交。可接受、返回调柄或放弃；保留原控制点，不转成采样折线。"):done->closeStroke?tr("短缺口闭合预览，尚未提交：只追加所选笔迹首尾之间的直线连接，不挪动或简化原样本。连接≤32原像素且≤路径5%，自交拒绝。请看端点形状后接受或取消；闭合不保证低压/过细线可填色。"):done->withdrawal?tr("撤回预览尚未提交：删除最近已记录闭合填色组的全部底色成员，保留原线稿和其后独立手绘；半透明合成可能改变。接受时须同步重算，可能短暂等待。若移除最后记录，须另存新文件名保留原20格式文件。请明确接受或取消。"):done->closedInk?tr("闭合墨块预览，尚未提交：以所选单笔墨色填几何内区，原轮廓及其他层内容不变；半透明上层可透出底色。接受后记录来源并采用新格式，首次须另存全新文件名，旧版不能打开；来源边界/成员受保护，仅支持已核验记录组的受限撤回。请接受或取消。"):tr("局部修整预览，尚未提交：仅沿原笔迹弧长附近调整位置/压力，未新增图层；范围外样本、颜色及时间不变。请接受或取消。");emit changed();
 }catch(const std::bad_alloc&){fillBusy_=false;pendingCloseStroke_=false;pendingWithdrawal_=false;pendingClosedInk_=false;pendingFill_.reset();pendingFillSource_.reset();pendingFillPreview_.reset();fillNotice_=tr("预览内存不足，未提交工程。");emit changed();}
 bool QtBridge::dirty() const {return cubicDraftActive() || app_.dirty() || workflow_->pending() || fillPending();}
 int QtBridge::eventCount() const {const auto s=app_.snapshot();return s?int(std::min<std::size_t>(s->eventIndex->size(),std::size_t(INT_MAX))):0;}

@@ -238,10 +238,12 @@ ApplicationWindow {
                 onWidthChanged:abandonDrag()
                 onHeightChanged:abandonDrag()
                 onPaint:{
-                    const c=getContext("2d");c.clearRect(0,0,width,height);const p=handles;if(p.length!==4)return;
-                    c.strokeStyle="#efbc52";c.lineWidth=1;c.beginPath();c.moveTo(p[0].x,p[0].y);c.lineTo(p[1].x,p[1].y);c.moveTo(p[2].x,p[2].y);c.lineTo(p[3].x,p[3].y);c.stroke();
-                    if(!studio.fillPending){c.strokeStyle="#5dd6ff";c.beginPath();c.moveTo(p[0].x,p[0].y);c.bezierCurveTo(p[1].x,p[1].y,p[2].x,p[2].y,p[3].x,p[3].y);c.stroke();}
-                    for(let i=0;i<4;i++){c.fillStyle=(i===0||i===3)?"#5dd6ff":"#efbc52";c.beginPath();c.arc(p[i].x,p[i].y,6,0,Math.PI*2);c.fill();c.fillText(String(i+1),p[i].x+9,p[i].y-8)}
+                    const c=getContext("2d");c.clearRect(0,0,width,height);const p=handles;if(p.length<4 && !studio.cubicPathDraft)return;
+                    const spans=studio.cubicPathDraft?(studio.cubicPathClosed?p.length/3:(p.length-1)/3):1;
+                    c.strokeStyle="#efbc52";c.lineWidth=1;c.beginPath();
+                    for(let n=0;n<spans;n++){const i=n*3,j=(i+3)%p.length;c.moveTo(p[i].x,p[i].y);c.lineTo(p[i+1].x,p[i+1].y);c.moveTo(p[i+2].x,p[i+2].y);c.lineTo(p[j].x,p[j].y)}c.stroke();
+                    if(!studio.fillPending&&p.length){c.strokeStyle="#5dd6ff";c.beginPath();c.moveTo(p[0].x,p[0].y);for(let n=0;n<spans;n++){const i=n*3,j=(i+3)%p.length;c.bezierCurveTo(p[i+1].x,p[i+1].y,p[i+2].x,p[i+2].y,p[j].x,p[j].y)}c.stroke();}
+                    for(let i=0;i<p.length;i++){c.fillStyle=i%3===0?"#5dd6ff":"#efbc52";c.beginPath();c.arc(p[i].x,p[i].y,6,0,Math.PI*2);c.fill();c.fillText(String(i+1),p[i].x+9,p[i].y-8)}
                 }
                 Connections { target:studio;function onChanged(){cubicOverlay.requestPaint()} }
                 Connections { target:nativeCanvas;function onViewChanged(){cubicOverlay.requestPaint()} }
@@ -261,7 +263,7 @@ ApplicationWindow {
                         if(pressedButtons & Qt.MiddleButton){cubicOverlay.abandonDrag();nativeCanvas.panBy(mouse.x-lastX,mouse.y-lastY);lastX=mouse.x;lastY=mouse.y;return}
                         if((pressedButtons & Qt.LeftButton)&&cubicOverlay.dragIndex>=0)nativeCanvas.moveCubicHandle(cubicOverlay.dragIndex,mouse.x,mouse.y)
                     }
-                    onReleased:function(mouse){if(mouse.button===Qt.LeftButton&&cubicOverlay.dragIndex>=0){const index=cubicOverlay.dragIndex;cubicOverlay.dragIndex=-1;if(mouse.x>=0&&mouse.y>=0&&mouse.x<width&&mouse.y<height){nativeCanvas.moveCubicHandle(index,mouse.x,mouse.y);studio.previewCubic()}else studio.moveCubicControl(index,cubicOverlay.startX,cubicOverlay.startY)}}
+                    onReleased:function(mouse){if(mouse.button===Qt.LeftButton&&cubicOverlay.dragIndex>=0){const index=cubicOverlay.dragIndex;cubicOverlay.dragIndex=-1;if(mouse.x>=0&&mouse.y>=0&&mouse.x<width&&mouse.y<height){if(nativeCanvas.moveCubicHandle(index,mouse.x,mouse.y))studio.previewCubic()}else studio.moveCubicControl(index,cubicOverlay.startX,cubicOverlay.startY)}}
                     onCanceled:{if(cubicOverlay.dragIndex>=0)studio.moveCubicControl(cubicOverlay.dragIndex,cubicOverlay.startX,cubicOverlay.startY);cubicOverlay.dragIndex=-1}
                     onWheel:function(wheel){cubicOverlay.abandonDrag();nativeCanvas.zoomAt(wheel.angleDelta.y>0?1.25:.8,wheel.x,wheel.y);wheel.accepted=true}
                 }
@@ -491,10 +493,11 @@ ApplicationWindow {
                 ScrollBar.vertical: ScrollBar { }
             }
             Button { objectName:"newCubicButton";text:qsTr("新建原生四点曲线草稿");enabled:studio.hasDocument && !studio.busy;Layout.fillWidth:true;onClicked:studio.beginCubicDraft(Math.max(.5,Math.min(128,nativeCanvas.brushWidth)),nativeCanvas.brushColor) }
+            Button { objectName:"newCubicPathButton";text:qsTr("新建两段闭合轮廓（共享锚点）");enabled:studio.hasDocument && !studio.busy;Layout.fillWidth:true;onClicked:studio.beginCubicPathDraft(Math.max(.5,Math.min(128,nativeCanvas.brushWidth)),nativeCanvas.brushColor) }
             ComboBox { id:cubicSelector;objectName:"cubicSelector";Layout.fillWidth:true;model:studio.editableCubics;textRole:"name";enabled:!studio.busy;onActivated:studio.selectCubic(model[index].id) }
-            Label { visible:studio.cubicDraftActive;text:qsTr("蓝色端点1/4，黄色控制点2/3。细线仅几何指引，不是最终笔迹。拖柄松开才计算精确预览；接受或取消后才能继续。中键平移、滚轮缩放。");wrapMode:Text.Wrap;Layout.fillWidth:true;color:"#edc79a" }
-            Button { objectName:"previewCubicButton";text:qsTr("精确预览四点曲线");visible:studio.cubicDraftActive;enabled:!studio.fillBusy && !studio.fillPending;onClicked:studio.previewCubic() }
-            Button { objectName:"acceptCubicButton";text:qsTr("接受曲线（保留四控点）");visible:studio.cubicPreviewPending;enabled:!nativeCanvas.rendering && nativeCanvas.renderError.length===0;onClicked:studio.acceptFill() }
+            Label { visible:studio.cubicDraftActive;text:studio.cubicPathDraft?qsTr("蓝色共享锚点、黄色独立手柄；细线仅几何指引。新稿可调全部点；已有轮廓本次只能改一个点，先接受或取消才能改另一点。闭合不保证可填色，填色后可能锁定轮廓编辑。中键平移、滚轮缩放。"):qsTr("蓝色端点1/4，黄色控制点2/3。细线仅几何指引，不是最终笔迹。拖柄松开才计算精确预览；接受或取消后才能继续。中键平移、滚轮缩放。");wrapMode:Text.Wrap;Layout.fillWidth:true;color:"#edc79a" }
+            Button { objectName:"previewCubicButton";text:qsTr("精确预览曲线");visible:studio.cubicDraftActive;enabled:!studio.fillBusy && !studio.fillPending;onClicked:studio.previewCubic() }
+            Button { objectName:"acceptCubicButton";text:qsTr("接受曲线（保留原控制点）");visible:studio.cubicPreviewPending;enabled:!nativeCanvas.rendering && nativeCanvas.renderError.length===0;onClicked:studio.acceptFill() }
             Button { objectName:"resumeCubicButton";text:qsTr("返回调柄（保留草稿）");visible:studio.cubicDraftActive && studio.fillPending;onClicked:studio.resumeCubicDraft() }
             Button { objectName:"cancelCubicButton";text:qsTr("取消曲线草稿（不改工程）");visible:studio.cubicDraftActive;onClicked:studio.cancelCubic() }
             Button { objectName: "importLineartButton"; text: qsTr("空白工程 · 嵌入原线稿"); enabled: !studio.busy; onClicked: lineartDialog.open() }

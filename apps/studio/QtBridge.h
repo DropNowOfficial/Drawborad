@@ -37,6 +37,8 @@ class QtBridge : public QObject {
     Q_PROPERTY(QString selectedEditStroke READ selectedEditStroke NOTIFY changed)
     Q_PROPERTY(QVariantList localStrokePoints READ localStrokePoints NOTIFY changed)
     Q_PROPERTY(bool cubicPreviewPending READ cubicPreviewPending NOTIFY changed)
+    Q_PROPERTY(bool cubicPathDraft READ cubicPathDraft NOTIFY cubicControlsChanged)
+    Q_PROPERTY(bool cubicPathClosed READ cubicPathClosed NOTIFY cubicControlsChanged)
     Q_PROPERTY(bool cubicDraftActive READ cubicDraftActive NOTIFY changed)
     Q_PROPERTY(QVariantList cubicControls READ cubicControls NOTIFY cubicControlsChanged)
     Q_PROPERTY(QVariantList editableCubics READ editableCubics NOTIFY changed)
@@ -66,7 +68,7 @@ class QtBridge : public QObject {
     mutable std::shared_ptr<const Bytes> referenceCacheBytes_;
     mutable QString referenceCacheKey_, referenceCacheInfo_;
     void refreshOriginalReference() const;
-    enum class PreviewKind { Existing, CubicCreate, CubicEdit };
+    enum class PreviewKind { Existing, CubicCreate, CubicEdit, CubicPathCreate, CubicPathEdit };
     struct LocalEditCompletion {
         std::optional<Command> command;
         DocumentSnapshot source;
@@ -100,6 +102,9 @@ class QtBridge : public QObject {
     std::optional<Id> cubicEvent_;
     std::optional<NodeId> cubicLayer_;
     std::array<std::array<double,2>,4> cubicPoints_{};
+    std::vector<std::array<double,2>> cubicPathPoints_;
+    bool cubicPath_{false},cubicPathClosed_{false};
+    std::optional<std::size_t> cubicPathEditIndex_;
     double cubicWidth_{4};
     QColor cubicColor_{Qt::black};
     std::optional<NodeId> activeLayer_;
@@ -119,6 +124,9 @@ class QtBridge : public QObject {
   public:
     bool cubicPreviewPending() const { return pendingFill_.has_value() && pendingKind_!=PreviewKind::Existing; }
     bool cubicDraftActive() const { return cubicSource_.has_value(); }
+    bool cubicPathDraft() const { return cubicSource_.has_value() && cubicPath_; }
+    bool cubicPathClosed() const { return cubicPathDraft() && cubicPathClosed_; }
+    Q_INVOKABLE bool beginCubicPathDraft(double width,const QColor& color);
     QVariantList cubicControls() const;
     QVariantList editableCubics() const;
     Q_INVOKABLE bool beginCubicDraft(double width, const QColor& color);
