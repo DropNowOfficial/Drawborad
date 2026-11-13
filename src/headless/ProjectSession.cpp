@@ -142,7 +142,7 @@ public:
                 {"start_us",number(e.startUs)},{"end_us",number(e.endUs)},
                 {"geometry_count",number(e.geometry.size())}});
         }
-        QJsonArray capabilities{"mouse_pressure_taper","duplicate_paint_layer","recolor_layer","recolor_stroke","set_properties","bucket_fill","add_fill_layer","draw_stroke","update_layer","undo","redo","save","save_copy","replay","png"};
+        QJsonArray capabilities{"reorder_layer","mouse_pressure_taper","duplicate_paint_layer","recolor_layer","recolor_stroke","set_properties","bucket_fill","add_fill_layer","draw_stroke","update_layer","undo","redo","save","save_copy","replay","png"};
         capabilities.append("smooth_ink");capabilities.append("ora");capabilities.append("append_brush_layer");capabilities.append("append_brush_crop");capabilities.append("append_brush_normal");capabilities.append("cropped_stroke_mask");capabilities.append("hidden_fill_boundary");
         return {{"document_id",idText(s.documentId)},{"revision",number(s.revision)},
             {"saved_revision",saved?QJsonValue(number(*saved)):QJsonValue(QJsonValue::Null)},
@@ -409,6 +409,19 @@ public:
                 command=checked(brush=="dry_ink" ? dryInkStrokeCommand(s,layer,event,samples,width.toDouble(),color)
                     : brush=="smooth_ink" ? smoothInkStrokeCommand(s,layer,event,samples,width.toDouble(),color)
                     : freehandStrokeCommand(s,layer,event,samples,width.toDouble(),color));
+            } else if(type=="reorder_layer") {
+                const auto s=snapshot();const auto id=parseId(p.value("layer_id"));
+                const auto it=s.nodes->find(id);
+                need(it!=s.nodes->end() && it->second.kind==NodeKind::Layer && it->second.children.empty(),"reorder.plain-layer-required");
+                const auto direction=p.value("direction").toString();
+                need(direction=="up" || direction=="down","reorder.direction");
+                const auto parent=it->second.parent;const auto& children=s.nodes->at(parent).children;
+                const auto pos=std::find(children.begin(),children.end(),id);
+                need(pos!=children.end(),"reorder.parent");const auto index=std::size_t(pos-children.begin());
+                need(direction=="up"?index+1<children.size():index>0,"reorder.edge");
+                command.operations.emplace_back(MoveNode{id,parent,direction=="up"?index+1:index-1});
+                auto candidate=checked(Document::fromSnapshot(s));checked(candidate.apply(command,s.revision));
+                checked(planMergedDocument(candidate.snapshot()));
             } else if(type=="update_layer") {
                 const auto id=parseId(p.value("node_id"));bool any=false;
                 need(id!=Document::rootId(),"session.root-layer");

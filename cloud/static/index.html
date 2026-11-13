@@ -85,6 +85,7 @@ footer{color:#98a1ac;font-size:11px;margin-top:25px;line-height:1.7}.errors{colo
 <p id="nativePaletteStatus" class="fine">Up to 24 colors shared across pages in this tab; not saved in the project.</p>
 <button id="nativeRecolor" class="primary" type="button" disabled>Apply color</button>
 <div class="divider"></div>
+<button id="nativeLayerUp" class="secondary" type="button" disabled>Move layer up</button><button id="nativeLayerDown" class="secondary" type="button" disabled>Move layer down</button><p class="fine">One position within the same group. Changes compositing order, not original pixels or strokes. Unlock the selected layer first. Undo restores the order.</p>
 <button id="nativeDuplicateLayer" class="secondary" type="button" disabled>Duplicate native paint layer · hidden backup</button><p class="fine">Copies actual native paint/fill events, not a flattened image. Copy starts hidden so the current painting stays unchanged. Show it and hide the original before comparing colors. Raster/MyPaint, masked or grouped semantic layers are not supported.</p>
 <button id="nativeAddFillLayer" class="secondary" type="button" disabled>New color layer below ink</button>
 <fieldset><legend>Hidden gap boundaries (native experimental)</legend>
@@ -380,6 +381,15 @@ function nativeMaskControls(){
 // MASK_HELPERS_END
 function nativeRecolorLayerReady(){return !nativeBusy&&nativeState?.capabilities?.includes('recolor_layer')&&!!nativeFillTarget(nativeState,nativeSelectedNodeId)&&nativeState.strokes.some(e=>e.layer_id===nativeSelectedNodeId);}
 function nativeDuplicateLayerReady(){const n=nativeFillTarget(nativeState,nativeSelectedNodeId);return !nativeBusy&&nativeState?.capabilities?.includes('duplicate_paint_layer')&&!!n&&n.source_kind===2&&n.object_id==='00000000000000000000000000000000'&&!n.children?.length&&!n.stroke_mask&&nativeState.strokes.some(e=>e.layer_id===nativeSelectedNodeId);}
+// LAYER_ORDER_HELPERS_BEGIN
+function nativeLayerOrderReady(direction){
+ if(nativeBusy||!nativeState?.capabilities?.includes('reorder_layer')||!['up','down'].includes(direction))return false;
+ const nodes=new Map(nativeState.nodes.map(n=>[n.id,n])),n=nodes.get(nativeSelectedNodeId);if(!n||n.kind!==3||n.children?.length)return false;
+ const seen=new Set();let p=n;while(p){if(p.locked||seen.has(p.id))return false;seen.add(p.id);if(p.kind===0)break;p=nodes.get(p.parent_id);}if(!p)return false;
+ const siblings=nodes.get(n.parent_id)?.children||[],index=siblings.indexOf(n.id);
+ return index>=0&&(direction==='up'?index+1<siblings.length:index>0);
+}
+// LAYER_ORDER_HELPERS_END
 function nativeControls(){
  nativeMaskControls();
  nativeBoundaryControls();
@@ -391,6 +401,7 @@ function nativeControls(){
  const editableLayer=nativeState?.nodes?.find(n=>n.id===nativeSelectedNodeId&&n.kind!==0&&!n.locked);
  for(const id of ['nativeLayerName','nativeLayerOpacity','nativeUpdateLayer'])by(id).disabled=nativeBusy||!editableLayer||!nativeState?.capabilities?.includes('update_layer');
  by('nativeRecolor').disabled=nativeBusy||!hasSelection;
+ by('nativeLayerUp').disabled=!nativeLayerOrderReady('up');by('nativeLayerDown').disabled=!nativeLayerOrderReady('down');
  by('nativeRecolorLayer').disabled=!nativeRecolorLayerReady();by('nativeDuplicateLayer').disabled=!nativeDuplicateLayerReady();
  by('nativeDownload').disabled=nativeBusy||!nativeState||nativeState.dirty;
  by('nativeStrokes').disabled=nativeBusy||!hasSelection;
@@ -578,6 +589,7 @@ by('nativeMaskToggle').onclick=()=>nativeRun(async()=>{
 });
 // MASK_INPUT_END
 by('nativeRecolorLayer').onclick=()=>{if(!nativeRecolorLayerReady())return;return nativeRun(async()=>nativeShow(await nativePost('/'+nativeState.id+'/commands',{expected_revision:nativeState.revision,type:'recolor_layer',layer_id:nativeSelectedNodeId,color:by('nativeColor').value})));};
+for(const [id,direction] of [['nativeLayerUp','up'],['nativeLayerDown','down']])by(id).onclick=()=>{if(!nativeLayerOrderReady(direction))return;return nativeRun(async()=>nativeShow(await nativePost('/'+nativeState.id+'/commands',{expected_revision:nativeState.revision,type:'reorder_layer',layer_id:nativeSelectedNodeId,direction})));};
 by('nativeDuplicateLayer').onclick=()=>{if(!nativeDuplicateLayerReady())return;return nativeRun(async()=>nativeShow(await nativePost('/'+nativeState.id+'/commands',{expected_revision:nativeState.revision,type:'duplicate_paint_layer',layer_id:nativeSelectedNodeId})));};
 by('nativeRecolor').onclick=()=>nativeRun(async()=>nativeShow(await nativePost('/'+nativeState.id+'/commands',{expected_revision:nativeState.revision,type:'recolor_stroke',stroke_id:by('nativeStrokes').value,color:by('nativeColor').value})));
 for(const action of ['Undo','Redo','Save'])by('native'+action).onclick=()=>nativeRun(async()=>nativeShow(await nativePost('/'+nativeState.id+'/'+action.toLowerCase(),{expected_revision:nativeState.revision})));

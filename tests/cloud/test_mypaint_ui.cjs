@@ -11,6 +11,7 @@ vm.runInContext(html.match(/\/\/ COLOR_HELPERS_BEGIN([\s\S]*?)\/\/ COLOR_HELPERS
 vm.runInContext(html.match(/\/\/ BOUNDARY_HELPERS_BEGIN([\s\S]*?)\/\/ BOUNDARY_HELPERS_END/)[1],c);
 vm.runInContext(html.match(/function nativeRecolorLayerReady\(\)\{[^\n]+/)[0],c);
 vm.runInContext(html.match(/function nativeDuplicateLayerReady\(\)\{[^\n]+/)[0],c);
+vm.runInContext(html.match(/\/\/ LAYER_ORDER_HELPERS_BEGIN([\s\S]*?)\/\/ LAYER_ORDER_HELPERS_END/)[1],c);
 vm.runInContext(html.slice(html.indexOf('function nativeControls()'),html.indexOf('async function nativePost(')),c);
 vm.runInContext(html.match(/\/\/ PEN_INPUT_BEGIN([\s\S]*?)\/\/ PEN_INPUT_END/)[1],c);
 by('nativeMyPaintColor').value='#000000';by('nativeMyPaintPressure').value='0.35';by('nativeBrush').value='mypaint_ink';by('nativePen').checked=true;by('nativePenWidth').value='NaN';by('nativeColor').value='#ff0000';c.nativeControls();

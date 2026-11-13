@@ -47,9 +47,16 @@ def main():
     page.mouse.move(r['x']+r['width']/2,r['y']+200);page.mouse.down();page.evaluate("()=>window.dispatchEvent(new Event('blur'))")
     assert page.evaluate('()=>nativeBusy') is False
     page.mouse.up()
+    page.locator('#nativePan').uncheck()
+    page.locator('#nativeAddFillLayer').click();page.wait_for_function('()=>!nativeBusy&&nativeState.nodes.filter(n=>n.kind===3).length===2')
+    old_order=page.evaluate('()=>{const r=nativeState.nodes.find(n=>n.kind===0);nativeSelectNode(r.children[0]);return r.children}')
+    page.locator('#nativeLayerUp').click();page.wait_for_function('()=>!nativeBusy')
+    assert page.evaluate('()=>nativeState.nodes.find(n=>n.kind===0).children')==list(reversed(old_order))
+    page.locator('#nativeUndo').click();page.wait_for_function('()=>!nativeBusy')
+    assert page.evaluate('()=>nativeState.nodes.find(n=>n.kind===0).children')==old_order
     page.screenshot(path=str(out/'viewport.png'),full_page=True)
     assert not errors,errors
-    receipt=dict(passed=True,synthetic=True,zoom='200%',pan=[100,50],live_draft_before_commit=True,stroke_committed=True,expected_document_pixel_has_ink=True,view_preserved=True,blur_unlock=True,limitations=['Not artwork-quality approval','MyPaint/fill/eyedropper end-to-end coverage still separate'])
+    receipt=dict(passed=True,synthetic=True,zoom='200%',pan=[100,50],live_draft_before_commit=True,stroke_committed=True,expected_document_pixel_has_ink=True,view_preserved=True,blur_unlock=True,layer_order_ui_undo=True,limitations=['Not artwork-quality approval','MyPaint/fill/eyedropper end-to-end coverage still separate'])
     (out/'receipt.json').write_text(json.dumps(receipt,indent=2));print(json.dumps(receipt));browser.close()
   finally:
    server.terminate()

@@ -228,5 +228,10 @@ if(DRAWBORAD_HEADLESS_WORKFLOW)
  set_tests_properties(B21.SmoothInkSession PROPERTIES TIMEOUT 120)
 endif()
 
+if(DRAWBORAD_HEADLESS_WORKFLOW)
+ add_test(NAME B24.ReorderLayerSession COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/headless/test_reorder_layer_session.py $<TARGET_FILE:DrawboradHeadless>)
+ set_tests_properties(B24.ReorderLayerSession PROPERTIES TIMEOUT 120)
+endif()
+
 # Register all native features before labeling the test inventory.
 include(${PROJECT_SOURCE_DIR}/cmake/TestTargets.cmake)
