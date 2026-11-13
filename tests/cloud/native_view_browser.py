@@ -54,9 +54,14 @@ def main():
     assert page.evaluate('()=>nativeState.nodes.find(n=>n.kind===0).children')==list(reversed(old_order))
     page.locator('#nativeUndo').click();page.wait_for_function('()=>!nativeBusy')
     assert page.evaluate('()=>nativeState.nodes.find(n=>n.kind===0).children')==old_order
+    checkpoint_before=page.evaluate('()=>({revision:nativeState.revision,dirty:nativeState.dirty})')
+    page.locator('#nativeCheckpoint').click();page.wait_for_function('()=>!nativeBusy&&by("nativeRecoveryStatus").textContent.startsWith("Recovery saved")')
+    assert page.evaluate('()=>({revision:nativeState.revision,dirty:nativeState.dirty})')==checkpoint_before
+    with page.expect_download() as download_info:page.locator('#nativeRecoveryDownload').click()
+    download_info.value.save_as(out/'recovery.draw');assert (out/'recovery.draw').stat().st_size>0
     page.screenshot(path=str(out/'viewport.png'),full_page=True)
     assert not errors,errors
-    receipt=dict(passed=True,synthetic=True,zoom='200%',pan=[100,50],live_draft_before_commit=True,stroke_committed=True,expected_document_pixel_has_ink=True,view_preserved=True,blur_unlock=True,layer_order_ui_undo=True,limitations=['Not artwork-quality approval','MyPaint/fill/eyedropper end-to-end coverage still separate'])
+    receipt=dict(passed=True,synthetic=True,zoom='200%',pan=[100,50],live_draft_before_commit=True,stroke_committed=True,expected_document_pixel_has_ink=True,view_preserved=True,blur_unlock=True,layer_order_ui_undo=True,recovery_checkpoint_download=True,limitations=['Not artwork-quality approval','MyPaint/fill/eyedropper end-to-end coverage still separate'])
     (out/'receipt.json').write_text(json.dumps(receipt,indent=2));print(json.dumps(receipt));browser.close()
   finally:
    server.terminate()

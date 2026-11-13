@@ -3,7 +3,7 @@ const html=fs.readFileSync('cloud/static/index.html','utf8'),els=new Map();
 const by=id=>{if(!els.has(id))els.set(id,{checked:false,value:'',disabled:false,style:{},hidden:true,querySelectorAll:()=>[],getBoundingClientRect:()=>({left:0,top:0,width:200,height:100}),getContext:()=>({beginPath(){},moveTo(){},lineTo(){},stroke(){}}),setPointerCapture(){},hasPointerCapture:()=>false,releasePointerCapture(){}});return els.get(id)};
 let calls=[],errors=[],pending=[],fail=false;
 const c=vm.createContext({by,window:{addEventListener(){}},nativeFillTarget:()=>null,nativeScopedStrokes:()=>[],nativeError:m=>errors.push(m),nativeShow:async s=>s,nativePost:async(path,body)=>{if(fail)throw Error('worker unavailable');calls.push(JSON.parse(JSON.stringify(body)));return{}},nativeRun:fn=>{const p=fn().catch(e=>errors.push(e.message));pending.push(p);return p}});
-vm.runInContext("let nativeState={id:'p',revision:'7',width:'100',height:'50',stroke_count:0,nodes:[],strokes:[],capabilities:['mypaint_ink']};let nativeSelectedNodeId=null,nativeBusy=false,nativePenDrag=null,nativeMyPaintRendering=false,nativePreviewKey='p:7:0';const nativeActionIds=[];",c);
+vm.runInContext("let nativeState={id:'p',revision:'7',width:'100',height:'50',stroke_count:0,nodes:[],strokes:[],capabilities:['mypaint_ink']};let nativeRecoveryProject=null;let nativeSelectedNodeId=null,nativeBusy=false,nativePenDrag=null,nativeMyPaintRendering=false,nativePreviewKey='p:7:0';const nativeActionIds=[];",c);
 vm.runInContext(html.match(/\/\/ PEN_HELPERS_BEGIN([\s\S]*?)\/\/ PEN_HELPERS_END/)[1],c);
 vm.runInContext(html.slice(html.indexOf('function nativePenReady()'),html.indexOf('function nativeError(')),c);
 vm.runInContext(html.match(/\/\/ MASK_HELPERS_BEGIN([\s\S]*?)\/\/ MASK_HELPERS_END/)[1],c);

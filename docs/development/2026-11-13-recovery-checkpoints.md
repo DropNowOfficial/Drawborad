@@ -1,0 +1,15 @@
+# Independent recovery snapshots
+
+Goal: reduce loss of unfinished native edits if the engine/server stops. This is not an artwork renderer or a promise that the cloud workspace itself persists forever.
+
+Native recovery_checkpoint writes a NEW unique path through fsync-backed ProjectStore.save, requiring expected revision/document identity. It does not call controller.save, change current filename, clear dirty, mark saved_revision, or reset undo. New immutable files allow format 10 -> 19 transitions without overwriting an incompatible prior checkpoint.
+
+API requires exact live engine/project/doc/revision and never select/restart/reopen to generate a checkpoint. After native save succeeds, it writes/fsyncs a temporary receipt, atomically replaces recovery.json, and fsyncs its directory. Only then rotates older dedicated recovery copies, keeping two successful snapshots; originals/project.draw are untouched. Failed publication leaves earlier successful recovery metadata/files intact. A snapshot written just before publication failure may remain orphaned, intentionally not guessed away.
+
+Metadata and download use authenticated project UUID routes but no native engine. Downloads copy the chosen immutable file under the transaction before streaming. Recovery workflow: download recovery.draw, then use normal Open project to import it under a new project ID. Existing unsaved work must still be saved or explicitly closed before opening another project. Content is restored, not previous session Undo history.
+
+Browser defaults to recovery attempts every 30 seconds while dirty and idle; same document/revision is not written twice. Manual checkpoint and independent recovery download remain available. Failed attempts retain the last successful time/revision plus a failure message. Background throttling/closed pages can prevent timely saving. Last-30-seconds work and in-progress strokes may not be captured. Downloaded external backups are still needed if the entire workspace disappears.
+
+Tests: real engine API covers new never-saved projects, format upgrade, original saved bytes unchanged, dirty/state unchanged, undo/redo, latest-two retention, missing engine after server restart, independent download and re-import with identical preview. Receipt failure injection preserves prior recovery. UI handler tests cover busy/disabled auto/dedup/guard payload/truthful failed status. Full suite and actual browser CI tracked separately.
+
+Review follow-up: missing latest/previous files are reported per record and do not block downloading the other version. Download version accepts only 0/1, never a path. Authenticated recent-recovery project list (up to 200 projects among 1000 recent directories) plus UI picker allows discovery after project close/switch/localStorage loss. Latest checkpoint and previous checkpoint both have download buttons. Missing-file fallback and discovery have real API tests. Browser CI adds checkpoint-and-download through controls while confirming dirty/revision stay unchanged.

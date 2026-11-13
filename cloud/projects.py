@@ -96,7 +96,7 @@ class Projects:
             if response.get('request_id')!=request_id:raise ValueError('IPC response mismatch')
         except (OSError,ValueError,EOFError,TimeoutError):
             self.stop()
-            fail(503,'engine_unavailable','Engine disconnected or timed out. Unsaved state is lost; reopen last saved project.')
+            fail(503,'engine_unavailable','Engine disconnected or timed out. Uncheckpointed state may be lost; download the last recovery copy or reopen the saved project.')
         if 'error' in response:
             error=response['error'];code=error['code']
             status={'stale_revision':409,'locked':423,'io_error':500,'engine_error':503}.get(code,422)
@@ -109,6 +109,45 @@ class Projects:
             if str(UUID(pid))!=pid:raise ValueError()
         except ValueError:fail(404,'not_found','Project not found')
         return self.root/pid/'project.draw'
+
+    def recovery_records(self,pid):
+        folder=self.project_path(pid).parent
+        receipt=folder/'recovery.json'
+        if not receipt.is_file():return []
+        try:
+            data=json.loads(receipt.read_text())
+            if not isinstance(data,list) or len(data)>2:raise ValueError()
+            for item in data:
+                if not isinstance(item,dict) or set(item)!={'file','revision','document_id','saved_at'} or not re.fullmatch(r'recovery-[0-9a-f-]{36}\.draw',item['file']):raise ValueError()
+            return data
+        except (ValueError,TypeError,KeyError):fail(500,'recovery_invalid','Recovery metadata invalid; existing files were not removed')
+
+    def checkpoint(self,pid,body):
+        # Never select/restart: doing so could label an older on-disk project as current.
+        if set(body)!={'expected_revision','expected_document_id'}:fail(422,'invalid_input','Checkpoint requires exact document and revision')
+        if self.active!=pid or not self.proc or self.proc.poll() is not None:fail(409,'not_live','No live editing session; download the last recovery copy instead')
+        current=self.rpc('state')
+        if body['expected_revision']!=current['revision'] or body['expected_document_id']!=current['document_id']:fail(409,'stale_revision','Checkpoint identity changed')
+        if 'recovery_checkpoint' not in current.get('capabilities',[]):fail(422,'unsupported','Native checkpoint unavailable')
+        old=self.recovery_records(pid)
+        if old and (self.project_path(pid).parent/old[0]['file']).is_file() and old[0]['revision']==current['revision'] and old[0]['document_id']==current['document_id']:return {k:v for k,v in old[0].items() if k!='file'}
+        folder=self.project_path(pid).parent;name='recovery-'+str(uuid4())+'.draw'
+        result=self.rpc('recovery_checkpoint',path=str(folder/name),**body)
+        item=dict(file=name,revision=result['revision'],document_id=result['document_id'],saved_at=time.time())
+        kept=[item]+[record for record in old if (folder/record['file']).is_file()][:1]
+        # Publish only after native fsync-backed snapshot success. Older success stays until then.
+        temp=folder/('recovery-'+str(uuid4())+'.json.tmp')
+        with temp.open('x') as f:
+            json.dump(kept,f);f.flush();os.fsync(f.fileno())
+        os.replace(temp,folder/'recovery.json')
+        fd=os.open(folder,os.O_RDONLY)
+        try:os.fsync(fd)
+        finally:os.close(fd)
+        # Rotation is limited to older dedicated recovery copies, never project.draw.
+        for retired in [record for record in old if record['file'] not in {keep['file'] for keep in kept}]:
+            try:(folder/retired['file']).unlink()
+            except OSError:pass # A leftover backup is safer than losing the new receipt.
+        return {k:v for k,v in item.items() if k!='file'}
 
     def state(self, value):
         value=dict(value,id=self.active)
@@ -327,6 +366,43 @@ def install_projects(app,config,authorized):
             allowed={'expected_revision','type'}|fields[kind]
             if set(body)-allowed:fail(422,'invalid_input','Unknown command fields')
             return projects.state(projects.rpc('command',**body))
+
+    @router.get('/recovery/projects/list')
+    def recovery_projects():
+        with projects.transaction():
+            rows=[]
+            folders=sorted((p for p in projects.root.iterdir() if p.is_dir()),key=lambda p:p.stat().st_mtime,reverse=True)[:1000]
+            for folder in folders:
+                try:records=projects.recovery_records(folder.name)
+                except HTTPException:continue
+                if records:rows.append({'id':folder.name,'checkpoints':[dict({k:v for k,v in item.items() if k!='file'},available=(folder/item['file']).is_file()) for item in records]})
+                if len(rows)>=200:break
+            return {'projects':rows,'limit':200}
+
+    @router.post('/{pid}/checkpoint')
+    def checkpoint(pid:str,body:dict):
+        projects.project_path(pid)
+        with projects.transaction():return projects.checkpoint(pid,body)
+
+    @router.get('/{pid}/recovery')
+    def recovery_info(pid:str):
+        with projects.transaction():
+            records=projects.recovery_records(pid)
+            return {'available':any((projects.project_path(pid).parent/item['file']).is_file() for item in records),'checkpoints':[dict({k:v for k,v in item.items() if k!='file'},available=(projects.project_path(pid).parent/item['file']).is_file()) for item in records]}
+
+    @router.get('/{pid}/recovery-download')
+    def recovery_download(pid:str,version:int=0):
+        with projects.transaction():
+            records=projects.recovery_records(pid)
+            if version not in (0,1):fail(422,'invalid_input','Recovery version must be 0 (latest) or 1 (previous)')
+            if version>=len(records) or not (projects.project_path(pid).parent/records[version]['file']).is_file():fail(404,'not_found','Selected recovery copy is unavailable; try the other version')
+            selected=records[version]
+            tmp=tempfile.TemporaryDirectory(dir=projects.root)
+            try:
+                target=Path(tmp.name)/'recovery.draw'
+                shutil.copyfile(projects.project_path(pid).parent/selected['file'],target)
+                return FileResponse(target,media_type='application/octet-stream',background=BackgroundTask(tmp.cleanup),headers={'Content-Disposition':'attachment; filename="recovery.draw"','Cache-Control':'no-store','X-Drawborad-Revision':selected['revision']})
+            except BaseException:tmp.cleanup();raise
 
     @router.post('/{pid}/cancel-brush')
     def cancel_brush(pid:str):

@@ -43,6 +43,8 @@ footer{color:#98a1ac;font-size:11px;margin-top:25px;line-height:1.7}.errors{colo
 <button id="nativeUndo" class="secondary" type="button" disabled>Undo</button>
 <button id="nativeRedo" class="secondary" type="button" disabled>Redo</button>
 <button id="nativeSave" class="primary" type="button" disabled>Save project</button>
+<label class="fine"><input id="nativeAutoRecovery" type="checkbox" checked>Recovery copies while this page is open</label><button id="nativeCheckpoint" type="button" class="secondary" disabled>Checkpoint now</button><select id="nativeRecoveryProjectSelect" aria-label="Recovery project"><option value="">Current project recovery</option></select><button id="nativeRecoveryRefresh" type="button" class="secondary">List recovery projects</button><button id="nativeRecoveryPrevious" type="button" class="secondary">Download previous recovery</button>
+<button id="nativeRecoveryDownload" type="button" class="secondary">Download recovery copy</button><span id="nativeRecoveryStatus" class="fine">No recovery checkpoint confirmed yet.</span><p class="fine">Keeps the two latest successful recovery snapshots separately from your original. Attempts every 30 seconds while idle; browser background throttling or a closed page can delay/stop it. Not a replacement for Save or downloading backups. Recovery restores content, not session Undo history; loss of this workspace can also lose its local snapshots.</p>
 <button id="nativeSaveCopy" class="secondary" type="button" disabled>Save separate copy</button>
 </div>
 <div class="nativegrid">
@@ -181,6 +183,7 @@ by('token').onchange=refreshCapability;refreshCapability();
 // A view of native responses only; the browser owns no painting model/history.
 let nativeState=null, nativeBusy=false, nativeImageUrl=null, nativeSelectedNodeId=null, nativePreviewKey=null;
 let nativeStrokeScopes=new Map(), nativePenDrag=null;
+let nativeRecoveryProject=localStorage.getItem('drawborad.project'),nativeRecoveryKey=null,nativeRecoverySuccess='';
 const nativeActionIds=['nativeImport','nativeNew','nativeUndo','nativeRedo','nativeSave','nativeSaveCopy','nativeAddFillLayer','nativeRecolor','nativeDownload','nativePng','nativeOra','nativeClose'];
 // NATIVE_VIEW_HELPERS_BEGIN
 function nativeViewLayout(hw,hh,w,h,zoom,px,py){
@@ -406,6 +409,7 @@ function nativeControls(){
  by('nativeDownload').disabled=nativeBusy||!nativeState||nativeState.dirty;
  by('nativeStrokes').disabled=nativeBusy||!hasSelection;
  by('nativeColor').disabled=nativeBusy||(!hasSelection&&!nativeFillTarget(nativeState,nativeSelectedNodeId));
+ by('nativeCheckpoint').disabled=nativeBusy||!nativeState?.capabilities?.includes('recovery_checkpoint');by('nativeRecoveryDownload').disabled=nativeBusy;by('nativeRecoveryPrevious').disabled=nativeBusy;by('nativeRecoveryRefresh').disabled=nativeBusy;by('nativeRecoveryProjectSelect').disabled=nativeBusy;
  by('nativeSaveCopy').disabled=nativeBusy||!nativeState?.capabilities?.includes('save_copy');
  by('nativeAddFillLayer').disabled=nativeBusy||!nativeState?.capabilities?.includes('add_fill_layer');
  const fillReady=!!nativeFillReady();
@@ -491,6 +495,7 @@ async function nativeShow(value){
  const oldSource=by('nativeBoundarySource').value;by('nativeBoundarySource').replaceChildren();
  for(const n of value.nodes.filter(n=>n.stage==='drawborad.lineart.rgba.v1')){const option=document.createElement('option');option.value=n.id;option.textContent=n.name;by('nativeBoundarySource').append(option);}
  if(value.nodes.some(n=>n.id===oldSource&&n.stage==='drawborad.lineart.rgba.v1'))by('nativeBoundarySource').value=oldSource;
+ if(nativeRecoveryProject!==value.id){nativeRecoveryKey=null;nativeRecoverySuccess='';by('nativeRecoveryStatus').textContent='No recovery checkpoint confirmed for this project.';}nativeRecoveryProject=value.id;
  nativeState=value;localStorage.setItem('drawborad.project',value.id);
  by('nativeDimensions').textContent=value.width+' × '+value.height+' px · '+value.ppi+' DPI · native canvas';
  by('nativeStatus').textContent=(value.dirty?'Unsaved changes':'Saved')+' · revision '+value.revision+' · '+value.stroke_count+' native events · '+value.nodes.filter(n=>n.kind===3&&n.source_kind===0).length+' raster layers';
@@ -720,6 +725,41 @@ by('nativeReplay').onchange=()=>nativeRun(async()=>{await nativePreview(by('nati
 for(const [id,path,name] of [['nativeDownload','download','painting.draw'],['nativePng','preview.png','painting.png'],['nativeOra','export.ora','painting.ora']])by(id).onclick=()=>nativeRun(()=>downloadUrl('/projects/'+nativeState.id+'/'+path,name));
 by('nativeClose').onclick=()=>nativeRun(async()=>{await nativePost('/'+nativeState.id+'/close',{expected_revision:nativeState.revision,discard:by('nativeDiscard').checked});nativeState=null;nativeSelectedNodeId=null;nativeStrokeScopes.clear();localStorage.removeItem('drawborad.project');by('nativeStatus').textContent='No painting open';by('nativePreview').hidden=true;by('nativeEmpty').hidden=false;if(nativeImageUrl)URL.revokeObjectURL(nativeImageUrl);nativeImageUrl=null;by('nativePreview').removeAttribute('src');by('nativeNodes').replaceChildren();by('nativeLayerSummary').textContent='';by('nativeReplay').max=0;by('nativeReplay').value=0;by('nativeReplayCount').textContent='0';nativeRenderSelection();by('nativeDiscard').checked=false;});
 window.addEventListener('beforeunload',e=>{if(nativeState?.dirty){e.preventDefault();e.returnValue=''}});
+// RECOVERY_INPUT_BEGIN
+function nativeRecoveryReport(item){
+ nativeRecoveryKey=nativeRecoveryProject+':'+item.document_id+':'+item.revision;
+ nativeRecoverySuccess='Recovery saved '+new Date(item.saved_at*1000).toLocaleTimeString()+' · revision '+item.revision;
+ by('nativeRecoveryStatus').textContent=nativeRecoverySuccess;
+}
+async function nativeCheckpoint(){
+ if(nativeBusy||!nativeState?.capabilities?.includes('recovery_checkpoint'))return;
+ const id=nativeState.id,revision=nativeState.revision,document_id=nativeState.document_id;
+ nativeBusy=true;nativeControls();
+ try{const item=await nativePost('/'+id+'/checkpoint',{expected_revision:revision,expected_document_id:document_id});if(nativeState?.id===id)nativeRecoveryReport(item);}
+ catch(e){by('nativeRecoveryStatus').textContent=(nativeRecoverySuccess?nativeRecoverySuccess+' · ':'')+'Latest checkpoint failed: '+e.message;}
+ finally{nativeBusy=false;nativeControls();}
+}
+by('nativeCheckpoint').onclick=nativeCheckpoint;
+for(const [id,version] of [['nativeRecoveryDownload',0],['nativeRecoveryPrevious',1]])by(id).onclick=async()=>{
+ const project=by('nativeRecoveryProjectSelect').value||nativeRecoveryProject;if(nativeBusy||!project){nativeError('Choose a recovery project first.');return;}
+ try{await downloadUrl('/projects/'+project+'/recovery-download?version='+version,version?'recovery-previous.draw':'recovery.draw');}catch(e){nativeError(e.message);}
+};
+async function nativeRecoveryList(){
+ const info=await api('/projects/recovery/projects/list'),select=by('nativeRecoveryProjectSelect'),previous=select.value;
+ select.replaceChildren();const current=document.createElement('option');current.value='';current.textContent='Current project recovery';select.append(current);
+ for(const row of info.projects){const option=document.createElement('option'),latest=row.checkpoints[0];option.value=row.id;option.textContent=row.id.slice(0,8)+' · '+new Date(latest.saved_at*1000).toLocaleString()+' · revision '+latest.revision+(latest.available?'':' · latest missing, try previous');select.append(option);}
+ if(info.projects.some(p=>p.id===previous))select.value=previous;
+}
+by('nativeRecoveryRefresh').onclick=()=>nativeRecoveryList().catch(e=>nativeError('Recovery list failed: '+e.message));
+
+setInterval(()=>{if(by('nativeAutoRecovery').checked&&nativeState?.dirty&&!nativeBusy&&nativeRecoveryKey!==nativeState.id+':'+nativeState.document_id+':'+nativeState.revision)nativeCheckpoint();},30000);
+async function nativeLoadRecovery(){
+ const id=nativeRecoveryProject;if(!id)return;
+ try{const info=await api('/projects/'+id+'/recovery');if(nativeRecoveryProject===id){if(info.checkpoints?.[0]?.available)nativeRecoveryReport(info.checkpoints[0]);else{nativeRecoveryKey=null;nativeRecoverySuccess='';by('nativeRecoveryStatus').textContent=info.available?'Latest recovery is missing; the previous copy is available.':'No recovery checkpoint available.';}}}
+ catch(e){by('nativeRecoveryStatus').textContent='Recovery lookup failed: '+e.message;}
+}
+nativeLoadRecovery();nativeRecoveryList().catch(()=>{});
+// RECOVERY_INPUT_END
 async function nativeReconnect(){const id=localStorage.getItem('drawborad.project');if(id)await nativeRun(async()=>nativeShow(await api('/projects/'+id)))}
 by('token').addEventListener('change',nativeReconnect);nativeReconnect();
 by('guidedRun').onclick=()=>nativeRun(async()=>{const photo=by('image').files[0],seeds=by('seedFile').files[0];if(!photo||!seeds)throw new Error('Select a photograph and a matching seed PNG.');const form=new FormData();form.append('image',photo);form.append('seeds',seeds);by('guidedRun').disabled=true;try{await show(await api('/guided',{method:'POST',body:form}))}finally{by('guidedRun').disabled=false}});

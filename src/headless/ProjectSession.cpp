@@ -18,6 +18,7 @@
 #include "core/Digest.h"
 #include "codecs/ImageReader.h"
 #include "storage/FileIO.h"
+#include "storage/ProjectStore.h"
 #include <cmath>
 #include <random>
 #include <QColorSpace>
@@ -142,7 +143,7 @@ public:
                 {"start_us",number(e.startUs)},{"end_us",number(e.endUs)},
                 {"geometry_count",number(e.geometry.size())}});
         }
-        QJsonArray capabilities{"reorder_layer","mouse_pressure_taper","duplicate_paint_layer","recolor_layer","recolor_stroke","set_properties","bucket_fill","add_fill_layer","draw_stroke","update_layer","undo","redo","save","save_copy","replay","png"};
+        QJsonArray capabilities{"recovery_checkpoint","reorder_layer","mouse_pressure_taper","duplicate_paint_layer","recolor_layer","recolor_stroke","set_properties","bucket_fill","add_fill_layer","draw_stroke","update_layer","undo","redo","save","save_copy","replay","png"};
         capabilities.append("smooth_ink");capabilities.append("ora");capabilities.append("append_brush_layer");capabilities.append("append_brush_crop");capabilities.append("append_brush_normal");capabilities.append("cropped_stroke_mask");capabilities.append("hidden_fill_boundary");
         return {{"document_id",idText(s.documentId)},{"revision",number(s.revision)},
             {"saved_revision",saved?QJsonValue(number(*saved)):QJsonValue(QJsonValue::Null)},
@@ -456,6 +457,15 @@ public:
         }
         if(method=="undo" || method=="redo") {
             revision(p);checked(method=="undo"?controller->undo():controller->redo());return state();
+        }
+        if(method=="recovery_checkpoint") {
+            revision(p);const auto s=snapshot();
+            need(parseId(p.value("expected_document_id"))==s.documentId,"checkpoint.document");
+            const auto target=pathValue(p.value("path"));
+            need(!target.empty() && target!=path && !std::filesystem::exists(target),"checkpoint.new-path-required");
+            for(const auto suffix:{".bak",".journal"}){auto sidecar=target;sidecar+=suffix;need(!std::filesystem::exists(sidecar),"checkpoint.sidecar");}
+            checked(ProjectStore{}.save(target,s));
+            return {{"revision",number(s.revision)},{"document_id",idText(s.documentId)}};
         }
         if(method=="save" || method=="save_copy") {
             revision(p);auto target=p.contains("path")?pathValue(p.value("path")):path;
