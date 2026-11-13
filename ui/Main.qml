@@ -268,6 +268,21 @@ ApplicationWindow {
                 ScrollBar.vertical: ScrollBar { }
             }
             Label { text: studio.layerNotice; color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true; visible: text.length > 0 }
+            Label { text: qsTr("画笔 · 原生笔迹"); color: "#f5f5f7"; font.pixelSize: 18 }
+            Label { text: qsTr("宽度：") + nativeCanvas.brushWidth.toFixed(1) + " px"; color: "#bcbcc4" }
+            Slider { objectName: "brushWidthSlider"; from: 0.5; to: 128; stepSize: 0.5; value: nativeCanvas.brushWidth; Layout.fillWidth: true; onMoved: nativeCanvas.configureBrush(value,nativeCanvas.brushColor,nativeCanvas.brushOpacity,nativeCanvas.brushHardness,nativeCanvas.mouseTaper) }
+            RowLayout {
+                Rectangle { width: 24; height: 24; color: nativeCanvas.brushColor; border.color: "#aaaaaa" }
+                TextField { objectName: "brushColorInput"; text: nativeCanvas.brushColor.toString(); placeholderText: "#202020"; Layout.fillWidth: true; onEditingFinished: { if (!nativeCanvas.configureBrush(nativeCanvas.brushWidth,text,nativeCanvas.brushOpacity,nativeCanvas.brushHardness,nativeCanvas.mouseTaper)) text = nativeCanvas.brushColor.toString() } }
+            }
+            Label { text: qsTr("不透明度：") + Math.round(nativeCanvas.brushOpacity*100) + "%"; color: "#bcbcc4" }
+            Slider { objectName: "brushOpacitySlider"; from: 0.01; to: 1; value: nativeCanvas.brushOpacity; Layout.fillWidth: true; onMoved: nativeCanvas.configureBrush(nativeCanvas.brushWidth,nativeCanvas.brushColor,value,nativeCanvas.brushHardness,nativeCanvas.mouseTaper) }
+            Label { text: qsTr("硬度：") + Math.round(nativeCanvas.brushHardness*100) + "%"; color: "#bcbcc4" }
+            Slider { objectName: "brushHardnessSlider"; from: 0; to: 1; value: nativeCanvas.brushHardness; Layout.fillWidth: true; onMoved: nativeCanvas.configureBrush(nativeCanvas.brushWidth,nativeCanvas.brushColor,nativeCanvas.brushOpacity,value,nativeCanvas.mouseTaper) }
+            Label { text: qsTr("鼠标收笔辅助：") + Math.round(nativeCanvas.mouseTaper*100) + "%"; color: "#bcbcc4" }
+            Slider { objectName: "mouseTaperSlider"; from: 0; to: 0.5; stepSize: 0.05; value: nativeCanvas.mouseTaper; Layout.fillWidth: true; onMoved: nativeCanvas.configureBrush(nativeCanvas.brushWidth,nativeCanvas.brushColor,nativeCanvas.brushOpacity,nativeCanvas.brushHardness,value) }
+            Label { text: qsTr("0 为关闭；辅助只改变鼠标笔画首尾压力，不替代数位笔真实压感。设置对下一笔生效。"); color: "#bcbcc4"; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Label { text: nativeCanvas.brushNotice; visible: text.length > 0; color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Label { text: qsTr("Canvas view"); color: "#f5f5f7"; font.pixelSize: 18 }
             RowLayout {
                 enabled: studio.hasDocument && !reviewPanel.visible

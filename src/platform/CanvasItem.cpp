@@ -1,5 +1,6 @@
 #include "CanvasItem.h"
 #include "CanvasFrame.h"
+#include "brush/PressureTaper.h"
 #ifdef DRAWBORAD_HAS_QT
 #include "apps/studio/QtBridge.h"
 #include "view/Viewport.h"
@@ -23,6 +24,7 @@
 #include <functional>
 namespace drawborad {
 CanvasItem::CanvasItem(QQuickItem* parent) : QQuickItem(parent) {
+    brushSettings_.width=12;brushSettings_.spacing=.2;
     renderPool_.setMaxThreadCount(1);
     setFlag(ItemHasContents, true);
     setAcceptedMouseButtons(Qt::LeftButton | Qt::MiddleButton);
@@ -30,6 +32,10 @@ CanvasItem::CanvasItem(QQuickItem* parent) : QQuickItem(parent) {
 }
 CanvasItem::~CanvasItem(){renderStop_.request_stop();renderPool_.clear();renderPool_.waitForDone();}
 bool CanvasItem::rendering() const {std::lock_guard lock(snapshotMutex_);return rendering_;}
+bool CanvasItem::configureBrush(double width,QColor color,double opacity,double hardness,double taper){
+    if(!std::isfinite(width)||width<.5||width>512||!color.isValid()||!std::isfinite(opacity)||opacity<.01||opacity>1||!std::isfinite(hardness)||hardness<0||hardness>1||!std::isfinite(taper)||taper<0||taper>.5)return false;
+    brushSettings_.width=width;brushSettings_.opacity=opacity;brushSettings_.hardness=hardness;brushColor_=color;mouseTaper_=taper;brushNotice_.clear();emit brushSettingsChanged();return true;
+}
 QObject* CanvasItem::studio() const { return bridge_; }
 void CanvasItem::setStudio(QObject* value) {
     auto next = qobject_cast<QtBridge*>(value);
@@ -180,9 +186,11 @@ void CanvasItem::beginSample(InputSample sample, bool tablet, bool eraser) {
     if (!bridge_ || bridge_->busy() || bridge_->replaying() || rendering() || !renderError().isEmpty()) return;
     const auto snapshot = bridge_->canvasSnapshot();
     if (!snapshot) return;
+    if(snapshot->spec.colorSpec.format.mode!=ColorMode::RGB){brushNotice_=QStringLiteral("RGB brush controls cannot paint a CMYK document without color conversion.");emit brushSettingsChanged();return;}
     const auto target = paintTarget(*snapshot);
     if (!target) return;
     strokeTarget_ = StrokeTarget{snapshot->documentId, target->first, target->second, bridge_->canvasGeneration()};
+    gestureBrush_=brushSettings_;gestureColor_=brushColor_;gestureTaper_=mouseTaper_;
     stroke_.push_back(sample);
 }
 void CanvasItem::appendSample(InputSample s){if(!stroke_.empty())stroke_.push_back(s);}
@@ -193,7 +201,14 @@ void CanvasItem::finishStroke(){
        !nativeLayerPaintable(*snap,strokeTarget_->layer)||
        snap->nodes->at(strokeTarget_->layer).objectId!=strokeTarget_->object){stroke_.clear();strokeTarget_.reset();return;}
     const auto target=*strokeTarget_;
-    BrushSettings b;b.objectId=target.object;b.layerId=target.layer;b.parentRevision=snap->revision;b.toolId="pencil";b.width=12;b.opacity=1;b.hardness=.8;b.spacing=.2;b.seed=stroke_.front().timestampUs^(std::uint64_t(stroke_.size())<<32);b.color.profileId=snap->spec.colorSpec.profileId;b.color.activeChannels=snap->spec.colorSpec.format.mode==ColorMode::CMYK?4:3;b.color.channels={0.08,0.08,0.08,0.08};b.color.alpha=1;
+    BrushSettings b=gestureBrush_;b.objectId=target.object;b.layerId=target.layer;b.parentRevision=snap->revision;b.seed=stroke_.front().timestampUs^(std::uint64_t(stroke_.size())<<32);
+    b.color.profileId=snap->spec.colorSpec.profileId;b.color.activeChannels=3;b.color.channels={gestureColor_.redF(),gestureColor_.greenF(),gestureColor_.blueF(),0};b.color.alpha=gestureColor_.alphaF();
+    // Mouse assistance is opt-in; never replace real tablet pressure samples.
+    if(!tabletStroke_&&gestureTaper_>0){
+        auto tapered=taperMousePressure(stroke_,gestureTaper_,true);
+        if(tapered)stroke_=std::move(tapered.value());
+        else {brushNotice_=QStringLiteral("Stroke retained without mouse taper: input exceeds taper limits.");emit brushSettingsChanged();}
+    }
     auto event=brush_.compile(stroke_,b,eraser_);
     stroke_.clear();
     strokeTarget_.reset();

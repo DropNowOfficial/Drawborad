@@ -6,12 +6,13 @@
 namespace drawborad {
 // Explicit mouse assistance, not measured pen pressure. Arc-length ramps do not
 // move the centerline. Materialized pressure persists in ordinary native events.
-inline Result<std::vector<InputSample>> taperMousePressure(std::span<const InputSample> input,double fraction) try {
+inline Result<std::vector<InputSample>> taperMousePressure(std::span<const InputSample> input,double fraction,bool preserveTiming=false) try {
  if(!std::isfinite(fraction)||fraction<0||fraction>.5||input.empty()||input.size()>1024)
   return error(ErrorCode::InvalidInput,"pressure-taper.input");
  std::vector<double> arc(input.size(),0);
  for(std::size_t i=0;i<input.size();++i){
   const auto& p=input[i];
+  if(preserveTiming&&i&&p.timestampUs<input[i-1].timestampUs)return error(ErrorCode::InvalidInput,"pressure-taper.time");
   if(!std::isfinite(p.x)||!std::isfinite(p.y)||!std::isfinite(p.pressure)||p.pressure<0||p.pressure>1)
    return error(ErrorCode::InvalidInput,"pressure-taper.input");
   if(i)arc[i]=arc[i-1]+std::hypot(p.x-input[i-1].x,p.y-input[i-1].y);
@@ -23,7 +24,7 @@ inline Result<std::vector<InputSample>> taperMousePressure(std::span<const Input
  std::vector<InputSample> out;out.reserve(input.size()+2);
  const auto append=[&](InputSample sample,double distance){
   const double envelope=std::clamp(std::min(distance/ramp,(length-distance)/ramp),0.,1.);
-  sample.pressure*=.05+.95*envelope;sample.timestampUs=out.size();out.push_back(sample);
+  sample.pressure*=.05+.95*envelope;if(!preserveTiming)sample.timestampUs=out.size();out.push_back(sample);
  };
  append(input.front(),0);
  for(std::size_t i=1;i<input.size();++i){
@@ -31,6 +32,7 @@ inline Result<std::vector<InputSample>> taperMousePressure(std::span<const Input
   for(double knot:knots)if(knot>arc[i-1]&&knot<arc[i]&&knot!=last){
    const double t=(knot-arc[i-1])/(arc[i]-arc[i-1]);auto q=input[i-1];
    q.x+=(input[i].x-q.x)*t;q.y+=(input[i].y-q.y)*t;q.pressure+=(input[i].pressure-q.pressure)*t;
+   if(preserveTiming)q.timestampUs=input[i-1].timestampUs+std::uint64_t(t*double(input[i].timestampUs-input[i-1].timestampUs));
    append(q,knot);last=knot;
   }
   append(input[i],arc[i]);
@@ -46,11 +48,12 @@ inline Result<std::vector<InputSample>> taperMousePressure(std::span<const Input
    if(den<1e-18)break;
    const double t=((b.x-a.x)*dx+(b.y-a.y)*dy)/den;
    if(t<0||t>1||std::hypot(b.x-(a.x+t*dx),b.y-(a.y+t*dy))>1e-9||std::abs(b.pressure-(a.pressure+t*(point.pressure-a.pressure)))>1e-9)break;
+   if(preserveTiming){const auto predicted=a.timestampUs+std::uint64_t(t*double(point.timestampUs-a.timestampUs));if(b.timestampUs!=predicted)break;}
    compact.pop_back();
   }
   compact.push_back(point);
  }
- for(std::size_t i=0;i<compact.size();++i)compact[i].timestampUs=i;
+ if(!preserveTiming)for(std::size_t i=0;i<compact.size();++i)compact[i].timestampUs=i;
  return compact;
 }catch(const std::bad_alloc&){return error(ErrorCode::BudgetExceeded,"pressure-taper.allocation");}
 }

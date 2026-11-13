@@ -5,6 +5,7 @@
 #include "view/Viewport.h"
 #include <QQuickItem>
 #include <QImage>
+#include <QColor>
 #include <QPointF>
 #include <QPointer>
 #include <QTransform>
@@ -20,6 +21,16 @@ class CanvasItem : public QQuickItem {
     Q_PROPERTY(bool rendering READ rendering NOTIFY renderErrorChanged)
     Q_PROPERTY(QString renderError READ renderError NOTIFY renderErrorChanged)
     Q_PROPERTY(QRectF documentRect READ documentRect NOTIFY viewChanged)
+    Q_PROPERTY(double brushWidth READ brushWidth NOTIFY brushSettingsChanged)
+    Q_PROPERTY(double brushOpacity READ brushOpacity NOTIFY brushSettingsChanged)
+    Q_PROPERTY(double brushHardness READ brushHardness NOTIFY brushSettingsChanged)
+    Q_PROPERTY(double mouseTaper READ mouseTaper NOTIFY brushSettingsChanged)
+    Q_PROPERTY(QColor brushColor READ brushColor NOTIFY brushSettingsChanged)
+    Q_PROPERTY(QString brushNotice READ brushNotice NOTIFY brushSettingsChanged)
+    BrushSettings brushSettings_,gestureBrush_;
+    QColor brushColor_{QColor::fromRgbF(.08,.08,.08)},gestureColor_;
+    double mouseTaper_{0},gestureTaper_{0};
+    QString brushNotice_;
     QPointer<QtBridge> bridge_;
     mutable std::mutex snapshotMutex_;
     std::optional<DocumentSnapshot> snapshot_;
@@ -69,6 +80,7 @@ class CanvasItem : public QQuickItem {
     void geometryChange(const QRectF&,const QRectF&) override;
     bool event(QEvent*) override;
   signals:
+    void brushSettingsChanged();
     void studioChanged();
     void viewChanged();
     void renderErrorChanged();
@@ -76,6 +88,13 @@ class CanvasItem : public QQuickItem {
     explicit CanvasItem(QQuickItem* parent = nullptr);
     ~CanvasItem() override;
     bool rendering() const;
+    double brushWidth()const{return brushSettings_.width;}
+    double brushOpacity()const{return brushSettings_.opacity;}
+    double brushHardness()const{return brushSettings_.hardness;}
+    double mouseTaper()const{return mouseTaper_;}
+    QColor brushColor()const{return brushColor_;}
+    QString brushNotice()const{return brushNotice_;}
+    Q_INVOKABLE bool configureBrush(double width,QColor color,double opacity,double hardness,double taper);
     double zoom() const;
     QString renderError() const;
     QRectF documentRect() const;

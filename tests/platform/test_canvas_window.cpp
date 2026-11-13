@@ -8,6 +8,8 @@
 #include <QGuiApplication>
 #include <QElapsedTimer>
 #include <QTimer>
+#include <QTabletEvent>
+#include <QPointingDevice>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickWindow>
@@ -32,6 +34,15 @@ int main(int argc,char**argv){
  QTest::mousePress(&w,Qt::LeftButton,{},QPoint(75,275));QTest::mouseMove(&w,QPoint(150,275));QTest::mouseRelease(&w,Qt::LeftButton,{},QPoint(225,275));QTest::qWait(100);settle(canvas);
  assert(bridge.canvasSnapshot()->eventIndex->size()==count+1);assert(w.grabWindow().pixelColor(150,275).red()<50);
  const auto painted=*bridge.canvasSnapshot();canvas.zoomAt(2,160,160);canvas.panBy(10,0);QTest::qWait(100);settle(canvas);assert(bridge.canvasSnapshot()->sameContent(painted));
+ canvas.fitDocument();assert(canvas.configureBrush(4,QColor("#0000ff"),.6,1,.2));
+ assert(!canvas.configureBrush(-1,QColor("#0000ff"),.6,1,.2));assert(canvas.brushWidth()==4);
+ QTest::mousePress(&w,Qt::LeftButton,{},QPoint(50,35));QTest::mouseMove(&w,QPoint(150,35));assert(canvas.configureBrush(40,QColor("#ff0000"),1,.2,0));QTest::mouseRelease(&w,Qt::LeftButton,{},QPoint(250,35));settle(canvas);
+ const auto& expressive=bridge.canvasSnapshot()->eventIndex->back();assert(expressive.style.width==4&&expressive.style.opacity==.6&&expressive.style.hardness==1);assert(expressive.color.channels[2]>.99&&expressive.color.channels[0]<.01);assert(expressive.geometry.front().pressure<.06&&expressive.geometry.back().pressure<.06);assert(std::any_of(expressive.geometry.begin(),expressive.geometry.end(),[](const auto& p){return p.pressure>.9;}));auto blue=w.grabWindow().pixelColor(150,35);assert(blue.blue()>blue.red());
+ QTest::mousePress(&w,Qt::LeftButton,{},QPoint(50,300));QTest::mouseRelease(&w,Qt::LeftButton,{},QPoint(250,300));settle(canvas);const auto& nextStyle=bridge.canvasSnapshot()->eventIndex->back();assert(nextStyle.style.width==40&&nextStyle.color.channels[0]>.99&&nextStyle.color.channels[2]<.01);assert(nextStyle.geometry.front().pressure==1&&nextStyle.geometry.back().pressure==1);
+ assert(canvas.configureBrush(6,QColor("#202020"),1,.8,.4));QPointingDevice pen("synthetic pen",42,QInputDevice::DeviceType::Stylus,QPointingDevice::PointerType::Pen,QInputDevice::Capability::Position|QInputDevice::Capability::Pressure,1,1);
+ QTabletEvent penDown(QEvent::TabletPress,&pen,{50,70},{50,70},.4,0,0,0,0,0,Qt::NoModifier,Qt::LeftButton,Qt::LeftButton);penDown.setTimestamp(100);QCoreApplication::sendEvent(&canvas,&penDown);
+ QTabletEvent penUp(QEvent::TabletRelease,&pen,{250,70},{250,70},.7,0,0,0,0,0,Qt::NoModifier,Qt::LeftButton,Qt::NoButton);penUp.setTimestamp(120);QCoreApplication::sendEvent(&canvas,&penUp);settle(canvas);const auto& penStroke=bridge.canvasSnapshot()->eventIndex->back();assert(std::abs(penStroke.geometry.front().pressure-.4)<.001&&std::abs(penStroke.geometry.back().pressure-.7)<.001);assert(penStroke.startUs==100000&&penStroke.endUs==120000);
+ const auto styledSnapshot=*bridge.canvasSnapshot();auto styledPath=dir.filePath("styled.draw");bridge.saveUrl(QUrl::fromLocalFile(styledPath));bridge.openUrl(QUrl::fromLocalFile(styledPath));settle(canvas);assert(bridge.canvasSnapshot()->sameContent(styledSnapshot));
  auto unsupported=d.value().snapshot();auto nodes=std::make_shared<NodeMap>(*unsupported.nodes);nodes->at(Id::fromNumber(2)).transform.affine[4]=1;unsupported.nodes=nodes;
  auto unsupportedPath=dir.filePath("transformed-raster.draw");assert(st.save(unsupportedPath.toStdString(),unsupported));bridge.openUrl(QUrl::fromLocalFile(unsupportedPath));QTest::qWait(100);settle(canvas);assert(!canvas.renderError().isEmpty());
  assert(bridge.addLayer());settle(canvas);const auto beforeErrorDraw=*bridge.canvasSnapshot();assert(!canvas.renderError().isEmpty());
@@ -40,7 +51,7 @@ int main(int argc,char**argv){
  QtBridge uiBridge;QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("studio",&uiBridge);
  engine.load(QUrl::fromLocalFile(QStringLiteral(DRAWBORAD_SOURCE_DIR "/ui/Main.qml")));assert(!engine.rootObjects().isEmpty());
  auto uiWindow=qobject_cast<QQuickWindow*>(engine.rootObjects().front());assert(uiWindow);QTest::qWait(200);
- auto uiCanvas=uiWindow->findChild<CanvasItem*>("nativeCanvas");auto errorLabel=uiWindow->findChild<QObject*>("canvasRenderError");assert(uiCanvas&&errorLabel);
+ auto uiCanvas=uiWindow->findChild<CanvasItem*>("nativeCanvas");auto errorLabel=uiWindow->findChild<QObject*>("canvasRenderError");assert(uiCanvas&&errorLabel);auto widthControl=uiWindow->findChild<QObject*>("brushWidthSlider");assert(widthControl);assert(widthControl->setProperty("value",9));assert(QMetaObject::invokeMethod(widthControl,"moved"));assert(uiCanvas->brushWidth()==9);assert(uiCanvas->configureBrush(12,QColor::fromRgbF(.08,.08,.08),1,.8,0));
  uiBridge.openUrl(QUrl::fromLocalFile(unsupportedPath));QTest::qWait(200);settle(*uiCanvas);assert(!uiCanvas->renderError().isEmpty());assert(errorLabel->property("visible").toBool());assert(errorLabel->property("text").toString().contains(uiCanvas->renderError()));
  uiBridge.openUrl(QUrl::fromLocalFile(path));QTest::qWait(200);settle(*uiCanvas);assert(uiCanvas->renderError().isEmpty());assert(!errorLabel->property("visible").toBool());
  QElapsedTimer phase;phase.start();auto mark=[&](const char* name){std::cout<<"poster phase "<<name<<": "<<phase.restart()<<" ms"<<std::endl;};
