@@ -6,6 +6,7 @@
 #include <QQuickItem>
 #include <QImage>
 #include <QColor>
+#include <QTimer>
 #include <QPointF>
 #include <QPointer>
 #include <QTransform>
@@ -18,6 +19,8 @@ class CanvasItem : public QQuickItem {
     Q_OBJECT
     Q_PROPERTY(QObject* bridge READ studio WRITE setStudio NOTIFY studioChanged)
     Q_PROPERTY(double zoom READ zoom NOTIFY viewChanged)
+    Q_PROPERTY(bool strokePreviewActive READ strokePreviewActive NOTIFY renderErrorChanged)
+    Q_PROPERTY(bool previewing READ previewing NOTIFY renderErrorChanged)
     Q_PROPERTY(bool rendering READ rendering NOTIFY renderErrorChanged)
     Q_PROPERTY(QString renderError READ renderError NOTIFY renderErrorChanged)
     Q_PROPERTY(QRectF documentRect READ documentRect NOTIFY viewChanged)
@@ -35,6 +38,10 @@ class CanvasItem : public QQuickItem {
     mutable std::mutex snapshotMutex_;
     std::optional<DocumentSnapshot> snapshot_;
     QImage displayFrame_;
+    QImage committedFrame_;
+    bool previewing_{false};
+    std::uint64_t previewRequestSequence_{0},completedPreviewSequence_{0};
+    QTimer previewTimer_;
     QImage completedFrame_;
     QString completedError_;
     bool completedLegacy_{false};
@@ -62,6 +69,9 @@ class CanvasItem : public QQuickItem {
     QObject* studio() const;
     void setStudio(QObject*);
     void refreshSnapshot();
+    void requestPreview();
+    void clearPreview();
+    BrushSettings currentGestureSettings(const DocumentSnapshot&)const;
     std::optional<std::pair<NodeId, NodeId>> paintTarget(const DocumentSnapshot&) const;
     std::optional<DocumentPoint> itemToDocument(const QPointF&, const DocumentSnapshot&) const;
     QTransform documentTransform(const DocumentSnapshot&,double,QPointF) const;
@@ -73,6 +83,7 @@ class CanvasItem : public QQuickItem {
     InputSample tabletSample(class QTabletEvent*) const;
   protected:
     QSGNode* updatePaintNode(QSGNode*, UpdatePaintNodeData*) override;
+    void mouseUngrabEvent() override;
     void mousePressEvent(QMouseEvent*) override;
     void mouseMoveEvent(QMouseEvent*) override;
     void mouseReleaseEvent(QMouseEvent*) override;
@@ -88,6 +99,9 @@ class CanvasItem : public QQuickItem {
     explicit CanvasItem(QQuickItem* parent = nullptr);
     ~CanvasItem() override;
     bool rendering() const;
+    bool previewing() const;
+    bool strokePreviewActive()const{return !stroke_.empty();}
+    Q_INVOKABLE void cancelStroke();
     double brushWidth()const{return brushSettings_.width;}
     double brushOpacity()const{return brushSettings_.opacity;}
     double brushHardness()const{return brushSettings_.hardness;}
