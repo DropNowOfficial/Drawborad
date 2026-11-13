@@ -114,6 +114,7 @@ class QtBridge : public QObject {
     Result<void> commitStroke(const StrokeEvent&);
     Q_INVOKABLE void createDocument(double width, double height, double ppi, bool whitePaper = false);
     Q_INVOKABLE bool addLayer();
+    Q_INVOKABLE bool addFinishingLayer();
     Q_INVOKABLE bool selectLayer(const QString&);
     Q_INVOKABLE bool setLayerVisible(const QString&, bool);
     Q_INVOKABLE bool importReferenceUrl(const QUrl&);

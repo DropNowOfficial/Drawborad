@@ -2,6 +2,7 @@
 #include "CanvasFrame.h"
 #include "brush/PressureTaper.h"
 #include "brush/DryInkStroke.h"
+#include "brush/MixedLineartStack.h"
 #include "brush/ClipPolygonSelection.h"
 #ifdef DRAWBORAD_HAS_QT
 #include "apps/studio/QtBridge.h"
@@ -41,7 +42,10 @@ bool CanvasItem::rendering() const {std::lock_guard lock(snapshotMutex_);return 
 namespace {
 Result<StrokeEvent> compileDesktopGesture(const DocumentSnapshot& source,std::span<const InputSample> points,const BrushSettings& settings,bool eraser,bool dryInk,Id id,std::stop_token stop={}) {
  if(dryInk&&!eraser){auto command=dryInkStrokeCommand(source,settings.layerId,id,points,settings.width,settings.color,settings.opacity,stop);if(!command)return command.error();return std::get<Paint>(command.value().operations.front()).event;}
- BrushEngine engine;auto event=engine.compile(points,settings,eraser);if(event)event.value().id=id;return event;
+ const auto layer=source.nodes->find(settings.layerId);const bool rootDetail=layer!=source.nodes->end()&&layer->second.stage==FinishingLayerStage&&layer->second.parent==Document::rootId()&&layer->second.objectId.empty()&&nativeLayerPaintable(source,settings.layerId);
+ BrushEngine engine;auto event=engine.compile(points,settings,eraser,rootDetail);
+ if(event){auto& e=event.value();e.id=id;if(rootDetail){std::uint64_t tick=0;for(const auto& old:*source.eventIndex){if(old.endUs==UINT64_MAX)return error(ErrorCode::Overflow,"mixed.timeline");tick=std::max(tick,old.endUs+1);}const auto start=e.startUs,duration=e.endUs-e.startUs;if(duration>UINT64_MAX-tick)return error(ErrorCode::Overflow,"mixed.timeline");for(auto& p:e.geometry)p.timestampUs=tick+(p.timestampUs-start);e.startUs=tick;e.endUs=tick+duration;}}
+ return event;
 }
 }
 bool CanvasItem::configureDryInk(bool value){
@@ -229,7 +233,7 @@ void CanvasItem::clearPreview(){
     {std::lock_guard lock(snapshotMutex_);++renderGeneration_;completedDryReady_=false;completedDryEvent_.reset();completedDryError_.clear();completedFrame_={};displayFrame_=committedFrame_;previewing_=false;previewInputPending_=false;}
     emit renderErrorChanged();update();
 }
-void CanvasItem::cancelStroke(){cancelHollowDrag();if(stroke_.empty()&&!previewing()&&!previewTimer_.isActive()&&!dryCommitPending_)return;const bool wasPending=dryCommitPending_;dryCommitPending_=false;dryCommitTimer_.stop();{std::lock_guard lock(snapshotMutex_);completedDryReady_=false;completedDryEvent_.reset();completedDryError_.clear();}stroke_.clear();strokeTarget_.reset();tabletStroke_=false;clearPreview();if(wasPending){if(bridge_)bridge_->setStrokeCommitBusy(false);brushNotice_=tr("已取消干墨验收，这笔未写入工程。");emit brushSettingsChanged();}}
+void CanvasItem::cancelStroke(){cancelHollowDrag();if(stroke_.empty()&&!previewing()&&!previewTimer_.isActive()&&!dryCommitPending_)return;const bool wasPending=dryCommitPending_;dryCommitPending_=false;dryCommitTimer_.stop();{std::lock_guard lock(snapshotMutex_);completedDryReady_=false;completedDryEvent_.reset();completedDryError_.clear();}stroke_.clear();strokeTarget_.reset();tabletStroke_=false;clearPreview();if(wasPending){if(bridge_)bridge_->setStrokeCommitBusy(false);brushNotice_=tr("已取消笔迹验收，这笔未写入工程。");emit brushSettingsChanged();}}
 void CanvasItem::mouseUngrabEvent(){if(!dryCommitPending_)cancelStroke();}
 void CanvasItem::requestPreview() try{
     if(!bridge_||bridge_->busy()||bridge_->replaying()||stroke_.empty()||!strokeTarget_||rendering()){clearPreview();renderStop_=std::stop_source{};return;}
@@ -275,7 +279,7 @@ void CanvasItem::finishStroke(){
     stroke_.clear();
     strokeTarget_.reset();
     emit renderErrorChanged();
-    if(event&&event.value().engineVersion==12){commitDryStrokeAsync(*snap,std::move(event.value()));return;}
+    if(event&&(event.value().engineVersion==12||(event.value().objectId.empty()&&snap->nodes->at(event.value().layerId).stage==FinishingLayerStage))){commitDryStrokeAsync(*snap,std::move(event.value()));return;}
     if (event) {
         auto committed=bridge_->commitStroke(event.value());
         if(!committed){brushNotice_=tr("笔迹未提交，工程未修改：")+QString::fromStdString(committed.error().messageKey);emit brushSettingsChanged();}
@@ -286,7 +290,7 @@ void CanvasItem::commitDryStrokeAsync(DocumentSnapshot source,StrokeEvent event)
     renderStop_=std::stop_source{};const auto token=renderStop_.get_token();std::uint64_t generation;
     {std::lock_guard lock(snapshotMutex_);generation=renderGeneration_;previewing_=true;}
     dryCommitPending_=true;dryCommitDocument_=source.documentId;dryCommitRevision_=source.revision;dryCommitGeneration_=bridge_->canvasGeneration();bridge_->setStrokeCommitBusy(true);dryCommitTimer_.start();
-    brushNotice_=tr("正在验收干墨笔迹；通过后才写入工程。Esc 可取消。");emit brushSettingsChanged();emit renderErrorChanged();
+    brushNotice_=tr("正在验收笔迹；通过后才写入工程。Esc 可取消。");emit brushSettingsChanged();emit renderErrorChanged();
     renderPool_.start([this,source=std::move(source),event=std::move(event),token,generation]() mutable {
         QString failure;
         try {
@@ -295,7 +299,16 @@ void CanvasItem::commitDryStrokeAsync(DocumentSnapshot source,StrokeEvent event)
             else if(!bounds)failure=QString::fromStdString(bounds.error().messageKey);
             else {auto applied=document.value().apply(Command{Paint{event,bounds.value()}},source.revision);
                 if(!applied)failure=QString::fromStdString(applied.error().messageKey);
-                else {auto frame=renderCanvasFrame(document.value().snapshot(),UINT64_MAX,{},token);if(!frame)failure=QString::fromStdString(frame.error().messageKey);}
+                else {
+                    const auto candidate=document.value().snapshot();
+                    // A renderable gesture must not poison the controlled stack
+                    // or exceed its aggregate event/point budget for later fills.
+                    if(candidate.nodes->at(event.layerId).stage==FinishingLayerStage){
+                        auto controlled=projectControlledLineart(candidate,token);
+                        if(!controlled)failure=QString::fromStdString(controlled.error().messageKey);
+                    }
+                    if(failure.isEmpty()){auto frame=renderCanvasFrame(candidate,UINT64_MAX,{},token);if(!frame)failure=QString::fromStdString(frame.error().messageKey);}
+                }
             }
         }catch(const std::bad_alloc&){failure=QStringLiteral("dry-ink.commit-allocation");}
         if(token.stop_requested())return;
@@ -304,17 +317,17 @@ void CanvasItem::commitDryStrokeAsync(DocumentSnapshot source,StrokeEvent event)
         {std::lock_guard lock(snapshotMutex_);if(generation!=renderGeneration_)return;completedDryEvent_=std::move(event);completedDryError_=std::move(failure);completedDryReady_=true;}
 
     });
-}catch(const std::bad_alloc&){cancelStroke();brushNotice_=tr("干墨验收内存不足，原稿未变。");emit brushSettingsChanged();}
+}catch(const std::bad_alloc&){cancelStroke();brushNotice_=tr("笔迹验收内存不足，原稿未变。");emit brushSettingsChanged();}
 void CanvasItem::finishDryCommit() try {
     std::optional<StrokeEvent> event;QString failure;
     {std::lock_guard lock(snapshotMutex_);if(!completedDryReady_||!dryCommitPending_)return;event=std::move(completedDryEvent_);failure=std::move(completedDryError_);completedDryReady_=false;previewing_=false;}
     dryCommitTimer_.stop();dryCommitPending_=false;if(!bridge_)return;
     bridge_->setStrokeCommitBusy(false);const auto actual=bridge_->canvasSnapshot();
-    if(!actual||actual->documentId!=dryCommitDocument_||actual->revision!=dryCommitRevision_||bridge_->canvasGeneration()!=dryCommitGeneration_){brushNotice_=tr("工程已改变，未提交旧干墨笔迹。");}
-    else if(!failure.isEmpty()){brushNotice_=tr("干墨验收失败，原稿未变：")+failure;}
-    else if(event){auto done=bridge_->commitStroke(*event);brushNotice_=done?QString{}:tr("干墨未提交：")+QString::fromStdString(done.error().messageKey);}
+    if(!actual||actual->documentId!=dryCommitDocument_||actual->revision!=dryCommitRevision_||bridge_->canvasGeneration()!=dryCommitGeneration_){brushNotice_=tr("工程已改变，未提交旧笔迹。");}
+    else if(!failure.isEmpty()){brushNotice_=tr("笔迹验收失败，原稿未变：")+failure;}
+    else if(event){auto done=bridge_->commitStroke(*event);brushNotice_=done?QString{}:tr("笔迹未提交：")+QString::fromStdString(done.error().messageKey);}
     emit renderErrorChanged();emit brushSettingsChanged();update();
-}catch(const std::bad_alloc&){dryCommitTimer_.stop();dryCommitPending_=false;if(bridge_)bridge_->setStrokeCommitBusy(false);brushNotice_=tr("干墨提交内存不足，请核对工程状态。");emit brushSettingsChanged();}
+}catch(const std::bad_alloc&){dryCommitTimer_.stop();dryCommitPending_=false;if(bridge_)bridge_->setStrokeCommitBusy(false);brushNotice_=tr("笔迹提交内存不足，请核对工程状态。");emit brushSettingsChanged();}
 void CanvasItem::setCloseGapTool(bool value){cancelStroke();closeGapTool_=value;if(value){hollowTool_=false;bucketTool_=false;hollowDragTool_=false;hollowLassoTool_=false;}emit brushSettingsChanged();emit viewChanged();}
 QVariantList CanvasItem::closeGapGuide() const {QVariantList out;if(!closeGapTool_||!hollowDrag_)return out;const auto snap=bridge_?bridge_->canvasSnapshot():std::nullopt;if(!snap)return out;const auto r=documentRect();for(const auto p:{hollowDrag_->start,hollowDrag_->current})out.push_back(QVariant::fromValue(QPointF(r.x()+(std::floor(p.x())+.5)*r.width()/snap->spec.pixelSize.width,r.y()+(std::floor(p.y())+.5)*r.height()/snap->spec.pixelSize.height)));return out;}
 void CanvasItem::setHollowDragTool(bool value){

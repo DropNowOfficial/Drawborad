@@ -269,6 +269,8 @@ ApplicationWindow {
                 Label { text: qsTr("Layers"); color: "#f5f5f7"; font.pixelSize: 18; Layout.fillWidth: true }
                 Button { objectName: "addLayerButton"; text: qsTr("Add layer"); enabled: studio.canAddLayer; onClicked: studio.addLayer() }
             }
+            Button { objectName: "addFinishingLayerButton"; text: qsTr("新增手绘细节层（不作边界）"); enabled: studio.hasDocument && !studio.busy; Layout.fillWidth: true; onClicked: studio.addFinishingLayer() }
+            Label { text: qsTr("在独立细节层画笔触，可继续给下面原线稿填色。手绘新线条不会成为填色边界；需封口时使用明确补线工具。"); wrapMode: Text.Wrap; color: "#dbba98"; Layout.fillWidth: true }
             ListView {
                 objectName: "layerList"
                 Layout.fillWidth: true
@@ -337,7 +339,7 @@ ApplicationWindow {
             Label { text: studio.layerNotice; color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true; visible: text.length > 0 }
             Label { text: qsTr("画笔 · 原生笔迹"); color: "#f5f5f7"; font.pixelSize: 18 }
             Label { text: qsTr("宽度：") + nativeCanvas.brushWidth.toFixed(1) + " px"; color: "#bcbcc4" }
-            Button { text: qsTr("取消干墨验收，保留原稿"); visible: studio.strokeCommitBusy; onClicked: nativeCanvas.cancelPendingStroke(); Layout.fillWidth: true }
+            Button { text: qsTr("取消笔迹验收，保留原稿"); visible: studio.strokeCommitBusy; onClicked: nativeCanvas.cancelPendingStroke(); Layout.fillWidth: true }
             Switch { objectName: "dryInkSwitch"; text: qsTr("干墨纤维笔触（非整图滤镜）"); checked: nativeCanvas.dryInk; onToggled: { if (!nativeCanvas.configureDryInk(checked)) checked = nativeCanvas.dryInk } }
             Label { text: qsTr("干墨固定硬边，压力控制宽度/断墨；≤128原像素，每笔≤4096输入点。橡皮仍用原橡皮模式。切换模式取消未提交笔画；不是原画笔触自动还原。"); visible: nativeCanvas.dryInk; wrapMode: Text.Wrap; color: "#dbba98"; Layout.fillWidth: true }
             Slider { objectName: "brushWidthSlider"; from: 0.5; to: 128; stepSize: 0.5; value: nativeCanvas.brushWidth; Layout.fillWidth: true; onMoved: nativeCanvas.configureBrush(value,nativeCanvas.brushColor,nativeCanvas.brushOpacity,nativeCanvas.brushHardness,nativeCanvas.mouseTaper) }

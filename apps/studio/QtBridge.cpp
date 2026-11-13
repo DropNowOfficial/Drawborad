@@ -2,6 +2,7 @@
 #include "AlphaImportPolicy.h"
 #include "core/OriginalReference.h"
 #include "brush/OriginalLineartFill.h"
+#include "brush/MixedLineartStack.h"
 #include "brush/FillRegionReview.h"
 #include "brush/HollowInkCommand.h"
 #include "brush/DerivedHollowFill.h"
@@ -74,7 +75,8 @@ bool QtBridge::acceptFill(){
     if(!current || current->documentId!=source.documentId || current->revision!=source.revision || canvasGeneration_!=pendingFillGeneration_ || replaying()){cancelFill();fillNotice_=tr("工程发生变化，审阅结果未提交。");emit changed();return false;}
     auto command=std::move(*pendingFill_);pendingFill_.reset();pendingFillPreview_.reset();pendingFillSource_.reset();
     std::optional<NodeId> paintedLayer;for(const auto& op:command.operations)if(const auto* p=std::get_if<Paint>(&op))paintedLayer=p->event.layerId;
-    auto committed=app_.apply(command);if(committed&&paintedLayer)activeLayer_=paintedLayer;fillNotice_=committed?tr("已接受区域操作，独立图层已更新；原线稿未改，可撤销和保存。"):QString::fromStdString(committed.error().messageKey);emit changed();return bool(committed);
+    const auto retained=activeLayer_;const bool keepDetail=retained&&current->nodes->contains(*retained)&&current->nodes->at(*retained).stage==FinishingLayerStage&&nativeLayerPaintable(*current,*retained);
+    auto committed=app_.apply(command);if(committed&&paintedLayer&&!keepDetail)activeLayer_=paintedLayer;fillNotice_=committed?tr("已接受区域操作，独立图层已更新；原线稿未改，可撤销和保存。"):QString::fromStdString(committed.error().messageKey);emit changed();return bool(committed);
 }
 bool QtBridge::dirty() const {return app_.dirty() || workflow_->pending() || fillPending();}
 int QtBridge::eventCount() const {const auto s=app_.snapshot();return s?int(std::min<std::size_t>(s->eventIndex->size(),std::size_t(INT_MAX))):0;}
@@ -180,6 +182,13 @@ bool QtBridge::addLayer() {
     emit changed();
     return bool(result);
 }
+bool QtBridge::addFinishingLayer() try {
+ const auto s=app_.snapshot();if(!s||busy()||workflow_->pending()||replaying())return false;
+ const auto id=uuid();auto command=makeFinishingLayerCommand(*s,id);
+ if(!command){fillNotice_=tr("未创建细节层：需要兼容的原线稿区域工程；不会自动改写原图层。 ")+QString::fromStdString(command.error().messageKey);emit changed();return false;}
+ for(auto& op:command.value().operations)if(auto* layer=std::get_if<AddNode>(&op))layer->node.name=tr("手绘细节（不作填色边界）").toUtf8().toStdString();
+ auto done=app_.apply(command.value());if(done){activeLayer_=id;fillNotice_=tr("细节层已创建。其笔触原样保留，但不参与区域边界；区域填色仍按原线稿/已接受补线计算。");}else fillNotice_=QString::fromStdString(done.error().messageKey);emit changed();return bool(done);
+}catch(const std::bad_alloc&){fillNotice_=tr("细节层创建内存不足，请核对工程状态。");emit changed();return false;}
 bool QtBridge::setLayerVisible(const QString& text, bool visible) {
     if(busy() || workflow_->pending())return false;
     const auto snapshot = app_.snapshot();
@@ -391,26 +400,32 @@ bool QtBridge::fillLineartAt(double x,double y,const QColor& color,bool hollow,s
     ColorValue paint;paint.activeChannels=3;paint.profileId=s->spec.colorSpec.profileId;paint.channels={color.redF(),color.greenF(),color.blueF(),0};paint.alpha=color.alphaF();
     fillPool_.setMaxThreadCount(1);fillStop_=std::stop_source{};const auto stop=fillStop_.get_token();
     const auto snapshot=*s;auto target=*activeLayer_;NodeId hollowOverlay;bool derived=false;
-    const auto& ordered=s->nodes->at(Document::rootId()).children;
+    auto ordered=s->nodes->at(Document::rootId()).children;bool withDetails=false;while(!ordered.empty()&&s->nodes->at(ordered.back()).stage==FinishingLayerStage){ordered.pop_back();withDetails=true;}
+    if(withDetails&&!hollow&&!gapEnd&&!ordered.empty())target=ordered.front();
     if((ordered.size()==3||ordered.size()==4) && ordered[1]==source){hollowOverlay=ordered[2];if(!hollow&&!gapEnd){derived=true;target=ordered.size()==4?ordered[3]:uuid();}}
     const auto event=uuid();const auto generation=canvasGeneration_;
-    fillBusy_=true;fillNotice_=tr("正在按原尺寸线稿计算区域；尚未提交，可取消。请接受预览后再保存。");emit changed();
+    fillBusy_=true;fillNotice_=tr("正在按原尺寸线稿计算区域；手绘细节不参与边界，尚未提交，可取消。请接受预览后再保存。");emit changed();
     fillPool_.start([this,snapshot,source,target,event,x,y,paint,stop,generation,hollow,derived,hollowOverlay,bounds,polygon=std::move(polygon),gapEnd]{
         Result<Command> result=error(ErrorCode::InvalidInput,"hollow.selection");
         std::uint64_t selectedInk=0;
         try{
-            if(gapEnd)result=closeLineartGapCommand(snapshot,source,hollowOverlay.empty()?uuid():hollowOverlay,event,std::uint32_t(x),std::uint32_t(y),std::uint32_t(gapEnd->x()),std::uint32_t(gapEnd->y()),stop);
-            else if(derived)result=derivedHollowFillCommand(snapshot,source,hollowOverlay,target,event,std::uint32_t(x),std::uint32_t(y),paint,stop);
-            else if(!hollow)result=originalLineartFillCommand(snapshot,source,target,event,std::uint32_t(x),std::uint32_t(y),paint,stop);
+            auto projected=projectControlledLineart(snapshot,stop);
+            if(!projected)result=projected.error();else {
+            const auto& controlled=projected.value().controlled;
+            if(gapEnd)result=closeLineartGapCommand(controlled,source,hollowOverlay.empty()?uuid():hollowOverlay,event,std::uint32_t(x),std::uint32_t(y),std::uint32_t(gapEnd->x()),std::uint32_t(gapEnd->y()),stop);
+            else if(derived)result=derivedHollowFillCommand(controlled,source,hollowOverlay,target,event,std::uint32_t(x),std::uint32_t(y),paint,stop);
+            else if(!hollow)result=originalLineartFillCommand(controlled,source,target,event,std::uint32_t(x),std::uint32_t(y),paint,stop);
             else{
-                const auto w=snapshot.spec.pixelSize.width,h=snapshot.spec.pixelSize.height;auto raw=lineartRasterPixels(snapshot,source);
+                const auto w=controlled.spec.pixelSize.width,h=controlled.spec.pixelSize.height;auto raw=lineartRasterPixels(controlled,source);
                 if(!raw)result=raw.error();else if(w>8192||h>8192||w*h>20000000)result=error(ErrorCode::BudgetExceeded,"hollow.canvas-limit");else{
                     std::vector<Rgba8> pixels(std::size_t(w*h));bool cancelled=false;
                     for(std::size_t i=0;i<pixels.size();i++){if(i%16384==0&&stop.stop_requested()){cancelled=true;break;}const auto p=raw.value().subspan(i*4,4);const auto v=std::uint8_t(p[3]&&p[0]<255?0:255);pixels[i]={v,v,v,255};}
                     if(cancelled)result=error(ErrorCode::Cancelled,"hollow.cancelled");
                     else if(pixels[std::size_t(y)*w+std::size_t(x)].r!=0)result=error(ErrorCode::InvalidInput,"hollow.click-ink-not-paper");
-                    else{auto selection=floodFill(pixels,std::uint32_t(w),std::uint32_t(h),std::uint32_t(x),std::uint32_t(y),0,{},stop);if(selection&&bounds)selection=clipFillSelection(selection.value(),std::uint32_t(w),std::uint32_t(h),*bounds,stop);if(selection&&!polygon.empty()){selection=clipPolygonSelection(selection.value(),std::uint32_t(w),std::uint32_t(h),polygon,stop);if(selection){bool inside=false;for(const auto& run:selection.value().runs)if(run.y==std::uint32_t(y)&&std::uint32_t(x)>=run.x&&std::uint32_t(x)<run.x+run.length){inside=true;break;}if(!inside)selection=error(ErrorCode::InvalidInput,"clip-polygon.seed-outside");}}if(!selection)result=selection.error();else{selectedInk=selection.value().pixelCount;std::vector<Rgba8>().swap(pixels);result=hollowInkOverlayCommand(snapshot,source,hollowOverlay.empty()?event:hollowOverlay,uuid(),selection.value(),1,stop);}}
+                    else{auto selection=floodFill(pixels,std::uint32_t(w),std::uint32_t(h),std::uint32_t(x),std::uint32_t(y),0,{},stop);if(selection&&bounds)selection=clipFillSelection(selection.value(),std::uint32_t(w),std::uint32_t(h),*bounds,stop);if(selection&&!polygon.empty()){selection=clipPolygonSelection(selection.value(),std::uint32_t(w),std::uint32_t(h),polygon,stop);if(selection){bool inside=false;for(const auto& run:selection.value().runs)if(run.y==std::uint32_t(y)&&std::uint32_t(x)>=run.x&&std::uint32_t(x)<run.x+run.length){inside=true;break;}if(!inside)selection=error(ErrorCode::InvalidInput,"clip-polygon.seed-outside");}}if(!selection)result=selection.error();else{selectedInk=selection.value().pixelCount;std::vector<Rgba8>().swap(pixels);result=hollowInkOverlayCommand(controlled,source,hollowOverlay.empty()?event:hollowOverlay,uuid(),selection.value(),1,stop);}}
                 }
+            }
+            if(result)result=restoreControlledCommand(snapshot,projected.value(),std::move(result.value()),stop);
             }
         }catch(const std::bad_alloc&){result=error(ErrorCode::BudgetExceeded,"hollow.selection-allocation");}
         std::optional<DocumentSnapshot> preview;FillRegionReview review;
@@ -466,7 +481,7 @@ void QtBridge::openUrl(const QUrl& p){
     if(done){replayCount_=-1;referenceUrl_=QUrl{};referenceFeedback_=tr("Reference previews are not stored in .draw projects. Reimport the source image to compare.");++canvasGeneration_;resetLayerSelection();workflow_->restore(*app_.snapshot());}
     emit changed();
 }
-void QtBridge::saveUrl(const QUrl& p){if(strokeCommitBusy_){fillNotice_=tr("干墨笔迹仍在验收；请等待完成或取消后再保存。");emit changed();return;}if(fillBusy_ || fillPending()){fillNotice_=tr("填色尚未提交，本次未保存；请等待完成或取消后重试。");emit changed();return;}if(!p.isLocalFile())return;if(workflow_->pending()){workflow_->fail(tr("请先接受审阅蒙版，再保存工程。未接受的修改仍然保留；也可取消关闭或明确放弃。" ));return;}auto done=app_.save(std::filesystem::path(p.toLocalFile().toStdWString()));(void)done;emit changed();}
+void QtBridge::saveUrl(const QUrl& p){if(strokeCommitBusy_){fillNotice_=tr("笔迹仍在验收；请等待完成或取消后再保存。");emit changed();return;}if(fillBusy_ || fillPending()){fillNotice_=tr("填色尚未提交，本次未保存；请等待完成或取消后重试。");emit changed();return;}if(!p.isLocalFile())return;if(workflow_->pending()){workflow_->fail(tr("请先接受审阅蒙版，再保存工程。未接受的修改仍然保留；也可取消关闭或明确放弃。" ));return;}auto done=app_.save(std::filesystem::path(p.toLocalFile().toStdWString()));(void)done;emit changed();}
 void QtBridge::probeWorker(){if(busy()||!app_.snapshot())return;auto s=*app_.snapshot();auto bytes=encodeDelta(DocumentSnapshot{},s);auto hash=stateHash(s);if(!bytes||!hash)return;JobRequest q;q.id=uuid();q.nonce=uuid();q.task="native.smoke";q.inputSnapshot={s.documentId,s.revision,hash.value()};q.snapshotBytes=std::move(bytes.value());q.resources={q.id,ResourceDevice::CPU,16*1024*1024,0,0,false};auto id=broker_.submit(q);if(id){running_=id.value();workerMessage_=tr("Connecting native worker...");}else workerMessage_=QString::fromStdString(id.error().messageKey);emit changed();}
 void QtBridge::cancelWorker(){if(workflow_->busy())workflow_->cancel();if(running_){broker_.cancel(*running_);workerMessage_=tr("Cancelling worker...");emit changed();}}
 }
