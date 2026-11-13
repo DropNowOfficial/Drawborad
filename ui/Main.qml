@@ -497,7 +497,9 @@ ApplicationWindow {
             ComboBox { id:cubicSelector;objectName:"cubicSelector";Layout.fillWidth:true;model:studio.editableCubics;textRole:"name";enabled:!studio.busy;onActivated:studio.selectCubic(model[index].id) }
             Label { visible:studio.cubicDraftActive;text:studio.cubicPathDraft?qsTr("蓝色共享锚点、黄色独立手柄；细线仅几何指引。新稿可调全部点；已有轮廓本次只能改一个点，先接受或取消才能改另一点。闭合不保证可填色，填色后可能锁定轮廓编辑。中键平移、滚轮缩放。"):qsTr("蓝色端点1/4，黄色控制点2/3。细线仅几何指引，不是最终笔迹。拖柄松开才计算精确预览；接受或取消后才能继续。中键平移、滚轮缩放。");wrapMode:Text.Wrap;Layout.fillWidth:true;color:"#edc79a" }
             Button { objectName:"previewCubicButton";text:qsTr("精确预览曲线");visible:studio.cubicDraftActive;enabled:!studio.fillBusy && !studio.fillPending;onClicked:studio.previewCubic() }
-            Button { objectName:"acceptCubicButton";text:qsTr("接受曲线（保留原控制点）");visible:studio.cubicPreviewPending;enabled:!nativeCanvas.rendering && nativeCanvas.renderError.length===0;onClicked:studio.acceptFill() }
+            Button { objectName:"previewSolidBakeButton";text:qsTr("预览为独立像素层");visible:studio.solidBakeAvailable && studio.cubicPathDraft && studio.cubicPathClosed && studio.cubicControls.length===6;enabled:!studio.fillBusy;onClicked:studio.previewCubicSolidBake() }
+            Label { visible:studio.solidBakePreviewPending;text:qsTr("这是独立像素层预览。接受后该层不能调控制点；原轮廓和原图保持不变。");wrapMode:Text.Wrap;Layout.fillWidth:true;color:"#edc79a" }
+            Button { objectName:"acceptCubicButton";text:studio.solidBakePreviewPending?qsTr("接受像素层（不能再调控制点）"):qsTr("接受曲线（保留原控制点）");visible:studio.cubicPreviewPending;enabled:!nativeCanvas.rendering && nativeCanvas.renderError.length===0;onClicked:studio.acceptFill() }
             Button { objectName:"resumeCubicButton";text:qsTr("返回调柄（保留草稿）");visible:studio.cubicDraftActive && studio.fillPending;onClicked:studio.resumeCubicDraft() }
             Button { objectName:"cancelCubicButton";text:qsTr("取消曲线草稿（不改工程）");visible:studio.cubicDraftActive;onClicked:studio.cancelCubic() }
             Button { objectName: "importLineartButton"; text: qsTr("空白工程 · 嵌入原线稿"); enabled: !studio.busy; onClicked: lineartDialog.open() }
@@ -512,7 +514,7 @@ ApplicationWindow {
             Label { objectName: "selectedBoundaryLabel"; visible: studio.selectedBoundaryName.length > 0; text: qsTr("边界层：") + studio.selectedBoundaryName + qsTr("。仅 alpha≥128/255 的覆盖阻挡；不改笔迹透明度、不采其他彩色细节。只填原稿白区，挖空区请停止采样后填。重开须重选。"); wrapMode: Text.Wrap; color: "#edc79a"; Layout.fillWidth: true }
             Label { text: qsTr("同尺寸黑白灰 PNG，最多 2000 万像素；原图锁定、色块独立、后台填色，不缩图。导入仍为同步操作。"); color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Button { objectName: "cancelLineartFill"; text: qsTr("取消当前操作"); visible: studio.fillBusy || studio.fillPending; onClicked: studio.cancelFill() }
-            Button { objectName: "acceptLineartFill"; text: qsTr("接受当前预览"); visible: studio.fillPending; enabled: !nativeCanvas.rendering && nativeCanvas.renderError.length === 0; onClicked: studio.acceptFill() }
+            Button { objectName: "acceptLineartFill"; text: studio.solidBakePreviewPending?qsTr("接受独立像素层（不能再调控制点）"):qsTr("接受当前预览"); visible: studio.fillPending; enabled: !nativeCanvas.rendering && nativeCanvas.renderError.length === 0; onClicked: studio.acceptFill() }
             CheckBox { objectName: "closeGapTool"; text: qsTr("短断口补线（拖两个原墨端点）"); checked: nativeCanvas.closeGapTool; enabled: !studio.busy; onToggled: nativeCanvas.closeGapTool = checked }
             Label { text: qsTr("1像素黑线，最多64像素；两端须在原墨、跨过原白缺口，不自动找线。黄线仅指引，松开后看实际补线预览再接受；Esc/越界取消。原图不改，补线在可隐藏修正层，可撤销。"); color: "#edc79a"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             CheckBox { objectName: "hollowInkTool"; enabled: !studio.busy; text: qsTr("局部挖空（白纸，点墨块）"); checked: nativeCanvas.hollowTool; onToggled: nativeCanvas.hollowTool = checked }

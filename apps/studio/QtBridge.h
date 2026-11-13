@@ -36,6 +36,8 @@ class QtBridge : public QObject {
     Q_PROPERTY(QVariantList editableStrokes READ editableStrokes NOTIFY changed)
     Q_PROPERTY(QString selectedEditStroke READ selectedEditStroke NOTIFY changed)
     Q_PROPERTY(QVariantList localStrokePoints READ localStrokePoints NOTIFY changed)
+    Q_PROPERTY(bool solidBakeAvailable READ solidBakeAvailable CONSTANT)
+    Q_PROPERTY(bool solidBakePreviewPending READ solidBakePreviewPending NOTIFY changed)
     Q_PROPERTY(bool cubicPreviewPending READ cubicPreviewPending NOTIFY changed)
     Q_PROPERTY(bool cubicPathDraft READ cubicPathDraft NOTIFY cubicControlsChanged)
     Q_PROPERTY(bool cubicPathClosed READ cubicPathClosed NOTIFY cubicControlsChanged)
@@ -68,7 +70,7 @@ class QtBridge : public QObject {
     mutable std::shared_ptr<const Bytes> referenceCacheBytes_;
     mutable QString referenceCacheKey_, referenceCacheInfo_;
     void refreshOriginalReference() const;
-    enum class PreviewKind { Existing, CubicCreate, CubicEdit, CubicPathCreate, CubicPathEdit };
+    enum class PreviewKind { Existing, CubicCreate, CubicEdit, CubicPathCreate, CubicPathEdit, CubicSolidBake };
     struct LocalEditCompletion {
         std::optional<Command> command;
         DocumentSnapshot source;
@@ -122,6 +124,9 @@ class QtBridge : public QObject {
     bool initializeCanvas(double width, double height, double ppi, bool whitePaper = false);
     void resetLayerSelection();
   public:
+    bool solidBakeAvailable() const;
+    bool solidBakePreviewPending() const { return pendingFill_.has_value() && pendingKind_==PreviewKind::CubicSolidBake; }
+    Q_INVOKABLE bool previewCubicSolidBake();
     bool cubicPreviewPending() const { return pendingFill_.has_value() && pendingKind_!=PreviewKind::Existing; }
     bool cubicDraftActive() const { return cubicSource_.has_value(); }
     bool cubicPathDraft() const { return cubicSource_.has_value() && cubicPath_; }

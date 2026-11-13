@@ -1,3 +1,5 @@
+#include "core/MyPaintCroppedRaster.h"
+#include "storage/ProjectStore.h"
 #include <QLineF>
 #include <array>
 #include "brush/MixedLineartStack.h"
@@ -39,6 +41,51 @@ void settle(CanvasItem& c){QElapsedTimer t;t.start();while(c.rendering()&&t.elap
 void settleFill(QtBridge& b){QElapsedTimer t;t.start();while(b.fillBusy()&&t.elapsed()<30000)QTest::qWait(5);assert(!b.fillBusy());}
 int main(int argc,char**argv){
  QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);QGuiApplication app(argc,argv);
+#ifndef DRAWBORAD_HAS_QT_SOLID_BAKE
+ {QtBridge off;const auto before=off.canvasSnapshot();assert(!off.solidBakeAvailable()&&!off.previewCubicSolidBake()&&!off.solidBakePreviewPending());assert(off.canvasSnapshot().has_value()==before.has_value());}
+#endif
+ if(qEnvironmentVariableIsSet("DRAWBORAD_SOLID_BAKE_UI_TEST")) {
+#ifdef DRAWBORAD_HAS_QT_SOLID_BAKE
+  const auto previousHandler=qInstallMessageHandler([](QtMsgType,const QMessageLogContext&,const QString& message){if(message.contains("Binding loop")||message.contains("ReferenceError")||message.contains("TypeError"))++cubicBindingDiagnostics;std::cerr<<message.toStdString()<<"\n";});
+  qmlRegisterType<CanvasItem>("Drawborad.Native",1,0,"NativeCanvas");QtBridge b;QQmlApplicationEngine engine;engine.addImageProvider("original-reference",new OriginalReferenceProvider(b));engine.rootContext()->setContextProperty("studio",&b);
+  engine.load(QUrl::fromLocalFile(QStringLiteral(DRAWBORAD_SOURCE_DIR "/ui/Main.qml")));assert(!engine.rootObjects().isEmpty());auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().front());assert(window);auto* canvas=window->findChild<CanvasItem*>("nativeCanvas");assert(canvas);QTest::qWait(150);
+  auto click=[&](const char* name) {
+   auto* item=window->findChild<QQuickItem*>(name);assert(item&&item->isVisible()&&item->isEnabled());
+   for(auto* a=item->parentItem();a;a=a->parentItem())if(a->inherits("QQuickFlickable")){auto* content=qvariant_cast<QQuickItem*>(a->property("contentItem"));assert(content);a->setProperty("contentY",item->mapToItem(content,{0,0}).y()-12);break;}
+   QTest::qWait(40);const auto at=item->mapToScene({item->width()/2,item->height()/2}).toPoint();assert(at.y()>0&&at.y()<window->height());QTest::mouseClick(window,Qt::LeftButton,{},at);
+  };
+  b.createDocument(600,900,300,true);settle(*canvas);assert(b.solidBakeAvailable());const auto blank=*b.canvasSnapshot();
+  assert(b.beginCubicPathDraft(4,Qt::blue));QTest::qWait(40);const auto controls=b.cubicControls();
+  click("previewSolidBakeButton");settleFill(b);assert(b.solidBakePreviewPending()&&b.canvasSnapshot()->sameContent(blank));settle(*canvas);assert(canvas->renderError().isEmpty());
+  const auto pending=*b.displaySnapshot();assert(pending.eventIndex->empty()&&pending.nodes->size()==blank.nodes->size()+1);
+  QTemporaryDir dir;assert(dir.isValid());b.saveUrl(QUrl::fromLocalFile(dir.path()+"/draft.draw"));assert(!QFile::exists(dir.path()+"/draft.draw"));
+  click("resumeCubicButton");assert(b.cubicControls()==controls&&!b.fillPending());
+  click("previewSolidBakeButton");settleFill(b);b.cancelCubic();settle(*canvas);assert(b.canvasSnapshot()->sameContent(blank));
+  assert(b.beginCubicPathDraft(4,Qt::blue));assert(b.previewCubic());settleFill(b);assert(!b.solidBakePreviewPending());
+  // Explicit switch from pending outline to bake does not accept the outline.
+  QTest::qWait(20);click("previewSolidBakeButton");settleFill(b);settle(*canvas);assert(b.solidBakePreviewPending()&&b.eventCount()==0);
+  click("acceptCubicButton");settle(*canvas);assert(!b.cubicDraftActive()&&!b.fillPending()&&b.eventCount()==0);
+  const auto baked=*b.canvasSnapshot();bool selected=false;for(const auto& item:b.layers())if(item.toMap()["id"].toString()==b.activeLayerId())selected=item.toMap()["name"].toString()=="Qt solid (baked pixels)";assert(selected);
+  assert(b.undoDrawing()&&b.canvasSnapshot()->sameContent(blank));assert(b.redoDrawing()&&b.canvasSnapshot()->sameContent(baked));settle(*canvas);
+  b.saveUrl(QUrl::fromLocalFile(dir.path()+"/bake.draw"));assert(QFile::exists(dir.path()+"/bake.draw"));b.createDocument(64,64,300,true);b.openUrl(QUrl::fromLocalFile(dir.path()+"/bake.draw"));settle(*canvas);assert(b.canvasSnapshot()->sameContent(baked)&&canvas->renderError().isEmpty());
+  auto* workflow=qobject_cast<WorkflowController*>(b.workflow());assert(workflow);assert(workflow->exportNative(QUrl::fromLocalFile(dir.path()+"/bake.png"),"png"));assert(workflow->exportNative(QUrl::fromLocalFile(dir.path()+"/bake.ora"),"ora"));QImage png(dir.path()+"/bake.png");assert(png.size()==QSize(600,900)&&png.pixelColor(300,450).blue()>200&&png.pixelColor(300,450).red()<10);
+  // Existing curve uses its own color/opacity, not the last new-draft QColor.
+  b.createDocument(600,900,300,true);settle(*canvas);assert(b.beginCubicPathDraft(4,Qt::blue));assert(b.previewCubic());settleFill(b);assert(b.acceptFill());
+  auto existing=*b.canvasSnapshot();auto events=std::make_shared<EventList>(*existing.eventIndex);events->back().style.opacity=.35;events->back().color.alpha=.6;existing.eventIndex=events;assert(validateSnapshot(existing));
+  ProjectStore store;assert(store.save((dir.path()+"/oldcurve.draw").toStdString(),existing));b.openUrl(QUrl::fromLocalFile(dir.path()+"/oldcurve.draw"));settle(*canvas);
+  assert(b.beginCubicPathDraft(4,Qt::red));b.cancelCubic();const auto old=*b.canvasSnapshot();const auto id=b.editableCubics().front().toMap()["id"].toString();assert(b.selectCubic(id));assert(b.previewCubicSolidBake());settleFill(b);assert(b.solidBakePreviewPending());
+  const auto oldPreview=*b.displaySnapshot();bool checked=false;
+  for(const auto& [nid,node]:*oldPreview.nodes)if(!old.nodes->contains(nid)&&croppedRaster::isStage(node.stage)) {
+   auto view=croppedRaster::parse(oldPreview,nid);assert(view);unsigned maxAlpha=0;for(std::size_t i=0;i<view.value().rgba.size();i+=4)if(view.value().rgba[i+3]){assert(view.value().rgba[i]==0&&view.value().rgba[i+2]==255);maxAlpha=std::max(maxAlpha,unsigned(view.value().rgba[i+3]));}assert(maxAlpha>=53&&maxAlpha<=54);checked=true;
+  }
+  assert(checked&&b.canvasSnapshot()->sameContent(old));assert(b.acceptFill());assert(*b.canvasSnapshot()->eventIndex==*old.eventIndex);assert(b.undoDrawing()&&b.canvasSnapshot()->sameContent(old));
+  assert(b.selectCubic(id));assert(b.previewCubicSolidBake());b.cancelCubic();settleFill(b);assert(!b.fillPending()&&b.canvasSnapshot()->sameContent(old));
+  assert(b.beginCubicDraft(3,Qt::black));assert(!b.previewCubicSolidBake());b.cancelCubic();
+  assert(cubicBindingDiagnostics==0);qInstallMessageHandler(previousHandler);std::cout<<"PASS actual QML baked solid preview/return/cancel/switch/accept/Undo/save/reopen/export, original curve color/opacity retained; no editable-vector claim\n";return 0;
+#else
+  assert(false && "Solid UI test requires explicit backend ON");
+#endif
+ }
  if(qEnvironmentVariableIsSet("DRAWBORAD_PATH_BRIDGE_TEST")){
   QTemporaryDir dir;assert(dir.isValid());QtBridge b;b.createDocument(128,128,300,true);const auto blank=*b.canvasSnapshot();assert(b.beginCubicPathDraft(3,Qt::black));assert(b.cubicPathDraft()&&b.cubicPathClosed()&&b.cubicControls().size()==6&&b.dirty()&&b.busy());
   const auto path=dir.filePath("path24.draw");b.saveUrl(QUrl::fromLocalFile(path));assert(!QFile::exists(path));b.createDocument(64,64,300,true);assert(b.canvasSnapshot()->sameContent(blank));assert(!b.beginCubicDraft(2,Qt::red));assert(b.moveCubicControl(0,62,20)&&b.moveCubicControl(1,95,28));const auto draft=b.cubicControls();assert(b.previewCubic());settleFill(b);assert(b.fillPending()&&b.canvasSnapshot()->sameContent(blank));assert(b.resumeCubicDraft()&&b.cubicControls()==draft);assert(b.moveCubicControl(5,25,45));assert(b.previewCubic());settleFill(b);assert(b.acceptFill());const auto accepted=*b.canvasSnapshot();assert(accepted.eventIndex->size()==1&&accepted.eventIndex->back().engineVersion==24&&accepted.eventIndex->back().geometry.size()==6&&accepted.eventIndex->back().geometry[0].x==62&&accepted.eventIndex->back().geometry[1].x==95);assert(b.undoDrawing()&&b.canvasSnapshot()->sameContent(blank));assert(b.redoDrawing());b.saveUrl(QUrl::fromLocalFile(path));assert(QFile::exists(path));
@@ -68,6 +115,9 @@ int main(int argc,char**argv){
   qmlRegisterType<CanvasItem>("Drawborad.Native",1,0,"NativeCanvas");QtBridge b;QQmlApplicationEngine engine;engine.addImageProvider("original-reference",new OriginalReferenceProvider(b));engine.rootContext()->setContextProperty("studio",&b);
   engine.load(QUrl::fromLocalFile(QStringLiteral(DRAWBORAD_SOURCE_DIR "/ui/Main.qml")));assert(!engine.rootObjects().isEmpty());auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().front());assert(window);auto* canvas=window->findChild<CanvasItem*>("nativeCanvas");assert(canvas);QTest::qWait(150);
   b.createDocument(1725,2625,300,true);settle(*canvas);const auto blank=*b.canvasSnapshot();assert(pathUI?b.beginCubicPathDraft(4,Qt::black):b.beginCubicDraft(4,Qt::black));QTest::qWait(50);
+#ifndef DRAWBORAD_HAS_QT_SOLID_BAKE
+  assert(!window->findChild<QQuickItem*>("previewSolidBakeButton")->isVisible());
+#endif
   auto* area=window->findChild<QQuickItem*>("cubicHandleDrag");assert(area&&area->isVisible());auto handles=canvas->cubicHandles();assert(handles.size()==(pathUI?6:4));auto start=handles[pathUI?0:1].toMap();auto from=area->mapToScene({start["x"].toDouble(),start["y"].toDouble()}).toPoint();auto to=from+QPoint(20,10);
   QTest::mousePress(window,Qt::LeftButton,{},from);QTest::mouseMove(window,to);assert(!b.fillBusy()&&b.canvasSnapshot()->sameContent(blank));QTest::mouseRelease(window,Qt::LeftButton,{},to);settleFill(b);assert(b.fillPending());settle(*canvas);assert(canvas->renderError().isEmpty());
   auto*acceptButton=window->findChild<QQuickItem*>("acceptCubicButton");assert(acceptButton&&b.cubicPreviewPending());for(auto*ancestor=acceptButton->parentItem();ancestor;ancestor=ancestor->parentItem()){if(ancestor->inherits("QQuickFlickable")){auto*content=qvariant_cast<QQuickItem*>(ancestor->property("contentItem"));assert(content);ancestor->setProperty("contentY",acceptButton->mapToItem(content,{0,0}).y()-12);break;}}QTest::qWait(30);const auto acceptAt=acceptButton->mapToScene({acceptButton->width()/2,acceptButton->height()/2}).toPoint();assert(acceptAt.y()>0&&acceptAt.y()<window->height());QTest::mouseClick(window,Qt::LeftButton,{},acceptAt);assert(!b.cubicDraftActive()&&!b.fillPending());settle(*canvas);assert(b.eventCount()==1&&b.canvasSnapshot()->eventIndex->back().engineVersion==(pathUI?24:23));
