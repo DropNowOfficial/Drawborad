@@ -102,10 +102,10 @@ footer{color:#98a1ac;font-size:11px;margin-top:25px;line-height:1.7}.errors{colo
 <p id="nativeBucketHint" class="helper">Create a new color layer, or show painting sublayers and select an unlocked visible layer. Fill samples the visible full painting. New-format edits may require Save separate copy.</p>
 <label class="fieldlabel"><input id="nativePen" type="checkbox" disabled> Draw on selected layer</label>
 <label class="fieldlabel" for="nativeBrush">Brush</label><select id="nativeBrush" class="field" disabled><option value="fine">Fine pen · 0.05–8 px</option><option id="nativeSmoothInkOption" value="smooth_ink" disabled>Smooth solid ink · 0.05–128 px · new format</option><option value="dry_ink">Dry ink experiment · 0.25–128 px</option><option id="nativeMyPaintOption" value="mypaint_ink" disabled>MyPaint ink · experimental Multiply ink</option></select><p class="fine">Smooth ink preserves pressure with antialiased broad edges. It is solid ink, not a textured brush or an image restorer. Save a new copy after using it; older builds cannot open format 19.</p><label class="fieldlabel" for="nativeMyPaintPreset">MyPaint preset</label><select id="nativeMyPaintPreset" class="field" disabled><option value="pointy_ink">Pointy ink</option><option id="nativeDryBrushOption" value="dry_brush" disabled>Dry brush · experimental Multiply</option></select><label class="fieldlabel" for="nativeMyPaintBlend">MyPaint compositing</label><select id="nativeMyPaintBlend" class="field" disabled><option value="multiply">Multiply ink · default</option><option id="nativeNormalPaintOption" value="normal" disabled>Normal paint · light over dark</option></select><label class="fieldlabel" for="nativeMyPaintRadiusScale">MyPaint radius multiplier · not px</label><input class="field" id="nativeMyPaintRadiusScale" type="number" min="0.25" max="8" step="0.25" value="1" disabled><p class="fine">Pressure response remains active. Larger strokes can exceed the guarded crop budget and be rejected entirely, not clipped.</p><label class="fieldlabel" for="nativeMyPaintPressure">MyPaint mouse pressure (pen uses real pressure)</label><input class="field" id="nativeMyPaintPressure" type="number" min="0.05" max="1" step="0.05" value="0.35" disabled><div class="helper" id="nativeMyPaintStatus"></div><div class="helper">MyPaint: preset pressure/width with the selected color and blend mode below; native width/color controls do not apply. Cropped-capable engine: full canvas ≤ 20,000,000 pixels / 8192 per axis; stroke ROI ≤ 1,048,576 pixels / 2048 per axis. Oversized strokes are rejected, never shrunk. Older engine retains its smaller full-canvas limit. Each completed stroke adds a separate locked raster layer using the selected mode; no canvas resizing.</div><label class="fieldlabel" for="nativeMyPaintColor">MyPaint color · sRGB</label><input id="nativeMyPaintColor" type="color" value="#000000" disabled><p class="fine">Keeps the preset’s pressure-dependent alpha coverage. Multiply darkens; Normal allows white/light paint over dark pixels, without making the whole stroke rectangle opaque. Neither mode simulates wet-pigment mixing. Default Multiply preserves the original behavior.</p><button class="secondary" id="nativeCancelBrush" disabled>Cancel MyPaint render</button>
-<label class="fieldlabel" for="nativePenWidth">Brush width · document pixels</label>
+<p class="fine">While drawing, fine/smooth ink shows approximate color, width and pressure. This is a temporary topmost brush-shape preview, not final layer compositing: masks, layer opacity and occlusion apply only after release. Browser edges differ from native antialiasing. Mouse taper adapts as the path grows. Dry/MyPaint show a blue path, not simulated texture.</p><label class="fieldlabel" for="nativePenWidth">Brush width · document pixels</label>
 <input id="nativePenWidth" class="field" type="number" min="0.05" max="8" step="0.05" value="0.5" disabled>
 <label class="fieldlabel" for="nativeMouseTaper">Mouse taper · native brushes only</label><select id="nativeMouseTaper" class="field" disabled><option value="0">Off · original pressure</option><option value="0.1">Short · 10% of stroke at each end</option><option value="0.2">Medium · 20% at each end</option><option value="0.35">Long · 35% at each end</option></select><p class="fine">Optional simulated start/end pressure for mouse drawing, not real pen pressure. Does not move your path or add texture. Pen and MyPaint input are unchanged; clicks remain dots. The final taper appears after release and is saved in the stroke.</p>
-<p class="helper">Draw with a mouse or pressure-sensitive pen. Release to commit one undoable stroke. The temporary blue guide is not the final ink. New brush edits may require Save separate copy.</p>
+<p class="helper">Draw with a mouse or pressure-sensitive pen. Release to commit one undoable stroke. The temporary colored brush shape or blue path is not the final ink. New brush edits may require Save separate copy.</p>
 <div class="divider"></div><div class="export">
 <button id="nativeDownload" class="secondary" type="button" disabled>Download saved .draw</button>
 <button id="nativePng" class="secondary" type="button" disabled>Export painting PNG</button>
@@ -243,6 +243,21 @@ function nativeFillPoint(rect,width,height,clientX,clientY){
  return {x:Math.floor(x),y:Math.floor(y)};
 }
 // BUCKET_HELPERS_END
+// LIVE_INK_HELPERS_BEGIN
+function nativeLiveInk(points,width,scale,taper){
+ if(!points.length)return [];
+ const lengths=[0];for(let i=1;i<points.length;i++)lengths.push(lengths[i-1]+Math.hypot(points[i].x-points[i-1].x,points[i].y-points[i-1].y));
+ const total=lengths.at(-1),ramp=total*taper,result=[];
+ const add=(p,d)=>{const envelope=ramp>0?.05+.95*Math.min(1,d/ramp,(total-d)/ramp):1;result.push({x:p.x*scale,y:p.y*scale,radius:width*scale*p.pressure*envelope/2});};
+ add(points[0],0);
+ for(let i=1;i<points.length;i++){
+  const a=points[i-1],b=points[i],lo=lengths[i-1],hi=lengths[i];
+  for(const d of [...new Set([ramp,total-ramp])].sort((a,b)=>a-b))if(ramp>0&&d>lo&&d<hi){const t=(d-lo)/(hi-lo);add({x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t,pressure:a.pressure+(b.pressure-a.pressure)*t},d);}
+  add(b,hi);
+ }
+ return result;
+}
+// LIVE_INK_HELPERS_END
 // PEN_HELPERS_BEGIN
 function nativePenPoint(rect,width,height,clientX,clientY){
  if(![rect.left,rect.top,rect.width,rect.height,width,height,clientX,clientY].every(Number.isFinite)||width<=0||height<=0||rect.width<=0||rect.height<=0)return null;
@@ -599,8 +614,24 @@ by('nativePreview').onclick=event=>{
  nativeRun(async()=>nativeShow(await nativePost('/'+nativeState.id+'/commands',body)));
 };
 // PEN_INPUT_BEGIN
+function nativeInkDraft(drag){
+ if(nativePenDrag!==drag)return;
+ const canvas=by('nativeStrokeDraft'),ctx=canvas.getContext('2d'),host=by('nativeCanvasHost').getBoundingClientRect(),rect=by('nativePreview').getBoundingClientRect();
+ const scale=Math.min(rect.width/Number(nativeState.width),rect.height/Number(nativeState.height));
+ const ox=rect.left-host.left+(rect.width-Number(nativeState.width)*scale)/2,oy=rect.top-host.top+(rect.height-Number(nativeState.height)*scale)/2;
+ const ps=nativeLiveInk(drag.points,drag.body.width,scale,drag.body.pressure_taper||0);
+ ctx.clearRect(0,0,canvas.width,canvas.height);ctx.fillStyle=drag.body.color;ctx.beginPath();
+ for(let i=0;i<ps.length;i++){
+  const p=ps[i],x=p.x+ox,y=p.y+oy;
+  if(p.radius>0){ctx.moveTo(x+p.radius,y);ctx.arc(x,y,p.radius,0,Math.PI*2);}
+  if(i){const a=ps[i-1],dx=p.x-a.x,dy=p.y-a.y,len=Math.hypot(dx,dy);if(len>0){const nx=-dy/len,ny=dx/len;ctx.moveTo(a.x+ox+nx*a.radius,a.y+oy+ny*a.radius);ctx.lineTo(a.x+ox-nx*a.radius,a.y+oy-ny*a.radius);ctx.lineTo(x-nx*p.radius,y-ny*p.radius);ctx.lineTo(x+nx*p.radius,y+ny*p.radius);ctx.closePath();}}
+ }
+ ctx.fill();
+}
+
 function nativePenCancel(message){
  if(!nativePenDrag)return;
+ if(nativePenDrag.frame)cancelAnimationFrame(nativePenDrag.frame);
  const pointer=nativePenDrag.pointerId;nativePenDrag=null;nativeBusy=false;
  by('nativeStrokeDraft').hidden=true;
  if(by('nativePreview').hasPointerCapture(pointer))by('nativePreview').releasePointerCapture(pointer);
@@ -618,6 +649,10 @@ function nativePenSample(event,forceEndpoint=false){
  if(last&&!forceEndpoint&&Math.hypot(point.x-last.x,point.y-last.y)<0.1&&Math.abs(point.pressure-last.pressure)<0.01)return true;
  if(drag.points.length>=1024){nativePenCancel('Stroke too long. Draw shorter strokes; no partial stroke was saved.');return false;}
  drag.points.push(point);
+ if(drag.body.brush==='fine'||drag.body.brush==='smooth_ink'){
+  if(!drag.frame)drag.frame=requestAnimationFrame(()=>{drag.frame=null;nativeInkDraft(drag);});
+  return true;
+ }
  const host=by('nativeCanvasHost').getBoundingClientRect(), ctx=by('nativeStrokeDraft').getContext('2d');
  const x=event.clientX-host.left,y=event.clientY-host.top;
  ctx.strokeStyle='#168bff';ctx.lineWidth=1;ctx.lineCap='round';ctx.beginPath();

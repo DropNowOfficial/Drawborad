@@ -33,7 +33,10 @@ def main():
     # Controls may scroll the page: remeasure after returning to the viewport.
     page.locator('#nativeCanvasHost').scroll_into_view_if_needed();r=page.locator('#nativeCanvasHost').bounding_box();x=r['x']+r['width']/2;y=r['y']+200
     expected=page.evaluate('p=>{const r=by("nativePreview").getBoundingClientRect();return {x:(p.x+20-r.left)/2,y:(p.y+15-r.top)/2}}',{'x':x,'y':y})
-    page.mouse.move(x,y);page.mouse.down();page.mouse.move(x+40,y+30,steps=4);page.mouse.up()
+    page.mouse.move(x,y);page.mouse.down();page.mouse.move(x+40,y+30,steps=4)
+    page.wait_for_function('()=>{const c=by("nativeStrokeDraft");return !c.hidden&&c.getContext("2d").getImageData(0,0,c.width,c.height).data.some((v,i)=>i%4===3&&v>0)}')
+    assert page.evaluate('()=>nativeState.stroke_count')=='0','temporary preview must not commit a stroke'
+    page.mouse.up()
     page.wait_for_function("()=>!nativeBusy&&nativeState.stroke_count==='1'")
     assert page.evaluate('()=>nativeViewX')==100
     assert page.locator('#nativeZoom').input_value()=='2'
@@ -46,7 +49,7 @@ def main():
     page.mouse.up()
     page.screenshot(path=str(out/'viewport.png'),full_page=True)
     assert not errors,errors
-    receipt=dict(passed=True,synthetic=True,zoom='200%',pan=[100,50],stroke_committed=True,expected_document_pixel_has_ink=True,view_preserved=True,blur_unlock=True,limitations=['Not artwork-quality approval','MyPaint/fill/eyedropper end-to-end coverage still separate'])
+    receipt=dict(passed=True,synthetic=True,zoom='200%',pan=[100,50],live_draft_before_commit=True,stroke_committed=True,expected_document_pixel_has_ink=True,view_preserved=True,blur_unlock=True,limitations=['Not artwork-quality approval','MyPaint/fill/eyedropper end-to-end coverage still separate'])
     (out/'receipt.json').write_text(json.dumps(receipt,indent=2));print(json.dumps(receipt));browser.close()
   finally:
    server.terminate()
