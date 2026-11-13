@@ -61,6 +61,7 @@ footer{color:#98a1ac;font-size:11px;margin-top:25px;line-height:1.7}.errors{colo
 <p id="nativeScope" class="native-scope" role="status" aria-live="polite">No layer selected</p>
 <label class="fieldlabel" for="nativeLayerName">Selected layer name</label><input id="nativeLayerName" class="field" type="text" maxlength="256" disabled>
 <label class="fieldlabel" for="nativeLayerOpacity">Layer opacity · percent</label><input id="nativeLayerOpacity" class="field" type="number" min="0" max="100" step="1" disabled>
+<button id="nativeRecolorLayer" class="secondary" type="button" disabled>Recolor all strokes in layer</button><p class="fine">Native color/ink layers only. Keeps shapes and opacity; one Undo restores the previous colors. Raster ink stays unchanged.</p>
 <button id="nativeUpdateLayer" class="secondary" type="button" disabled>Apply layer properties</button>
 <fieldset class="panelbody"><legend>Single MyPaint stroke mask</legend>
 <p class="fine">Select one cropped MyPaint layer, not a group. Keep only the rectangle below; outside is hidden without changing original ink. A rectangle missing this stroke hides it entirely; restore original to recover it. Undo and native save-copy preserve the mask. ORA exports bake it into that layer.</p>
@@ -320,6 +321,7 @@ function nativeMaskControls(){
  by('nativeMaskStatus').textContent=!target?'Select one supported cropped MyPaint layer. Older native builds cannot save masks.':target.stroke_mask?(target.stroke_mask.enabled?'Mask enabled; original ink retained.':'Mask disabled; original ink restored.'):'No mask on selected stroke.';
 }
 // MASK_HELPERS_END
+function nativeRecolorLayerReady(){return !nativeBusy&&nativeState?.capabilities?.includes('recolor_layer')&&!!nativeFillTarget(nativeState,nativeSelectedNodeId)&&nativeState.strokes.some(e=>e.layer_id===nativeSelectedNodeId);}
 function nativeControls(){
  nativeMaskControls();
  nativeBoundaryControls();
@@ -331,6 +333,7 @@ function nativeControls(){
  const editableLayer=nativeState?.nodes?.find(n=>n.id===nativeSelectedNodeId&&n.kind!==0&&!n.locked);
  for(const id of ['nativeLayerName','nativeLayerOpacity','nativeUpdateLayer'])by(id).disabled=nativeBusy||!editableLayer||!nativeState?.capabilities?.includes('update_layer');
  by('nativeRecolor').disabled=nativeBusy||!hasSelection;
+ by('nativeRecolorLayer').disabled=!nativeRecolorLayerReady();
  by('nativeDownload').disabled=nativeBusy||!nativeState||nativeState.dirty;
  by('nativeStrokes').disabled=nativeBusy||!hasSelection;
  by('nativeColor').disabled=nativeBusy||(!hasSelection&&!nativeFillTarget(nativeState,nativeSelectedNodeId));
@@ -512,6 +515,7 @@ by('nativeMaskToggle').onclick=()=>nativeRun(async()=>{
  await nativeShow(await nativePost('/'+nativeState.id+'/commands',{type:'toggle_stroke_mask',layer_id:target.id,expected_document_id:nativeState.document_id,expected_revision:nativeState.revision,enabled:!target.stroke_mask.enabled}));
 });
 // MASK_INPUT_END
+by('nativeRecolorLayer').onclick=()=>{if(!nativeRecolorLayerReady())return;return nativeRun(async()=>nativeShow(await nativePost('/'+nativeState.id+'/commands',{expected_revision:nativeState.revision,type:'recolor_layer',layer_id:nativeSelectedNodeId,color:by('nativeColor').value})));};
 by('nativeRecolor').onclick=()=>nativeRun(async()=>nativeShow(await nativePost('/'+nativeState.id+'/commands',{expected_revision:nativeState.revision,type:'recolor_stroke',stroke_id:by('nativeStrokes').value,color:by('nativeColor').value})));
 for(const action of ['Undo','Redo','Save'])by('native'+action).onclick=()=>nativeRun(async()=>nativeShow(await nativePost('/'+nativeState.id+'/'+action.toLowerCase(),{expected_revision:nativeState.revision})));
 by('nativeSaveCopy').onclick=()=>nativeRun(async()=>nativeShow(await nativePost('/'+nativeState.id+'/save-copy',{expected_revision:nativeState.revision})));

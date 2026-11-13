@@ -1,6 +1,7 @@
 #include "brush/HiddenBoundaryFill.h"
 #include "core/CroppedStrokeMask.h"
 #include "ProjectSession.h"
+#include "view/LayerTree.h"
 #include "../../apps/studio/ApplicationController.h"
 #include "ui/PaintedDocument.h"
 #include "ui/MergedDocument.h"
@@ -140,7 +141,7 @@ public:
                 {"start_us",number(e.startUs)},{"end_us",number(e.endUs)},
                 {"geometry_count",number(e.geometry.size())}});
         }
-        QJsonArray capabilities{"recolor_stroke","set_properties","bucket_fill","add_fill_layer","draw_stroke","update_layer","undo","redo","save","save_copy","replay","png"};
+        QJsonArray capabilities{"recolor_layer","recolor_stroke","set_properties","bucket_fill","add_fill_layer","draw_stroke","update_layer","undo","redo","save","save_copy","replay","png"};
         capabilities.append("ora");capabilities.append("append_brush_layer");capabilities.append("append_brush_crop");capabilities.append("append_brush_normal");capabilities.append("cropped_stroke_mask");capabilities.append("hidden_fill_boundary");
         return {{"document_id",idText(s.documentId)},{"revision",number(s.revision)},
             {"saved_revision",saved?QJsonValue(number(*saved)):QJsonValue(QJsonValue::Null)},
@@ -331,6 +332,15 @@ public:
                 need(found!=s.eventIndex->end(),"stroke.missing");
                 auto color=browserColor(s,p.value("color"));color.alpha=found->color.alpha;
                 command.operations.emplace_back(RecolorStroke{id,color});
+            } else if(type=="recolor_layer") {
+                const auto s=snapshot();const auto layer=parseId(p.value("layer_id"));
+                need(nativeLayerPaintable(s,layer),"recolor-layer.unsupported-or-locked");
+                const auto target=browserColor(s,p.value("color"));
+                for(const auto& event:*s.eventIndex)if(event.layerId==layer){
+                    auto color=target;color.alpha=event.color.alpha;
+                    command.operations.emplace_back(RecolorStroke{event.id,color});
+                }
+                need(!command.operations.empty(),"recolor-layer.empty");
             } else if(type=="add_fill_layer") {
                 command=checked(addFillLayerCommand(snapshot(),newEventId(),true,true));
             } else if(type=="bucket_fill") {

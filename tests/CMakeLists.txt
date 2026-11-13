@@ -113,6 +113,8 @@ endif()
 find_program(DRAWBORAD_NODE_EXECUTABLE node)
 if(DRAWBORAD_NODE_EXECUTABLE)
   add_test(NAME B11.PenUI COMMAND ${DRAWBORAD_NODE_EXECUTABLE} tests/cloud/test_pen_ui.cjs)
+  add_test(NAME B20.RecolorLayerUI COMMAND ${DRAWBORAD_NODE_EXECUTABLE} tests/cloud/test_recolor_layer_ui.cjs)
+  set_tests_properties(B20.RecolorLayerUI PROPERTIES WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
   add_test(NAME B14.MyPaintUI COMMAND ${DRAWBORAD_NODE_EXECUTABLE} tests/cloud/test_mypaint_ui.cjs)
   set_tests_properties(B14.MyPaintUI PROPERTIES WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
   set_tests_properties(B11.PenUI PROPERTIES WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
@@ -201,5 +203,10 @@ if(DRAWBORAD_HEADLESS_WORKFLOW)
  set_tests_properties(B19.BoundarySession PROPERTIES TIMEOUT 240)
 endif()
 
-# Register B08 before TestTargets labels and snapshots the complete inventory.
+if(DRAWBORAD_HEADLESS_WORKFLOW)
+ add_test(NAME B20.RecolorLayerSession COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/headless/test_recolor_layer_session.py $<TARGET_FILE:DrawboradHeadless>)
+ set_tests_properties(B20.RecolorLayerSession PROPERTIES TIMEOUT 120)
+endif()
+
+# Register all native features before labeling the test inventory.
 include(${PROJECT_SOURCE_DIR}/cmake/TestTargets.cmake)
