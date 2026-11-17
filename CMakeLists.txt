@@ -149,7 +149,7 @@ message(STATUS "Drawborad CPU inference runtime compiled: ${DRAWBORAD_HAS_ONNXRU
 
 add_library(drawborad_reconstruct STATIC
   src/reconstruct/ReconstructionService.cpp src/reconstruct/EventWriter.cpp
-  src/reconstruct/ContourPlanner.cpp src/reconstruct/RegionPlanner.cpp src/reconstruct/StrokeScheduler.cpp
+  src/reconstruct/ContourPlanner.cpp src/reconstruct/RegionPlanner.cpp src/reconstruct/MultiscalePlanner.cpp src/reconstruct/StrokeScheduler.cpp
   src/reconstruct/PigmentRefiner.cpp src/reconstruct/TexturePlanner.cpp src/reconstruct/RegionBudget.cpp)
 target_include_directories(drawborad_reconstruct PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(drawborad_reconstruct PUBLIC drawborad_models drawborad_color drawborad_core)

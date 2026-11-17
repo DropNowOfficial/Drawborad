@@ -37,7 +37,9 @@ class LocalStore:
         return digest(body)
 
 class Jobs:
-    def __init__(self,store,engine=None,timeout=180):
+    def __init__(self,store,engine=None,timeout=180,planner="sweep"):
+        if planner not in ("sweep","multiscale"):raise ValueError("Unsupported native planner")
+        self.planner=planner
         self.store=store;self.engine=str(Path(engine).resolve()) if engine else None;self.timeout=timeout
     def _key(self,jid):
         if not re.fullmatch('[0-9a-f]{32}',jid):raise ValueError('Invalid job ID')
@@ -90,12 +92,13 @@ class Jobs:
             if any(max(x,a)<min(r,c) and max(y,d)<min(b,e) for a,d,c,e in used):raise ValueError('Views overlap')
             names.add(v['id']);used.append(box)
         spec=dict(sourceSha256=digest(image),backend=backend,prompts=prompts,views=views)
+        if self.planner!="sweep":spec["planner"]=self.planner
         jid=digest(key.encode())[:32];fingerprint=digest(encoded(spec));old,_=self.store.read(self._key(jid))
         if old:
             j=json.loads(old)
             if j['fingerprint']!=fingerprint:raise Conflict('Idempotency key reused for different input')
             return j
-        j=dict(id=jid,revision='0',state='segment_queued',backend=backend,fingerprint=fingerprint,input=self.asset(jid,name,image),image_name=name,width=w,height=h,prompts=prompts,views=views,candidates=[],accepted=[],outputs={},inference_ran=False,created_at=time.time(),cost=dict(actual_usd=None,gpu_inference_ran=False,billing_status='not_run',gpu_billed_seconds=None,storage_usd=None,network_usd=None))
+        j=dict(id=jid,planner=self.planner,revision='0',state='segment_queued',backend=backend,fingerprint=fingerprint,input=self.asset(jid,name,image),image_name=name,width=w,height=h,prompts=prompts,views=views,candidates=[],accepted=[],outputs={},inference_ran=False,created_at=time.time(),cost=dict(actual_usd=None,gpu_inference_ran=False,billing_status='not_run',gpu_billed_seconds=None,storage_usd=None,network_usd=None))
         try:self.store.put(self._key(jid),encoded(j),None)
         except Conflict:return self.create(image,key,backend,prompts,views)
         return j
@@ -175,6 +178,7 @@ class Jobs:
                     p=inp/safe_key(name);p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(self.read_asset(record))
                 load_manifest(inp)
                 args=[self.engine,'run','--manifest',str(inp/'manifest.json'),'--output',str(out)]
+                if j.get('planner','sweep')=='multiscale':args+=['--planner','multiscale']
                 for c in j['candidates']:
                     if c['id'] in j['accepted']:args+=['--accept-index',str(c['index'])]
                 if j['backend']=='fixture-no-ai':args+=['--fixture']

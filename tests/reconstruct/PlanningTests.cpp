@@ -9,8 +9,62 @@
 #include <cstdint>
 #include <memory>
 #include <stop_token>
+#include <set>
 using namespace drawborad;
+// A narrow diagonal highlight must survive planning and native rasterization.
+// The old whole-region sweep averages it into a staircase of short flat runs.
+TEST("Q01 multiscale planning retains diagonal detail in native pixels"){
+    auto snapshot=fixture::snapshot(ColorMode::RGB,Depth::U8,64,64);
+    Bytes mask(4096,255);
+    Resource resource{sha256(mask),ResourceKind::Mask,std::make_shared<const Bytes>(mask),{}};
+    auto resources=std::make_shared<ResourceMap>(*snapshot.resources);resources->emplace(resource.id,resource);snapshot.resources=resources;
+    auto nodes=std::make_shared<NodeMap>(*snapshot.nodes);nodes->at(Id::fromNumber(2)).maskId=resource.id;snapshot.nodes=nodes;
+    TileData source;source.width=64;source.height=64;source.rowStride=256;
+    source.format=snapshot.spec.colorSpec.format;source.profileId=snapshot.spec.colorSpec.profileId;source.bytes.resize(16384);
+    for(int y=0;y<64;++y)for(int x=0;x<64;++x){
+        const auto v=std::uint8_t(40+180*std::exp(-std::pow((x-y-3)/1.5,2)));
+        for(int c=0;c<3;++c)source.bytes[(y*64+x)*4+c]=v;
+        source.bytes[(y*64+x)*4+3]=255;
+    }
+    PlanningRegion region{snapshot,Id::fromNumber(2),Id::fromNumber(3),{0,0,64,64},mask,&source,314,4096,250000,{},true};
+    const auto old=planBasePigment(region,StyleSettings{"marker",2,1,1,.04});CHECK(old);
+    const auto improved=planMultiscalePigment(region);CHECK(improved);
+    const auto error=[&](const EventBatch& batch){
+        const auto s=fixture::withEvents(snapshot,batch.events);ReferenceRenderer renderer;
+        const auto rendered=renderer.renderRegion(s,region.layerId,{0,0,64,64},{s.revision});CHECK(rendered);
+        double loss=0;for(std::size_t p=0;p<4096;++p){
+            const auto delta=double(rendered.value().bytes[p*4])-source.bytes[p*4];loss+=delta*delta;
+        }return loss;
+    };
+    CHECK(error(improved.value())<error(old.value())*.7);
+    CHECK(planMultiscalePigment(region).value().events==improved.value().events);
+    std::set<Id> ids;
+    bool diagonal=false;
+    for(const auto& e:improved.value().events){
+        CHECK(ids.insert(e.id).second);CHECK(e.objectId==region.objectId);CHECK(e.layerId==region.layerId);
+        CHECK(e.geometry.size()>=2);CHECK(e.startUs<=e.endUs);
+        const auto& a=e.geometry.front();const auto& b=e.geometry.back();
+        if(std::abs(a.x-b.x)>2 && std::abs(a.y-b.y)>2)diagonal=true;
+    }
+    CHECK(diagonal);
+    auto stop=std::stop_source{};stop.request_stop();region.stop=stop.get_token();
+    CHECK(!planMultiscalePigment(region));region.stop={};
+    region.maxEvents=1;CHECK(!planMultiscalePigment(region));region.maxEvents=4096;
+    source.bytes[3]=128;CHECK(!planMultiscalePigment(region));source.bytes[3]=255;
+    region.clipToReviewedMask=false;CHECK(!planMultiscalePigment(region));
+}
 namespace {
+TEST("Q01 multiscale feedback crosses native render tiles at original coordinates"){
+    auto snapshot=fixture::snapshot(ColorMode::RGB,Depth::U8,600,16);Bytes mask(600*16,255);
+    Resource resource{sha256(mask),ResourceKind::Mask,std::make_shared<const Bytes>(mask),{}};
+    auto resources=std::make_shared<ResourceMap>(*snapshot.resources);resources->emplace(resource.id,resource);snapshot.resources=resources;
+    auto nodes=std::make_shared<NodeMap>(*snapshot.nodes);nodes->at(Id::fromNumber(2)).maskId=resource.id;snapshot.nodes=nodes;
+    TileData source;source.width=600;source.height=16;source.rowStride=2400;source.format=snapshot.spec.colorSpec.format;source.profileId=snapshot.spec.colorSpec.profileId;source.bytes.assign(600*16*4,255);
+    PlanningRegion region{snapshot,Id::fromNumber(2),Id::fromNumber(3),{0,0,600,16},mask,&source,314,4096,250000,{},true};
+    const auto plan=planMultiscalePigment(region);CHECK(plan);
+    bool beyondTile=false;for(const auto& e:plan.value().events)for(const auto& p:e.geometry)if(p.x>512)beyondTile=true;
+    CHECK(beyondTile);
+}
 struct Context {
     DocumentSnapshot snapshot;
     TileData source;

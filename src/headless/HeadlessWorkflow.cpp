@@ -163,7 +163,8 @@ Result<HeadlessWorkflowReport> runHeadlessWorkflow(const HeadlessWorkflowRequest
     auto installed=document.value().apply(setup,0);if(!installed)return installed.error();
     const auto before=document.value().snapshot();auto job=before;
     auto resources=std::make_shared<ResourceMap>(*before.resources);
-    const auto instruction=jsonResource({{"type",ReconstructionRequestType},{"mode","reconstruct"},{"image",sourcePath}});
+    const auto instruction=jsonResource({{"type",ReconstructionRequestType},{"mode","reconstruct"},{"image",sourcePath},
+        {"planner",request.multiscale?"multiscale":"sweep"}});
     resources->emplace(instruction.id,instruction);job.resources=resources;
     auto delta=runReconstructionJob(job,stop);if(!delta)return delta.error();
     auto after=decodeDelta(delta.value(),job);if(!after)return after.error();
