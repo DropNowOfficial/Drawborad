@@ -64,7 +64,7 @@ def run(engine,image,out,browser=False):
         if browser:
             from playwright.sync_api import sync_playwright
             with sync_playwright() as pw:
-                b=pw.chromium.launch(headless=True);page=b.new_page(viewport={'width':1280,'height':1000})
+                b=pw.chromium.launch(headless=True,executable_path=os.environ.get('DRAWBORAD_TEST_BROWSER'));page=b.new_page(viewport={'width':1280,'height':1000})
                 page.goto(url);page.locator('#token').fill(token);page.locator('#connect').click()
                 page.locator('#fixtureOption').wait_for(state='visible');page.locator('#fixture').check();page.locator('#image').set_input_files(str(image.resolve()))
                 page.locator('#upload').click();page.wait_for_function("document.querySelector('#start').disabled===false")

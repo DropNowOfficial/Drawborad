@@ -48,3 +48,17 @@ reopening it. Do not label its whole-image mask as semantic identification.
 Photo sources: scikit-image v0.19.3 `chelsea.png` (451x300, Stefan van der Walt)
 and `coffee.png` (600x400, Rachel Michetti), CC0, documented at
 https://scikit-image.org/docs/0.26.x/api/skimage.data.html . No model ran.
+
+## Editing and render limits
+
+Marker coverage is rasterized only inside each stroke's conservative bounds;
+its result is tested byte-for-byte against full-tile coverage. The merged
+preview accepts up to 65,536 events while retaining its geometry, index,
+128 MiB memory and raster-work bounds. Recolor, undo/redo, save/reopen and
+source-free replay were exercised on both full photo outputs (30,613 and
+32,769 events). Use `tests/headless/test_photo_edit.py ENGINE PROJECT OUTPUT`
+with a fresh output directory to repeat that native-session acceptance.
+
+The older cubic/geometry adjustment tools retain their 8,192-event guards.
+They are not yet available on these larger projects; this change does not
+claim all desktop/local editing tools support 65,536 events.

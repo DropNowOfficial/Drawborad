@@ -2,6 +2,7 @@
 #include "RenderFixture.h"
 #include "reconstruct/Planning.h"
 #include "render/ReferenceRenderer.h"
+#include "render/CoverageRasterizer.h"
 #include "core/Commands.h"
 #include "view/LayerTree.h"
 #include <algorithm>
@@ -11,6 +12,16 @@
 #include <stop_token>
 #include <set>
 using namespace drawborad;
+TEST("Q01 local marker coverage matches whole tile without allocating whole tile per stroke"){
+    auto s=fixture::snapshot(ColorMode::RGB,Depth::U8,512,512);
+    auto e=fixture::stroke(s,100.5,100.5,108.5,105.5);e.toolId="marker";e.style.width=2;
+    s=fixture::withEvents(s,{e});ReferenceRenderer renderer;
+    auto result=renderer.renderRegion(s,e.layerId,{0,0,512,512},{s.revision});CHECK(result);
+    auto expected=result.value();std::fill(expected.bytes.begin(),expected.bytes.end(),0);
+    auto coverage=strokeCoverage(e,{0,0,512,512},UINT64_MAX);CHECK(coverage);
+    blendCoverage(expected,e,coverage.value());CHECK(expected.bytes==result.value().bytes);
+    CHECK(renderer.statistics().coveragePixels<1024);
+}
 // A narrow diagonal highlight must survive planning and native rasterization.
 // The old whole-region sweep averages it into a staircase of short flat runs.
 TEST("Q01 multiscale planning retains diagonal detail in native pixels"){

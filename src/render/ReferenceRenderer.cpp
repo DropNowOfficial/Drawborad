@@ -37,7 +37,27 @@ Result<TileData> ReferenceRenderer::continueRegion(const DocumentSnapshot&s,Node
  auto ok=prepare(s,stop);if(!ok)return ok.error();TileData t;t.width=std::uint32_t(rect.width);t.height=std::uint32_t(rect.height);t.format=s.spec.colorSpec.format;t.profileId=s.spec.colorSpec.profileId;t.rowStride=rect.width*t.format.channelCount()*(t.format.depth==Depth::U16?2:1);try{t.bytes.resize(std::size_t(t.rowStride*t.height));}catch(const std::bad_alloc&){return error(ErrorCode::BudgetExceeded,"render.tile-allocation");}
  if(first){if(checkpoint.width!=t.width||checkpoint.height!=t.height||checkpoint.rowStride!=t.rowStride||checkpoint.format!=t.format||checkpoint.profileId!=t.profileId||checkpoint.bytes.size()!=t.bytes.size())return error(ErrorCode::CorruptData,"render.checkpoint-layout");t.bytes=checkpoint.bytes;}
  std::vector<std::size_t> ids;for(auto y=tileAt(rect.y);y<=tileAt(rect.y+std::int64_t(rect.height)-1);y++)for(auto x=tileAt(rect.x);x<=tileAt(rect.x+std::int64_t(rect.width)-1);x++){auto c=candidates(s,{id,x,y,0},stop);if(!c)return c.error();ids.insert(ids.end(),c.value().begin(),c.value().end());}std::sort(ids.begin(),ids.end());ids.erase(std::unique(ids.begin(),ids.end()),ids.end());stats_.reconstructionCalls++;
- for(auto i:ids){if(i<first||i>=l.lastEvent)continue;stats_.visitedEvents++;const auto&e=s.eventIndex->at(i);if(e.startUs>l.timeTicks||!intersects(prepared_->bounds[i],rect))continue;const StrokeEvent* rendered=&e;if(isAuthoredCubic(e)){if(!prepared_->cubics||!prepared_->cubics->renderEvents.contains(i))return error(ErrorCode::CorruptData,"cubic.preparation-missing");rendered=&prepared_->cubics->renderEvents.at(i);}auto c=strokeCoverage(*rendered,rect,l.timeTicks,stop);if(!c)return c.error();stats_.coveragePixels+=c.value().size();blendCoverage(t,e,c.value());stats_.rasterizedEvents++;}
+ for(auto i:ids){if(i<first||i>=l.lastEvent)continue;stats_.visitedEvents++;const auto&e=s.eventIndex->at(i);if(e.startUs>l.timeTicks||!intersects(prepared_->bounds[i],rect))continue;const StrokeEvent* rendered=&e;if(isAuthoredCubic(e)){if(!prepared_->cubics||!prepared_->cubics->renderEvents.contains(i))return error(ErrorCode::CorruptData,"cubic.preparation-missing");rendered=&prepared_->cubics->renderEvents.at(i);}if(e.engineVersion==2 && e.toolId=="marker"){
+  const auto& b=prepared_->bounds[i];
+  const auto x0=std::max(rect.x,b.x),y0=std::max(rect.y,b.y);
+  const auto x1=std::min(rect.x+std::int64_t(rect.width),b.x+std::int64_t(b.width));
+  const auto y1=std::min(rect.y+std::int64_t(rect.height),b.y+std::int64_t(b.height));
+  Rect roi{x0,y0,std::uint64_t(x1-x0),std::uint64_t(y1-y0)};
+  auto c=strokeCoverage(e,roi,l.timeTicks,stop);if(!c)return c.error();
+  TileData patch;patch.width=std::uint32_t(roi.width);patch.height=std::uint32_t(roi.height);
+  patch.format=t.format;patch.profileId=t.profileId;
+  const auto pixelBytes=t.format.channelCount()*(t.format.depth==Depth::U16?2u:1u);
+  patch.rowStride=roi.width*pixelBytes;patch.bytes.resize(std::size_t(patch.rowStride)*patch.height);
+  const auto offset=std::uint64_t(y0-rect.y)*t.rowStride+std::uint64_t(x0-rect.x)*pixelBytes;
+  for(unsigned y=0;y<patch.height;++y)std::copy_n(t.bytes.data()+offset+y*t.rowStride,patch.rowStride,patch.bytes.data()+y*patch.rowStride);
+  blendCoverage(patch,e,c.value());
+  for(unsigned y=0;y<patch.height;++y)std::copy_n(patch.bytes.data()+y*patch.rowStride,patch.rowStride,t.bytes.data()+offset+y*t.rowStride);
+  stats_.coveragePixels+=c.value().size();
+ }else{
+  auto c=strokeCoverage(*rendered,rect,l.timeTicks,stop);if(!c)return c.error();
+  stats_.coveragePixels+=c.value().size();blendCoverage(t,e,c.value());
+ }
+ stats_.rasterizedEvents++;}
  return t;
 }
 }

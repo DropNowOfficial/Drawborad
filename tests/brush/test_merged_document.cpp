@@ -45,6 +45,9 @@ int main(){
  excessive.eventIndex=excessiveEvents;assert(!planMergedDocument(excessive));
  auto overLimit=std::make_shared<EventList>(*manyEvents);
  while(overLimit->size()<8193){auto e=overLimit->front();e.id=Id::fromNumber(1000+overLimit->size());overLimit->push_back(e);}
+ excessive.eventIndex=overLimit;assert(planMergedDocument(excessive));
+ assert(renderMergedDocument(excessive,{excessive.revision}));
+ while(overLimit->size()<65537){auto e=overLimit->front();e.id=Id::fromNumber(1000+overLimit->size());overLimit->push_back(e);}
  excessive.eventIndex=overLimit;assert(!planMergedDocument(excessive));
  auto small=scene(515,519);
  {auto dry=small;auto strokes=std::make_shared<EventList>(*small.eventIndex);auto& de=strokes->front();

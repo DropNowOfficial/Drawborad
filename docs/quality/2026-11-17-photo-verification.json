@@ -1,0 +1,116 @@
+{
+  "chelsea": {
+    "dimensions": [
+      451,
+      300
+    ],
+    "baseline_mae_255": 4.944023158413402,
+    "candidate_mae_255": 2.6912638580931265,
+    "regions": {
+      "eyes": {
+        "box": [
+          120,
+          70,
+          360,
+          190
+        ],
+        "baseline_mae_255": 6.777824074074074,
+        "candidate_mae_255": 3.7046412037037038
+      },
+      "fur": {
+        "box": [
+          170,
+          0,
+          350,
+          90
+        ],
+        "baseline_mae_255": 8.523086419753087,
+        "candidate_mae_255": 4.2213991769547325
+      },
+      "whiskers": {
+        "box": [
+          30,
+          165,
+          290,
+          280
+        ],
+        "baseline_mae_255": 5.567859531772576,
+        "candidate_mae_255": 3.35520624303233
+      }
+    },
+    "original_export": {
+      "oraLayerCount": 4,
+      "oraCompositeMaxError": 0,
+      "status": "Passed"
+    },
+    "edited_ora_error": 0,
+    "editing": {
+      "strokes": "30613",
+      "stroke_id": "aa526b45a1ebd2810000000000007794",
+      "recolor": true,
+      "undo": true,
+      "redo": true,
+      "stale_rejected": true,
+      "locked_rejected": true,
+      "saved_reopened": true,
+      "source_reads": 0
+    }
+  },
+  "coffee": {
+    "dimensions": [
+      600,
+      400
+    ],
+    "baseline_mae_255": 6.319944444444444,
+    "candidate_mae_255": 4.317930555555556,
+    "regions": {
+      "cup rim": {
+        "box": [
+          150,
+          10,
+          440,
+          195
+        ],
+        "baseline_mae_255": 4.464715750232991,
+        "candidate_mae_255": 2.917166821994408
+      },
+      "spoon": {
+        "box": [
+          320,
+          210,
+          445,
+          350
+        ],
+        "baseline_mae_255": 8.012895238095238,
+        "candidate_mae_255": 5.585942857142857
+      },
+      "wood": {
+        "box": [
+          440,
+          0,
+          600,
+          180
+        ],
+        "baseline_mae_255": 3.982928240740741,
+        "candidate_mae_255": 3.070474537037037
+      }
+    },
+    "original_export": {
+      "oraLayerCount": 4,
+      "oraCompositeMaxError": 0,
+      "status": "Passed"
+    },
+    "edited_ora_error": 0,
+    "editing": {
+      "strokes": "32769",
+      "stroke_id": "001a6c4ff844773b0000000000008000",
+      "recolor": true,
+      "undo": true,
+      "redo": true,
+      "stale_rejected": true,
+      "locked_rejected": true,
+      "saved_reopened": true,
+      "source_reads": 0
+    }
+  }
+}
