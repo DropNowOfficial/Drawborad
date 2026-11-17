@@ -38,18 +38,23 @@ int execute(const QStringList& args){
               "  DrawboradHeadless run --manifest PATH --output DIR --accept-all\n"
               "  DrawboradHeadless run --manifest PATH --output DIR --accept-index N [--accept-index N] [--fixture]\n"
               "  DrawboradHeadless smoke --output DIR\n"
+              "  Optional: --planner sweep|multiscale (multiscale requires visual review)\n"
               "Output must be a new directory. Smoke provenance: fixture-no-ai.\n";
         return 0;
     }
     const auto invalid=[&](){err<<"Invalid arguments. Run DrawboradHeadless --help.\n";return 2;};
     if(args.size()<2 || (args[1]!="run" && args[1]!="smoke"))return invalid();
-    QString manifest,output;bool accept=false, allowFixture=false;
+    QString manifest,output;bool accept=false, allowFixture=false,multiscale=false,plannerSet=false;
     std::vector<std::size_t> accepted;
     for(qsizetype i=2;i<args.size();++i){
         if(args[i]=="--accept-all" && args[1]=="run" && !accept){accept=true;continue;}
         if(args[i]=="--fixture" && args[1]=="run" && !allowFixture){allowFixture=true;continue;}
         if(i+1>=args.size() || args[i+1].startsWith("--"))return invalid();
         if(args[i]=="--output" && output.isEmpty())output=args[++i];
+        else if(args[i]=="--planner" && !plannerSet){
+            const auto value=args[++i];if(value!="sweep" && value!="multiscale")return invalid();
+            multiscale=value=="multiscale";plannerSet=true;
+        }
         else if(args[i]=="--manifest" && args[1]=="run" && manifest.isEmpty())manifest=args[++i];
         else if(args[i]=="--accept-index" && args[1]=="run"){
             const auto value=args[++i];bool ok=false;const auto n=value.toULongLong(&ok);
@@ -65,7 +70,7 @@ int execute(const QStringList& args){
         loadSemanticMaskManifest(QUrl::fromLocalFile(manifest),allowFixture);
     if(!input){err<<QString::fromStdString(input.error().messageKey)<<'\n';return 2;}
     if(accept || args[1]=="smoke"){accepted.resize(input.value().names.size());std::iota(accepted.begin(),accepted.end(),0);}
-    auto result=runHeadlessWorkflow({std::move(input.value()),std::move(accepted),std::filesystem::path(output.toUtf8().toStdString())});
+    auto result=runHeadlessWorkflow({std::move(input.value()),std::move(accepted),std::filesystem::path(output.toUtf8().toStdString()),multiscale});
     if(!result){err<<QString::fromStdString(result.error().messageKey)<<'\n';return result.error().code==ErrorCode::Cancelled?4:3;}
     out<<QJsonDocument(result.value().metadata).toJson(QJsonDocument::Compact)<<'\n';return 0;
 }

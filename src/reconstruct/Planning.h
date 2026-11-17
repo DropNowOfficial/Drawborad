@@ -47,6 +47,9 @@ struct SchedulePolicy {
 
 Result<EventBatch> planContours(const PlanningRegion&);
 Result<EventBatch> planBasePigment(const PlanningRegion&, const StyleSettings&);
+// Original-coordinate RGB8 planning with native-rendered residual corrections.
+// Explicit opt-in until photo and product acceptance are complete.
+Result<EventBatch> planMultiscalePigment(const PlanningRegion&);
 Result<EventBatch> scheduleStrokes(const EventBatch&, const SchedulePolicy&);
 
 } // namespace drawborad

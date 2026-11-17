@@ -10,7 +10,7 @@ def make_jobs():
         client=boto3.client('s3',endpoint_url=os.environ['DRAWBORAD_S3_ENDPOINT'],region_name=os.environ.get('AWS_DEFAULT_REGION','auto'),config=Config(retries={'max_attempts':0}))
         store=S3Store(client,os.environ['DRAWBORAD_S3_BUCKET'],os.environ.get('DRAWBORAD_S3_PREFIX','drawborad'))
     else:store=LocalStore(os.environ.get('DRAWBORAD_BATCH_DATA','.batch-data'))
-    return Jobs(store,os.environ.get('DRAWBORAD_NATIVE_ENGINE'))
+    return Jobs(store,os.environ.get('DRAWBORAD_NATIVE_ENGINE'),planner=os.environ.get('DRAWBORAD_BATCH_PLANNER','sweep'))
 
 def make_app():
     from .api import create_app

@@ -8,6 +8,7 @@ struct HeadlessWorkflowRequest {
     SemanticManifestImport input;
     std::vector<std::size_t> accepted;
     std::filesystem::path outputDirectory;
+    bool multiscale{};
 };
 struct HeadlessWorkflowReport {
     DocumentSnapshot snapshot;

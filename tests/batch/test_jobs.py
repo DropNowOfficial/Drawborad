@@ -8,6 +8,13 @@ from cloud.batch.jobs import Jobs,Conflict,LocalStore
 def photo():
     b=io.BytesIO();Image.new('RGB',(32,32),'orange').save(b,format='PNG');return b.getvalue()
 
+def test_planner_choice_survives_worker_restart(tmp_path):
+    jobs=Jobs(LocalStore(tmp_path),planner='multiscale')
+    job=jobs.create(photo(),'quality-job','fixture-no-ai')
+    assert job['planner']=='multiscale'
+    assert Jobs(LocalStore(tmp_path)).get(job['id'])['planner']=='multiscale'
+    with pytest.raises(ValueError):Jobs(LocalStore(tmp_path),planner='unknown')
+
 def test_upload_idempotency_and_no_implicit_acceptance(tmp_path):
     jobs=Jobs(LocalStore(tmp_path))
     a=jobs.create(photo(),'request-a','fixture-no-ai')

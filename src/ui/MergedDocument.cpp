@@ -14,7 +14,7 @@ bool addWithin(std::uint64_t& value,std::uint64_t increment,std::uint64_t cap){
 }
 Result<MergedPlan> plan(const DocumentSnapshot& s,MergedBudget budget){
  if(!s.nodes || !s.eventIndex || !s.resources)return error(ErrorCode::CorruptData,"document.structure");
- if(s.nodes->size()>4096 || s.eventIndex->size()>8192)return error(ErrorCode::BudgetExceeded,"merged.structure-limit");
+ if(s.nodes->size()>4096 || s.eventIndex->size()>65536)return error(ErrorCode::BudgetExceeded,"merged.structure-limit");
  std::uint64_t points=0;
  for(const auto& e:*s.eventIndex)if(!addWithin(points,e.geometry.size(),budget.maxGeometryPoints))return error(ErrorCode::BudgetExceeded,"merged.geometry-limit");
  auto valid=validateSnapshot(s);if(!valid)return valid.error();
@@ -73,7 +73,13 @@ Result<MergedPlan> plan(const DocumentSnapshot& s,MergedBudget budget){
   const auto ny=std::uint64_t(tileAt(r.y+std::int64_t(r.height)-1)-tileAt(r.y)+1);
   auto count=checkedMultiply(nx,ny);if(!count)return count.error();
   if(count.value()>4096 || !addWithin(out.indexEntries,count.value(),budget.maxIndexEntries))return error(ErrorCode::BudgetExceeded,"merged.index-limit");
-  auto coverage=checkedMultiply(count.value(),tilePixels);if(!coverage || !addWithin(out.coveragePixels,coverage.value(),budget.maxCoveragePixels))return error(ErrorCode::BudgetExceeded,"merged.coverage-limit");
+  // Version-2 marker rendering clips coverage to the stroke ROI. Tile
+  // intersections partition that ROI; other engines retain full-tile accounting.
+  const auto clippedWidth=std::max<std::int64_t>(0,std::min<std::int64_t>(size.width,r.x+std::int64_t(r.width))-std::max<std::int64_t>(0,r.x));
+  const auto clippedHeight=std::max<std::int64_t>(0,std::min<std::int64_t>(size.height,r.y+std::int64_t(r.height))-std::max<std::int64_t>(0,r.y));
+  auto coverage=e.engineVersion==2 && e.toolId=="marker"?
+      checkedMultiply(std::uint64_t(clippedWidth),std::uint64_t(clippedHeight)):
+      checkedMultiply(count.value(),tilePixels);if(!coverage || !addWithin(out.coveragePixels,coverage.value(),budget.maxCoveragePixels))return error(ErrorCode::BudgetExceeded,"merged.coverage-limit");
   // Bound geometry traversals and conservative dab footprint work before rendering.
   std::uint64_t eventWork=e.geometry.size();
   if(e.engineVersion!=8){

@@ -39,6 +39,11 @@ Result<Bytes> runReconstructionJob(const DocumentSnapshot& input,std::stop_token
     const auto request=std::optional<QJsonObject>{verified.value()};
     const auto mode=request->value("mode").toString();const bool refine=mode=="refine";
     if(mode!="reconstruct" && !refine)return error(ErrorCode::InvalidInput,"reconstruct.job-request");
+    const auto planner=request->value("planner").toString("sweep");
+    if(planner!="sweep" && planner!="multiscale")return error(ErrorCode::InvalidInput,"reconstruct.planner");
+    const bool multiscale=planner=="multiscale";
+    const std::uint64_t planningEvents=multiscale?32768:8192;
+    const std::uint64_t planningSamples=multiscale?1000000:250000;
     NodeId selected;
     Rect roi{0,0,input.spec.pixelSize.width,input.spec.pixelSize.height};
     if(refine){
@@ -157,9 +162,10 @@ Result<Bytes> runReconstructionJob(const DocumentSnapshot& input,std::stop_token
         }else for(const auto* stage:{"guides","base"}){
             if(stop.stop_requested())return error(ErrorCode::Cancelled,"reconstruct.cancelled");
             const auto layer=stageId(input,object,stage);
-            PlanningRegion region{planning,object,layer,{0,0,size.width,size.height},reviewed.masks[i],&source,seedFor(layer),8192,250000,stop};
+            PlanningRegion region{planning,object,layer,{0,0,size.width,size.height},reviewed.masks[i],&source,seedFor(layer),planningEvents,planningSamples,stop};
             region.clipToReviewedMask=std::string_view(stage)=="base";
-            auto generated=std::string_view(stage)=="guides"?planContours(region):planBasePigment(region,StyleSettings{"marker",2,1,1,.04});
+            auto generated=std::string_view(stage)=="guides"?planContours(region):
+                multiscale?planMultiscalePigment(region):planBasePigment(region,StyleSettings{"marker",2,1,1,.04});
             // Guides are optional for a thin visible object: conservative nib
             // erosion may leave no contour while its clipped pigment is valid.
             // All other guide errors, including cancellation/budgets, propagate.
@@ -172,15 +178,15 @@ Result<Bytes> runReconstructionJob(const DocumentSnapshot& input,std::stop_token
         for(auto& batch:generatedBatches){
             const auto layer=batch.layerId;
             SchedulePolicy policy;policy.seed=seedFor(stageId(input,layer,refine?"refine-schedule":"schedule"));policy.startUs=nextTime;
-            if(!refine)policy.maxEvents=8192;
+            if(!refine)policy.maxEvents=planningEvents;
             auto scheduled=scheduleStrokes(batch,policy);if(!scheduled)return scheduled.error();
             ReconstructionRequest compile;compile.snapshot=planning;compile.reviewed=reviewed;compile.source={&source};
             compile.maskIndex=i;compile.objectId=object;compile.layerId=layer;compile.proposedEvents=std::move(scheduled.value().events);
-            if(!refine)compile.budget.maxEvents=8192;
+            if(!refine){compile.budget.maxEvents=planningEvents;compile.budget.maxSamples=planningSamples;}
             auto compiled=ReconstructionService{}.compile(compile,stop);if(!compiled)return compiled.error();
             nextTime=compiled.value().staged.events.back().endUs+100;
             eventCount+=compiled.value().staged.events.size();
-            if(eventCount>(refine?4096u:16384u))return error(ErrorCode::BudgetExceeded,"reconstruct.job-event-budget");
+            if(eventCount>(refine?4096u:multiscale?65536u:16384u))return error(ErrorCode::BudgetExceeded,"reconstruct.job-event-budget");
             for(auto& event:compiled.value().staged.events){auto bounds=strokeBounds(event);if(!bounds)return bounds.error();command.operations.emplace_back(Paint{std::move(event),bounds.value()});}
         }
         objectResults.append(QJsonObject{{"name",QString::fromUtf8(nodes->at(object).name)},{"status","needs-review"}});
@@ -204,7 +210,7 @@ Result<Bytes> runReconstructionJob(const DocumentSnapshot& input,std::stop_token
         }
     }
     if(!measured)return error(ErrorCode::InvalidInput,"reconstruct.no-measured-region");
-    auto info=jsonResource({{"type",ReconstructionResultType},{"mode",mode},{"events",qint64(eventCount)},
+    auto info=jsonResource({{"type",ReconstructionResultType},{"mode",mode},{"planner",planner},{"planningEventBudgetPerLayer",qint64(planningEvents)},{"planningSampleBudgetPerLayer",qint64(planningSamples)},{"events",qint64(eventCount)},
         {"inputRevision",QString::number(input.revision)},
         {"sourceHash",QString::fromStdString(image.value().info.sourceHash.hex())},{"objects",objectResults},
         {"measuredPixels",qint64(measured)},{"acceptedImageFraction",double(measured)/double(size.width*size.height)},
