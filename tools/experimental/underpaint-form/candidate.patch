@@ -1,0 +1,31 @@
+--- a/src/reconstruct/MultiscalePlanner.cpp
++++ b/src/reconstruct/MultiscalePlanner.cpp
+@@ -48,6 +48,28 @@
+     }
+     if(!base)return base.error();
+     auto batch=std::move(base.value());
++    // Tilt a broad underpaint mark along the local isophote. Limit its
++    // displacement so neighbouring marks still cover the underpaint grid.
++    for(auto& e:batch.events){
++        if(e.geometry.size()<2)continue;
++        const auto a=e.geometry.front(), b=e.geometry.back();
++        const double length=std::hypot(b.x-a.x,b.y-a.y);
++        if(length<2)continue;
++        const Point center{(a.x+b.x)*.5,(a.y+b.y)*.5};
++        auto d=tangent(src,center,e.style.width);
++        const double ux=(b.x-a.x)/length,uy=(b.y-a.y)/length;
++        if(d.x*ux+d.y*uy<0){d.x=-d.x;d.y=-d.y;}
++        const double slope=std::clamp(d.y*ux-d.x*uy,-.7,.7);
++        auto geometry=e.geometry;
++        bool allowed=true;
++        for(auto& p:geometry){
++            const double along=(p.x-center.x)*ux+(p.y-center.y)*uy;
++            const double delta=std::clamp(along*slope,-e.style.width*.25,e.style.width*.25);
++            p.x-=uy*delta;p.y+=ux*delta;
++            if(!inside({p.x,p.y})){allowed=false;break;}
++        }
++        if(allowed)e.geometry=std::move(geometry);
++    }
+     auto snapshot=region.snapshot;snapshot.eventIndex=std::make_shared<const EventList>(batch.events);
+     ReferenceRenderer renderer;
+     TileData canvas;canvas.width=src.width;canvas.height=src.height;canvas.rowStride=std::uint64_t(w)*4;
