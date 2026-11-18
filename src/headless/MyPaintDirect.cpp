@@ -257,10 +257,10 @@ Result<Command> mypaintDirectStrokeCommand(
                 AbiTileRequest req{};
                 abi.tile_req_init(&req, 0, tx, ty, 1);
                 abi.tile_req_start(surface, &req);
-                const int maxY = std::min(64, int(rh) - ty * 64);
-                const int maxX = std::min(64, int(rw) - tx * 64);
-                for (int y = 0; y < maxY; ++y) {
-                    for (int x = 0; x < maxX; ++x) {
+                const int tileH = std::min(64, int(rh) - ty * 64);
+                const int tileW = std::min(64, int(rw) - tx * 64);
+                for (int y = 0; y < tileH; ++y) {
+                    for (int x = 0; x < tileW; ++x) {
                         const std::size_t dst = (std::size_t(ty * 64 + y) * rw + std::size_t(tx * 64 + x)) * 4;
                         const std::size_t src = std::size_t(y * 64 + x) * 4;
                         const int gray = std::clamp(int(std::lround(double(req.buffer[src]) * 255.0 / 32768.0)), 0, 255);
