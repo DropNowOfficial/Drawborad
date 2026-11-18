@@ -237,14 +237,17 @@ Result<Command> mypaintDirectStrokeCommand(
         }
         const auto& plast = points.back();
         if (totalArc < 0.35 && maxPress > 0.0) {
-            // Presets driven by dabs_per_actual_radius require non-zero arc length to emit a dab on 1-point taps.
-            const double step = (plast.x + 0.55 < double(cw) && plast.x - double(ox) + 0.55 < double(rw)) ? 0.55
-                              : (plast.x - 0.55 >= 0.0 && plast.x - double(ox) >= 0.55) ? -0.55 : 0.0;
-            const double stepY = (step == 0.0 && plast.y + 0.55 < double(ch) && plast.y - double(oy) + 0.55 < double(rh)) ? 0.55 : 0.0;
+            // Presets driven by dabs_per_actual_radius require arc distance to trigger dab emission on 1-point taps.
+            const double tapDist = 6.0;
+            const double step = (plast.x + tapDist < double(cw) && plast.x - double(ox) + tapDist < double(rw)) ? tapDist
+                              : (plast.x - tapDist >= 0.0 && plast.x - double(ox) >= tapDist) ? -tapDist : 0.0;
+            const double stepY = (step == 0.0 && plast.y + tapDist < double(ch) && plast.y - double(oy) + tapDist < double(rh)) ? tapDist : 0.0;
             abi.brush_stroke_to(brush, iface, float(plast.x - double(ox) + step),
-                                float(plast.y - double(oy) + stepY), float(maxPress), 0.0f, 0.0f, 0.015);
-            abi.brush_stroke_to(brush, iface, float(plast.x - double(ox) + step),
-                                float(plast.y - double(oy) + stepY), 0.0f, 0.0f, 0.0f, 0.02);
+                                float(plast.y - double(oy) + stepY), float(maxPress), 0.0f, 0.0f, 0.02);
+            abi.brush_stroke_to(brush, iface, float(plast.x - double(ox)),
+                                float(plast.y - double(oy)), float(maxPress), 0.0f, 0.0f, 0.02);
+            abi.brush_stroke_to(brush, iface, float(plast.x - double(ox)),
+                                float(plast.y - double(oy)), 0.0f, 0.0f, 0.0f, 0.02);
         } else {
             abi.brush_stroke_to(brush, iface, float(plast.x - double(ox)), float(plast.y - double(oy)), 0.0f, 0.0f, 0.0f, 0.02);
         }
