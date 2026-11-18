@@ -149,7 +149,7 @@ message(STATUS "Drawborad CPU inference runtime compiled: ${DRAWBORAD_HAS_ONNXRU
 
 add_library(drawborad_reconstruct STATIC
   src/reconstruct/ReconstructionService.cpp src/reconstruct/EventWriter.cpp
-  src/reconstruct/ContourPlanner.cpp src/reconstruct/RegionPlanner.cpp src/reconstruct/MultiscalePlanner.cpp src/reconstruct/StrokeScheduler.cpp
+  src/reconstruct/ContourPlanner.cpp src/reconstruct/RegionPlanner.cpp src/reconstruct/MultiscalePlanner.cpp src/reconstruct/ArtistGrammarPlanner.cpp src/reconstruct/StrokeScheduler.cpp
   src/reconstruct/PigmentRefiner.cpp src/reconstruct/TexturePlanner.cpp src/reconstruct/RegionBudget.cpp)
 target_include_directories(drawborad_reconstruct PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(drawborad_reconstruct PUBLIC drawborad_models drawborad_color drawborad_core)
@@ -205,9 +205,18 @@ if(DRAWBORAD_DESKTOP OR DRAWBORAD_HEADLESS_WORKFLOW)
   target_compile_definitions(drawborad_core PRIVATE DRAWBORAD_HAS_REVIEW_WORKER)
 endif()
 if(DRAWBORAD_HEADLESS_WORKFLOW)
-  add_executable(DrawboradHeadless apps/headless/Main.cpp src/headless/HeadlessWorkflow.cpp src/headless/ProjectSession.cpp)
+  add_executable(DrawboradHeadless apps/headless/Main.cpp src/headless/HeadlessWorkflow.cpp src/headless/ProjectSession.cpp src/headless/MyPaintDirect.cpp)
   target_include_directories(DrawboradHeadless PRIVATE ${PROJECT_SOURCE_DIR}/src)
-  target_link_libraries(DrawboradHeadless PRIVATE drawborad_workflow drawborad_core drawborad_render drawborad_codecs Qt6::Core Qt6::Gui)
+  target_compile_definitions(DrawboradHeadless PRIVATE DRAWBORAD_SOURCE_ROOT="${PROJECT_SOURCE_DIR}")
+  find_package(PkgConfig QUIET)
+  if(PkgConfig_FOUND)
+    pkg_check_modules(DRAWBORAD_LIBMYPAINT QUIET libmypaint)
+    if(DRAWBORAD_LIBMYPAINT_FOUND AND DRAWBORAD_LIBMYPAINT_INCLUDE_DIRS)
+      target_include_directories(DrawboradHeadless SYSTEM PRIVATE ${DRAWBORAD_LIBMYPAINT_INCLUDE_DIRS})
+      target_compile_definitions(DrawboradHeadless PRIVATE DRAWBORAD_HAS_LIBMYPAINT_HEADERS=1)
+    endif()
+  endif()
+  target_link_libraries(DrawboradHeadless PRIVATE drawborad_workflow drawborad_core drawborad_render drawborad_codecs Qt6::Core Qt6::Gui ${CMAKE_DL_LIBS})
 endif()
 if(DRAWBORAD_DESKTOP)
   qt_add_executable(Drawborad apps/studio/Main.cpp apps/studio/QtBridge.cpp apps/studio/QtBridge.h src/ui/WorkflowController.cpp src/ui/WorkflowController.h src/platform/CanvasItem.cpp src/platform/CanvasItem.h src/platform/CanvasRenderer.cpp)

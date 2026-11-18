@@ -52,8 +52,10 @@ Result<EventBatch> scheduleStrokes(const EventBatch& input,const SchedulePolicy&
         // A region-local scheduling claim must hold for the entire stroke, not
         // only its starting point. Rectangles are convex, so each segment
         // remains inside when all control points do.
-        for(const auto& point:input.events[i].geometry){
-            if(!contains(policy.regionOrder[found],point.x,point.y))
+        for(std::size_t pIdx=0;pIdx<input.events[i].geometry.size();++pIdx){
+            const auto& point=input.events[i].geometry[pIdx];
+            const double px=(input.events[i].engineVersion==8 && (pIdx&1)==1)?(point.x-1.0):point.x;
+            if(!contains(policy.regionOrder[found],px,point.y))
                 return error(ErrorCode::InvalidInput,"reconstruct.schedule-region");
         }
         regionIndices[i]=found;
@@ -73,8 +75,13 @@ Result<EventBatch> scheduleStrokes(const EventBatch& input,const SchedulePolicy&
         StrokeEvent event=input.events[i];
         event.id=orderedId(policy,output.events.size());
         event.startUs=time;
-        for(auto& point:event.geometry){point.timestampUs=time;time+=policy.sampleStepUs;}
-        event.endUs=event.geometry.back().timestampUs;
+        if(event.engineVersion==8){
+            for(auto& point:event.geometry){point.timestampUs=time;}
+            event.endUs=time;
+        }else{
+            for(auto& point:event.geometry){point.timestampUs=time;time+=policy.sampleStepUs;}
+            event.endUs=event.geometry.back().timestampUs;
+        }
         time+=policy.gapUs;
         output.events.push_back(std::move(event));
     }

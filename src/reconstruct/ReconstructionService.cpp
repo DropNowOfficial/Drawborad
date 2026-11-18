@@ -116,6 +116,23 @@ Result<ReconstructionResult> ReconstructionService::compile(
             event.geometry.size() > request.budget.maxSamples - totalSamples)
             return error(ErrorCode::BudgetExceeded, "reconstruct.stroke-budget");
         totalSamples += event.geometry.size();
+        if (event.engineVersion == 8) {
+            for (std::size_t pIdx = 0; pIdx < event.geometry.size(); pIdx += 2) {
+                const auto& a = event.geometry[pIdx];
+                const auto& b = event.geometry[pIdx + 1];
+                if (a.x < 0 || a.y < 0 || b.x > double(size.width) ||
+                    a.y >= double(size.height) || a.x >= b.x)
+                    return error(ErrorCode::InvalidInput, "reconstruct.outside-source");
+                const auto y = std::uint64_t(a.y);
+                const auto x0 = std::uint64_t(a.x);
+                const auto x1 = std::uint64_t(b.x);
+                for (auto x = x0; x < x1; ++x) {
+                    if (mask[std::size_t(y * size.width + x)] == 0)
+                        return error(ErrorCode::InvalidInput, "reconstruct.outside-reviewed-mask");
+                }
+            }
+            continue;
+        }
         for (const auto& point : event.geometry) {
             if (point.x < 0 || point.y < 0 || point.x >= double(size.width) ||
                 point.y >= double(size.height))

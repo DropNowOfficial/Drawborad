@@ -277,16 +277,38 @@ def create_app(config: Config | None = None) -> FastAPI:
         record=get_job(jid)
         if record.get('state')!='succeeded' or body.get('accept_all') is not True:
             raise HTTPException(422,'Review the masks and explicitly accept all objects first')
+        planner=body.get('planner','sweep')
+        if not isinstance(planner,str) or planner not in ('sweep','multiscale','artist','artist-opt'):
+            raise HTTPException(422,'Invalid planner; choose sweep, multiscale, artist, or artist-opt')
+        amodal=body.get('amodal_background',False)
+        if type(amodal) is not bool:
+            raise HTTPException(422,'amodal_background must be a boolean')
+        target_size=body.get('target_size')
+        if target_size is not None and (not isinstance(target_size,str) or not re.fullmatch(r'[1-9]\d{0,4}x[1-9]\d{0,4}',target_size)):
+            raise HTTPException(422,'target_size must match WxH')
+        is_fixture=(record.get('origin')=='synthetic-fixture' or record.get('backend')=='fixture-no-ai')
         with native_projects.transaction():
             native_projects.prepare_switch()
             import tempfile
             with tempfile.TemporaryDirectory(dir=config.root) as tmp:
                 output=Path(tmp)/'painting'
+                manifest_path=str(config.root/jid/'result/manifest.json')
                 try:
                     with (config.root/jid/'reconstruction.log').open('wb') as log:
-                        result=subprocess.run([native_projects.engine,'run','--manifest',
-                            str(config.root/jid/'result/manifest.json'),'--output',str(output),'--accept-all'],
-                            stdout=log,stderr=subprocess.STDOUT,timeout=180)
+                        if planner=='artist-opt':
+                            cmd=[sys.executable,'-m','cloud.planner.cli','--manifest',manifest_path,
+                                 '--engine',native_projects.engine,'--output',str(output)]
+                            if is_fixture:cmd.append('--fixture')
+                            if amodal:cmd.append('--amodal-background')
+                            if target_size:cmd+=['--target-size',target_size,'--target-dpi','300']
+                            result=subprocess.run(cmd,cwd=str(BASE),stdout=log,stderr=subprocess.STDOUT,timeout=300)
+                        else:
+                            cmd=[native_projects.engine,'run','--manifest',manifest_path,
+                                 '--output',str(output),'--accept-all','--planner',planner]
+                            if is_fixture:cmd.append('--fixture')
+                            if amodal:cmd.append('--amodal-background')
+                            if target_size:cmd+=['--target-size',target_size,'--target-dpi','300']
+                            result=subprocess.run(cmd,stdout=log,stderr=subprocess.STDOUT,timeout=240)
                 except subprocess.TimeoutExpired:
                     raise HTTPException(504,{'code':'reconstruction_timeout','message':'Native reconstruction timed out'})
                 except OSError:

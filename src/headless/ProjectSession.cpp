@@ -11,8 +11,11 @@
 #include "color/ColorService.h"
 #include "brush/BucketFill.h"
 #include "brush/FreehandStroke.h"
+#include "brush/ChiselInkStroke.h"
+#include "brush/ContinuousEraser.h"
 #include "brush/PressureTaper.h"
 #include "brush/DryInkStroke.h"
+#include "MyPaintDirect.h"
 #include "core/LineartRaster.h"
 #include "core/MyPaintCroppedRaster.h"
 #include "core/Digest.h"
@@ -154,7 +157,8 @@ public:
                 {"geometry_count",number(e.geometry.size())}});
         }
         QJsonArray capabilities{"mypaint_folder","recovery_checkpoint","reorder_layer","mouse_pressure_taper","duplicate_paint_layer","recolor_layer","recolor_stroke","set_properties","bucket_fill","add_fill_layer","draw_stroke","update_layer","undo","redo","save","save_copy","replay","png"};
-        capabilities.append("smooth_ink");capabilities.append("ora");capabilities.append("append_brush_layer");capabilities.append("append_brush_crop");capabilities.append("append_brush_normal");capabilities.append("cropped_stroke_mask");capabilities.append("hidden_fill_boundary");
+        capabilities.append("smooth_ink");capabilities.append("chisel_ink");capabilities.append("continuous_eraser");capabilities.append("layer_blend");capabilities.append("ora");capabilities.append("append_brush_layer");capabilities.append("append_brush_crop");capabilities.append("append_brush_normal");capabilities.append("cropped_stroke_mask");capabilities.append("hidden_fill_boundary");
+        if(mypaintDirectAvailable())capabilities.append("mypaint_c_direct");
         return {{"document_id",idText(s.documentId)},{"revision",number(s.revision)},
             {"saved_revision",saved?QJsonValue(number(*saved)):QJsonValue(QJsonValue::Null)},
             {"dirty",controller->dirty()},{"hidden_boundaries",boundaries},{"nodes",nodes},{"strokes",events},
@@ -420,12 +424,58 @@ public:
                 }
                 const auto brush=p.value("brush").toString("fine");
                 need(!p.contains("brush") || p.value("brush").isString(),"session.brush");
-                need(brush=="fine" || brush=="dry_ink" || brush=="smooth_ink","session.brush");
+                need(brush=="fine" || brush=="dry_ink" || brush=="smooth_ink" || brush=="chisel_ink" || brush=="eraser","session.brush");
                 const auto layer=parseId(p.value("layer_id"));const auto event=newEventId();
-                const auto color=browserColor(s,p.value("color"));
-                command=checked(brush=="dry_ink" ? dryInkStrokeCommand(s,layer,event,samples,width.toDouble(),color)
-                    : brush=="smooth_ink" ? smoothInkStrokeCommand(s,layer,event,samples,width.toDouble(),color)
-                    : freehandStrokeCommand(s,layer,event,samples,width.toDouble(),color));
+                double opacity=1.0;
+                if(p.contains("opacity")) {
+                    need(p.value("opacity").isDouble(),"session.pen-opacity");
+                    opacity=p.value("opacity").toDouble();
+                    need(std::isfinite(opacity) && opacity>=0 && opacity<=1,"session.pen-opacity");
+                }
+                if(brush=="eraser") {
+                    command=checked(continuousEraserCommand(s,layer,event,samples,width.toDouble(),opacity));
+                } else if(brush=="chisel_ink") {
+                    unsigned angle=0;
+                    if(p.contains("angle")) {
+                        const auto a=pixelInteger(p.value("angle"));
+                        need(a<=7,"session.chisel-angle");
+                        angle=a;
+                    }
+                    const auto color=browserColor(s,p.value("color"));
+                    command=checked(chiselInkStrokeCommand(s,layer,event,samples,width.toDouble(),color,angle,opacity));
+                } else {
+                    const auto color=browserColor(s,p.value("color"));
+                    command=checked(brush=="dry_ink" ? dryInkStrokeCommand(s,layer,event,samples,width.toDouble(),color,opacity)
+                        : brush=="smooth_ink" ? smoothInkStrokeCommand(s,layer,event,samples,width.toDouble(),color,opacity)
+                        : freehandStrokeCommand(s,layer,event,samples,width.toDouble(),color,opacity));
+                }
+            } else if(type=="mypaint_direct_stroke") {
+                const auto s=snapshot();
+                const auto preset=p.value("preset").toString("pointy_ink").toStdString();
+                const double scale=p.contains("radius_scale")?p.value("radius_scale").toDouble(-1.0):1.0;
+                const QString mode=p.value("paint_mode").toString("multiply");
+                need(mode=="multiply" || mode=="normal","mypaint-direct.mode");
+                const auto colorStr=p.value("color").toString("#000000");
+                need(QRegularExpression("^#[0-9a-fA-F]{6}$").match(colorStr).hasMatch(),"mypaint-direct.color");
+                const auto rawRgb=QByteArray::fromHex(colorStr.mid(1).toLatin1());
+                std::array<std::uint8_t,3> rgb{std::uint8_t(rawRgb[0]),std::uint8_t(rawRgb[1]),std::uint8_t(rawRgb[2])};
+                need(p.value("points").isArray(),"mypaint-direct.points");
+                const auto ptsArr=p.value("points").toArray();
+                std::vector<MyPaintDirectSample> mpts;mpts.reserve(ptsArr.size());
+                for(const auto& pv:ptsArr){
+                    need(pv.isObject(),"mypaint-direct.point");
+                    const auto po=pv.toObject();
+                    mpts.push_back({po.value("x").toDouble(-1),po.value("y").toDouble(-1),
+                                    po.value("pressure").toDouble(0.35),po.value("time_ms").toDouble(double(mpts.size()*10))});
+                }
+                command=checked(mypaintDirectStrokeCommand(s,preset,mpts,rgb,scale,mode=="normal",newEventId()));
+                if(p.contains("folder_id")) {
+                    const auto folder=parseId(p.value("folder_id"));
+                    need(myPaintFolderEligible(s,folder),"brush-folder.not-top-neutral-unlocked");
+                    for(auto& op:command.operations)if(auto* add=std::get_if<AddNode>(&op))add->node.parent=folder;
+                }
+                auto candidate=checked(Document::fromSnapshot(s));checked(candidate.apply(command,s.revision));
+                checked(planMergedDocument(candidate.snapshot()));
             } else if(type=="add_mypaint_folder") {
                 const auto s=snapshot();LayerNode folder;folder.id=newEventId();folder.parent=Document::rootId();
                 folder.kind=NodeKind::Group;folder.stage=MyPaintFolderStage;folder.name="MyPaint stroke folder";
@@ -453,13 +503,33 @@ public:
                     need(!name.isEmpty() && name.size()<=256 && !name.contains(char(0)),"session.layer-name");
                     command.operations.emplace_back(RenameNode{id,name.toStdString()});any=true;
                 }
-                if(p.contains("opacity")) {
-                    const auto value=p.value("opacity");
-                    need(value.isDouble() && std::isfinite(value.toDouble()) && value.toDouble()>=0 && value.toDouble()<=1,"session.layer-opacity");
+                if(p.contains("opacity") || p.contains("blend")) {
                     const auto s=snapshot();const auto node=s.nodes->find(id);
-                    need(node==s.nodes->end() || node->second.stage!=MyPaintFolderStage || value.toDouble()==1,"brush-folder.keep-neutral-opacity");
-                    SetProperties properties;properties.id=id;properties.opacity=value.toDouble();
-                    command.operations.emplace_back(properties);any=true;
+                    need(node!=s.nodes->end(),"session.layer-missing");
+                    SetProperties properties;properties.id=id;
+                    if(p.contains("opacity")) {
+                        const auto value=p.value("opacity");
+                        need(value.isDouble() && std::isfinite(value.toDouble()) && value.toDouble()>=0 && value.toDouble()<=1,"session.layer-opacity");
+                        need(node->second.stage!=MyPaintFolderStage || value.toDouble()==1,"brush-folder.keep-neutral-opacity");
+                        properties.opacity=value.toDouble();any=true;
+                    }
+                    if(p.contains("blend")) {
+                        need(node->second.kind==NodeKind::Layer && node->second.stage!=MyPaintFolderStage,"session.layer-blend-target");
+                        BlendMode bm=BlendMode::Normal;
+                        if(p.value("blend").isString()) {
+                            const auto bs=p.value("blend").toString().toLower();
+                            need(bs=="normal" || bs=="multiply" || bs=="screen","session.layer-blend");
+                            bm = bs=="multiply" ? BlendMode::Multiply : (bs=="screen" ? BlendMode::Screen : BlendMode::Normal);
+                        } else {
+                            const auto bi=pixelInteger(p.value("blend"));
+                            need(bi<=2,"session.layer-blend");
+                            bm=BlendMode(bi);
+                        }
+                        properties.blend=bm;any=true;
+                    }
+                    command.operations.emplace_back(properties);
+                    auto candidate=checked(Document::fromSnapshot(s));checked(candidate.apply(command,s.revision));
+                    checked(planMergedDocument(candidate.snapshot()));
                 }
                 need(any,"session.empty-properties");
             } else if(type=="set_properties") {

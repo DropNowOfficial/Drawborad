@@ -17,6 +17,7 @@ struct SemanticManifestImport {
     std::vector<double> scores;
     std::vector<bool> background;
     QString backend;
+    bool amodalBackground{};
 };
 Result<SemanticManifestImport> loadSemanticMaskManifest(const QUrl& manifestUrl, bool allowFixture = false);
 } // namespace drawborad

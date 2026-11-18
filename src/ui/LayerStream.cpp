@@ -1,3 +1,4 @@
+#include "core/ArtistOptIn.h"
 #include "core/HiddenBoundary.h"
 #include "LayerStream.h"
 #include "view/LayerTree.h"
@@ -50,11 +51,17 @@ Result<ArchiveLayer> NativeLayerStream::read(std::size_t index,std::stop_token s
   const bool cropped=croppedRaster::isStage(node.stage);
   const bool historyLayer=node.stage==persistentRaster::Stage;
   const bool raster=node.stage==LineartStage || cropped || historyLayer;croppedRaster::View crop;
+  const bool artistSparse=!raster && isArtistStage(node.stage);
   std::span<const std::uint8_t> raw;
   if(cropped){const auto* v=croppedViews_.find(s,id);if(!v)return error(ErrorCode::CorruptData,"crop.prepared-view");crop=*v;}
   else if(raster&&!historyLayer){auto source=lineartRasterPixels(s,id);if(!source)return source.error();raw=source.value();}
   for(std::uint64_t y=0;y<size.height;y+=TileSide)for(std::uint64_t x=0;x<size.width;x+=TileSide){
    if(stop.stop_requested())return error(ErrorCode::Cancelled,"layer-stream.cancelled");
+   if(artistSparse){
+    auto cands=renderer_.candidates(s,{id,std::int64_t(x/TileSide),std::int64_t(y/TileSide),0},stop);
+    if(!cands)return cands.error();
+    if(cands.value().empty())continue;
+   }
    Rect rect{std::int64_t(x),std::int64_t(y),std::min<std::uint64_t>(TileSide,size.width-x),std::min<std::uint64_t>(TileSide,size.height-y)};
    Result<TileData> tile=error(ErrorCode::UnsupportedFeature,"layer-stream.tile");
    if(raster){

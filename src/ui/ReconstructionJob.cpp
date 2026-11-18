@@ -1,6 +1,9 @@
 #include "ReconstructionJob.h"
+#include "MergedDocument.h"
 #include "PaintedDocument.h"
 #include "codecs/ImageReader.h"
+#include "core/ArtistOptIn.h"
+#include "reconstruct/ArtistGrammarPlanner.h"
 #include "reconstruct/Planning.h"
 #include "reconstruct/Refinement.h"
 #include "render/ReferenceRenderer.h"
@@ -40,10 +43,12 @@ Result<Bytes> runReconstructionJob(const DocumentSnapshot& input,std::stop_token
     const auto mode=request->value("mode").toString();const bool refine=mode=="refine";
     if(mode!="reconstruct" && !refine)return error(ErrorCode::InvalidInput,"reconstruct.job-request");
     const auto planner=request->value("planner").toString("sweep");
-    if(planner!="sweep" && planner!="multiscale")return error(ErrorCode::InvalidInput,"reconstruct.planner");
+    if(planner!="sweep" && planner!="multiscale" && planner!="artist")return error(ErrorCode::InvalidInput,"reconstruct.planner");
     const bool multiscale=planner=="multiscale";
-    const std::uint64_t planningEvents=multiscale?32768:8192;
-    const std::uint64_t planningSamples=multiscale?1000000:250000;
+    const bool artist=planner=="artist";
+    const bool amodal=request->value("amodalBackground").toBool(false);
+    const std::uint64_t planningEvents=(multiscale || artist)?32768:8192;
+    const std::uint64_t planningSamples=(multiscale || artist)?1000000:250000;
     NodeId selected;
     Rect roi{0,0,input.spec.pixelSize.width,input.spec.pixelSize.height};
     if(refine){
@@ -64,7 +69,7 @@ Result<Bytes> runReconstructionJob(const DocumentSnapshot& input,std::stop_token
     if(!image.value().decodedPixels)return error(ErrorCode::InvalidInput,"reconstruct.source-decode");
     auto source=std::move(*image.value().decodedPixels);
     const auto size=input.spec.pixelSize;
-    if(size.width>4096 || size.height>4096 || size.width*size.height>4*1024*1024 ||
+    if(size.width>8192 || size.height>8192 || size.width*size.height>20000000ull ||
        source.width!=size.width || source.height!=size.height ||
        input.spec.colorSpec.format!=PixelFormat{ColorMode::RGB,Depth::U8,true} ||
        source.format.mode!=ColorMode::RGB || source.format.depth!=Depth::U8 ||
@@ -117,6 +122,30 @@ Result<Bytes> runReconstructionJob(const DocumentSnapshot& input,std::stop_token
         // layer. Retain the old strokes; one new pass remains independently undoable.
         command.operations.emplace_back(AddNode{layer});nodes->emplace(layer.id,layer);nodes->at(object).children.push_back(layer.id);
     }
+    else if(artist)for(const auto object:objects){
+        struct ArtistStageSpec {
+            const char* stage;
+            const char* name;
+            BlendMode blend;
+            double opacity;
+        };
+        constexpr std::array<ArtistStageSpec,5> specs{{
+            {"artist.flats","Flats · Silhouette",BlendMode::Normal,1.0},
+            {"artist.form_glaze","Form & Shadow Glaze",BlendMode::Multiply,0.85},
+            {"artist.structure","Surface Structure",BlendMode::Normal,1.0},
+            {"artist.hero_ink","Hero Lineart & Dry Ink",BlendMode::Normal,1.0},
+            {"artist.highlights","Highlights & Accents",BlendMode::Screen,0.90}
+        }};
+        std::size_t index=0;
+        for(const auto& sp:specs){
+            LayerNode layer;layer.id=stageId(input,object,sp.stage);layer.parent=object;layer.objectId=object;
+            layer.name=sp.name;layer.stage=sp.stage;layer.blend=sp.blend;layer.opacity=sp.opacity;
+            layer.bounds={0,0,size.width,size.height};
+            if(nodes->contains(layer.id))return error(ErrorCode::InvalidInput,"reconstruct.stage-id-collision");
+            command.operations.emplace_back(AddNode{layer,index});nodes->emplace(layer.id,layer);
+            nodes->at(object).children.insert(nodes->at(object).children.begin()+std::ptrdiff_t(index++),layer.id);
+        }
+    }
     else for(const auto object:objects){
         std::size_t index=0;
         for(const auto* stage:{"guides","base","detail"}){
@@ -134,9 +163,27 @@ Result<Bytes> runReconstructionJob(const DocumentSnapshot& input,std::stop_token
         if(event.endUs>std::numeric_limits<std::uint64_t>::max()-1000000)return error(ErrorCode::BudgetExceeded,"reconstruct.schedule-time");
         nextTime=std::max(nextTime,event.endUs+100);
     }
+    // Optional in-memory Amodal background completion for occluded regions behind foreground objects.
+    std::optional<TileData> amodalBgSource;
+    if(amodal && !refine && objects.size()>=2){
+        Bytes unoccluded(reviewed.masks[0].size(),0);
+        for(std::size_t p=0;p<unoccluded.size();++p){
+            if(!reviewed.masks[0][p])continue;
+            bool covered=false;
+            for(std::size_t j=1;j<reviewed.masks.size();++j){
+                if(reviewed.masks[j][p]){covered=true;break;}
+            }
+            if(!covered)unoccluded[p]=255;
+        }
+        auto inpainted=inpaintAmodalBackground(source,unoccluded,stop);
+        if(!inpainted)return inpainted.error();
+        amodalBgSource=std::move(inpainted.value());
+    }
     std::size_t eventCount=0;QJsonArray objectResults;
+    const std::size_t perObjectArtistCap=std::max<std::size_t>(512,56000/std::max<std::size_t>(1,objects.size()));
     for(std::size_t i=0;i<objects.size();++i){
         const auto object=objects[i];
+        const TileData& objectSource=(i==0 && amodalBgSource.has_value())?*amodalBgSource:source;
         std::vector<EventBatch> generatedBatches;
         if(refine){
             const auto target=stageId(input,object,"refine-pass");
@@ -159,10 +206,32 @@ Result<Bytes> runReconstructionJob(const DocumentSnapshot& input,std::stop_token
             auto generated=refineRegion(refinement,stop);if(!generated)return generated.error();
             if(generated.value().events.empty())return error(ErrorCode::InvalidInput,"reconstruct.region-already-converged");
             generatedBatches.push_back(std::move(generated.value()));
+        }else if(artist){
+            ArtistObjectRequest artistReq;
+            artistReq.snapshot=planning;
+            artistReq.objectId=object;
+            artistReq.layers={
+                stageId(input,object,"artist.flats"),
+                stageId(input,object,"artist.form_glaze"),
+                stageId(input,object,"artist.structure"),
+                stageId(input,object,"artist.hero_ink"),
+                stageId(input,object,"artist.highlights")
+            };
+            artistReq.sourceMask=reviewed.masks[i];
+            artistReq.source=&objectSource;
+            artistReq.targetSize=size;
+            artistReq.clipToObjectMask=!nodes->at(object).maskId.empty();
+            artistReq.seed=seedFor(stageId(input,object,"artist.seed"));
+            artistReq.maxTotalEvents=perObjectArtistCap;
+            artistReq.maxTotalSamples=planningSamples;
+            artistReq.stop=stop;
+            auto planned=planArtistObject(artistReq);
+            if(!planned)return planned.error();
+            generatedBatches=std::move(planned.value().batches);
         }else for(const auto* stage:{"guides","base"}){
             if(stop.stop_requested())return error(ErrorCode::Cancelled,"reconstruct.cancelled");
             const auto layer=stageId(input,object,stage);
-            PlanningRegion region{planning,object,layer,{0,0,size.width,size.height},reviewed.masks[i],&source,seedFor(layer),planningEvents,planningSamples,stop};
+            PlanningRegion region{planning,object,layer,{0,0,size.width,size.height},reviewed.masks[i],&objectSource,seedFor(layer),planningEvents,planningSamples,stop};
             region.clipToReviewedMask=std::string_view(stage)=="base";
             auto generated=std::string_view(stage)=="guides"?planContours(region):
                 multiscale?planMultiscalePigment(region):planBasePigment(region,StyleSettings{"marker",2,1,1,.04});
@@ -180,13 +249,13 @@ Result<Bytes> runReconstructionJob(const DocumentSnapshot& input,std::stop_token
             SchedulePolicy policy;policy.seed=seedFor(stageId(input,layer,refine?"refine-schedule":"schedule"));policy.startUs=nextTime;
             if(!refine)policy.maxEvents=planningEvents;
             auto scheduled=scheduleStrokes(batch,policy);if(!scheduled)return scheduled.error();
-            ReconstructionRequest compile;compile.snapshot=planning;compile.reviewed=reviewed;compile.source={&source};
+            ReconstructionRequest compile;compile.snapshot=planning;compile.reviewed=reviewed;compile.source={&objectSource};
             compile.maskIndex=i;compile.objectId=object;compile.layerId=layer;compile.proposedEvents=std::move(scheduled.value().events);
             if(!refine){compile.budget.maxEvents=planningEvents;compile.budget.maxSamples=planningSamples;}
             auto compiled=ReconstructionService{}.compile(compile,stop);if(!compiled)return compiled.error();
             nextTime=compiled.value().staged.events.back().endUs+100;
             eventCount+=compiled.value().staged.events.size();
-            if(eventCount>(refine?4096u:multiscale?65536u:16384u))return error(ErrorCode::BudgetExceeded,"reconstruct.job-event-budget");
+            if(eventCount>(refine?4096u:(multiscale || artist)?65536u:16384u))return error(ErrorCode::BudgetExceeded,"reconstruct.job-event-budget");
             for(auto& event:compiled.value().staged.events){auto bounds=strokeBounds(event);if(!bounds)return bounds.error();command.operations.emplace_back(Paint{std::move(event),bounds.value()});}
         }
         objectResults.append(QJsonObject{{"name",QString::fromUtf8(nodes->at(object).name)},{"status","needs-review"}});
@@ -197,7 +266,7 @@ Result<Bytes> runReconstructionJob(const DocumentSnapshot& input,std::stop_token
     if(stop.stop_requested())return error(ErrorCode::Cancelled,"reconstruct.cancelled");
     const auto applied=document.value().apply(command,input.revision);if(!applied)return applied.error();
     auto output=document.value().snapshot();
-    auto painted=renderPaintedDocument(output,{output.revision},stop);if(!painted)return painted.error();
+    auto painted=renderMergedDocument(output,{output.revision,output.eventIndex->size()},{},stop);if(!painted)return painted.error();
     std::uint64_t measured=0;double colorSum=0,alphaSum=0;
     for(std::uint64_t y=std::uint64_t(roi.y);y<std::uint64_t(roi.y)+roi.height;++y){
         if((y&63)==0 && stop.stop_requested())return error(ErrorCode::Cancelled,"reconstruct.cancelled");
@@ -250,7 +319,7 @@ Result<Command> reconstructionCommand(const DocumentSnapshot& before,const Docum
             const auto& layer=after.nodes->at(child);
             if(node.kind!=NodeKind::Object || layer.kind!=NodeKind::Layer || layer.parent!=id || layer.objectId!=id ||
                !layer.children.empty() || !nativeLayerPaintable(after,child) ||
-               (layer.stage!="guides" && layer.stage!="base" && layer.stage!="detail"))
+               (layer.stage!="guides" && layer.stage!="base" && layer.stage!="detail" && !isArtistStage(layer.stage)))
                 return error(ErrorCode::InvalidInput,"reconstruct.result-stage");
             command.operations.emplace_back(AddNode{layer,index});
         }

@@ -1,21 +1,15 @@
 #include "PaintedDocument.h"
+#include "core/ArtistOptIn.h"
+#include "render/PixelBlend.h"
 #include "view/LayerTree.h"
 #include <algorithm>
 #include <cmath>
 #include <functional>
 namespace drawborad {
 namespace {
-void over(TileData& destination,const TileData& source,std::uint8_t opacity){
+void compositeLayer(TileData& destination,const TileData& source,std::uint8_t opacity,BlendMode blend,bool linearLight){
     for(std::size_t at=0;at<source.bytes.size();at+=4){
-        const auto sa=(unsigned(source.bytes[at+3])*opacity+127)/255;
-        if(!sa)continue;
-        const auto da=unsigned(destination.bytes[at+3]);
-        const auto den=sa*255+da*(255-sa);
-        for(unsigned c=0;c<3;++c){
-            const auto num=unsigned(source.bytes[at+c])*sa*255+unsigned(destination.bytes[at+c])*da*(255-sa);
-            destination.bytes[at+c]=std::uint8_t((num+den/2)/den);
-        }
-        destination.bytes[at+3]=std::uint8_t((den+127)/255);
+        compositeRgba8Pixel(destination.bytes.data()+at,source.bytes.data()+at,opacity,blend,linearLight);
     }
 }
 }
@@ -64,7 +58,7 @@ Result<PaintedDocument> renderPaintedDocument(const DocumentSnapshot& snapshot,E
             bool hasMask=false;layer.mask.resize(std::size_t(size.width*size.height));
             for(std::size_t p=0;p<layer.mask.size();++p){layer.mask[p]=mask.value().bytes[p*4+3];hasMask=hasMask || layer.mask[p]!=255;}
             if(hasMask)layer.maskBounds={0,0,size.width,size.height};else layer.mask.clear();
-            if(layerVisible(snapshot,id))over(output.merged,masked.value(),layer.opacity);
+            if(layerVisible(snapshot,id))compositeLayer(output.merged,masked.value(),layer.opacity,node.blend,isLinearCompositeStage(node.stage));
             output.layers.push_back(std::move(layer));return {};
         }
         const bool group=node.kind!=NodeKind::Root;

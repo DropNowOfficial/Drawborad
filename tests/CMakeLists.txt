@@ -328,6 +328,22 @@ set_tests_properties(B49.CubicPathCore PROPERTIES LABELS "CorePortable")
 lineart_repair_test(B50.CubicPathCancellation test_cubic_path_cancellation.cpp)
 set_tests_properties(B50.CubicPathCancellation PROPERTIES LABELS "CorePortable")
 
+add_executable(test_B51_artist brush/test_artist_optical_dry_ink.cpp ${PROJECT_SOURCE_DIR}/src/ui/PaintedDocument.cpp)
+target_link_libraries(test_B51_artist PRIVATE drawborad_reconstruct drawborad_render drawborad_codecs)
+target_compile_definitions(test_B51_artist PRIVATE $<$<BOOL:${PNG_FOUND}>:DRAWBORAD_HAS_PNG=1>)
+if(MSVC)
+  target_compile_options(test_B51_artist PRIVATE /UNDEBUG)
+else()
+  target_compile_options(test_B51_artist PRIVATE -UNDEBUG)
+endif()
+add_test(NAME B51.ArtistOpticalAndDryInk COMMAND test_B51_artist)
+set_tests_properties(B51.ArtistOpticalAndDryInk PROPERTIES TIMEOUT 120 LABELS "CorePortable")
+
+if(DRAWBORAD_HEADLESS_WORKFLOW)
+  add_test(NAME H02.ArtistSuperResCLI COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/headless/test_artist_superres_cli.py $<TARGET_FILE:DrawboradHeadless>)
+  set_tests_properties(H02.ArtistSuperResCLI PROPERTIES TIMEOUT 240 LABELS "LinuxHeadless")
+endif()
+
 add_test(NAME Build.InventoryMatchesCTest COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/build/test_inventory_matches_ctest.py
   --build ${CMAKE_BINARY_DIR} --ctest ${CMAKE_CTEST_COMMAND} --config "$<CONFIG>")

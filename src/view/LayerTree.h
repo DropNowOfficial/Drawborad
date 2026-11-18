@@ -55,8 +55,11 @@ inline bool nativeCompositingSupported(const DocumentSnapshot& snapshot, NodeId 
         const auto& node = found->second;
         if(node.stage==hiddenBoundary::Stage){if(!hiddenBoundary::parse(snapshot,node))return false;id=node.parent;continue;}
         const bool lineart=(node.stage==persistentRaster::Stage && node.kind==NodeKind::Layer && node.sourceKind==SourceKind::ImportedRaster && node.content.empty() && node.children.empty() && node.blend==BlendMode::Normal && node.maskId.empty()) || (node.stage==LineartStage && bool(lineartRasterPixels(snapshot,id))) || (croppedRaster::isStage(node.stage) && (prepared?prepared->find(snapshot,id)!=nullptr:bool(croppedRaster::parse(snapshot,id))));
+        const bool validNativeBlend = node.kind == NodeKind::Layer
+            ? (node.blend == BlendMode::Normal || node.blend == BlendMode::Multiply || node.blend == BlendMode::Screen)
+            : (node.blend == BlendMode::Normal);
         if (!lineart && (!node.content.empty() || node.sourceKind != SourceKind::Reconstructed ||
-            !node.sourceResource.empty() || node.blend != BlendMode::Normal ||
+            !node.sourceResource.empty() || !validNativeBlend ||
             (node.kind != NodeKind::Layer && node.opacity != 1))) return false;
         transformed=transformed || node.transform!=LayerTransform{};
         if(!node.maskId.empty()){

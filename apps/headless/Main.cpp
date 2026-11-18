@@ -5,10 +5,12 @@
 #include <QCoreApplication>
 #include <QImage>
 #include <QJsonDocument>
+#include <QRegularExpression>
 #include <QTemporaryDir>
 #include <QTextStream>
-#include <numeric>
+#include <cmath>
 #include <limits>
+#include <numeric>
 using namespace drawborad;
 namespace {
 // This command-owned fixture never goes through or weakens the SAM manifest loader.
@@ -30,30 +32,81 @@ Result<SemanticManifestImport> smokeFixture(const QString& path){
     }
     return input;
 }
+bool parseTargetSize(const QString& text, PixelSize& out) {
+    static const QRegularExpression re(QStringLiteral("^([1-9][0-9]{0,4})[xX]([1-9][0-9]{0,4})$"));
+    const auto m = re.match(text);
+    if (!m.hasMatch()) return false;
+    bool okW = false, okH = false;
+    const auto w = m.captured(1).toULongLong(&okW);
+    const auto h = m.captured(2).toULongLong(&okH);
+    if (!okW || !okH || w == 0 || h == 0 || w > 8192 || h > 8192 || w * h > 20000000ull) return false;
+    out = {w, h};
+    return true;
+}
 int execute(const QStringList& args){
     if(args.size()==2 && args[1]=="session")return runProjectSession();
     QTextStream out(stdout),err(stderr);
     if(args.size()==2 && (args[1]=="--help" || args[1]=="-h")){
         out<<"DrawboradHeadless\nUsage:\n"
               "  DrawboradHeadless run --manifest PATH --output DIR --accept-all\n"
-              "  DrawboradHeadless run --manifest PATH --output DIR --accept-index N [--accept-index N] [--fixture]\n"
+              "  DrawboradHeadless run --manifest PATH --output DIR --accept-index N [--accept-index N] [--fixture] [--amodal-background] [--target-size WxH] [--target-dpi DPI]\n"
+              "  DrawboradHeadless compile-plan --plan PATH --output DIR [--target-size WxH] [--target-dpi DPI]\n"
               "  DrawboradHeadless smoke --output DIR\n"
-              "  Optional: --planner sweep|multiscale (multiscale requires visual review)\n"
+              "  Optional: --planner sweep|multiscale|artist\n"
               "Output must be a new directory. Smoke provenance: fixture-no-ai.\n";
         return 0;
     }
     const auto invalid=[&](){err<<"Invalid arguments. Run DrawboradHeadless --help.\n";return 2;};
-    if(args.size()<2 || (args[1]!="run" && args[1]!="smoke"))return invalid();
-    QString manifest,output;bool accept=false, allowFixture=false,multiscale=false,plannerSet=false;
+    if(args.size()<2 || (args[1]!="run" && args[1]!="smoke" && args[1]!="compile-plan"))return invalid();
+
+    if(args[1]=="compile-plan"){
+        QString planFile,output;
+        PixelSize targetSize{};
+        double targetDpi=0.0;
+        bool sizeSet=false,dpiSet=false;
+        for(qsizetype i=2;i<args.size();++i){
+            if(i+1>=args.size() || args[i+1].startsWith("--"))return invalid();
+            if(args[i]=="--plan" && planFile.isEmpty())planFile=args[++i];
+            else if(args[i]=="--output" && output.isEmpty())output=args[++i];
+            else if(args[i]=="--target-size" && !sizeSet){if(!parseTargetSize(args[++i],targetSize))return invalid();sizeSet=true;}
+            else if(args[i]=="--target-dpi" && !dpiSet){
+                bool ok=false;const double d=args[++i].toDouble(&ok);
+                if(!ok || !std::isfinite(d) || d<=0.0 || d>10000.0)return invalid();
+                targetDpi=d;dpiSet=true;
+            }
+            else return invalid();
+        }
+        if(planFile.isEmpty() || output.isEmpty())return invalid();
+        auto result=compileHeadlessPlan({
+            std::filesystem::path(planFile.toUtf8().toStdString()),
+            std::filesystem::path(output.toUtf8().toStdString()),
+            targetSize,
+            targetDpi
+        });
+        if(!result){err<<QString::fromStdString(result.error().messageKey)<<'\n';return result.error().code==ErrorCode::Cancelled?4:3;}
+        out<<QJsonDocument(result.value().metadata).toJson(QJsonDocument::Compact)<<'\n';return 0;
+    }
+
+    QString manifest,output,planner;
+    bool accept=false,allowFixture=false,amodal=false,plannerSet=false,sizeSet=false,dpiSet=false;
+    PixelSize targetSize{};
+    double targetDpi=300.0;
     std::vector<std::size_t> accepted;
     for(qsizetype i=2;i<args.size();++i){
         if(args[i]=="--accept-all" && args[1]=="run" && !accept){accept=true;continue;}
         if(args[i]=="--fixture" && args[1]=="run" && !allowFixture){allowFixture=true;continue;}
+        if(args[i]=="--amodal-background" && !amodal){amodal=true;continue;}
         if(i+1>=args.size() || args[i+1].startsWith("--"))return invalid();
         if(args[i]=="--output" && output.isEmpty())output=args[++i];
         else if(args[i]=="--planner" && !plannerSet){
-            const auto value=args[++i];if(value!="sweep" && value!="multiscale")return invalid();
-            multiscale=value=="multiscale";plannerSet=true;
+            const auto value=args[++i];if(value!="sweep" && value!="multiscale" && value!="artist")return invalid();
+            planner=value;plannerSet=true;
+        }
+        else if(args[i]=="--target-size" && !sizeSet){if(!parseTargetSize(args[++i],targetSize))return invalid();sizeSet=true;}
+        else if(args[i]=="--target-dpi" && !dpiSet){
+            bool ok=false;const double d=args[++i].toDouble(&ok);
+            if(!ok || !std::isfinite(d) || d<=0.0 || d>10000.0)return invalid();
+            targetDpi=d;dpiSet=true;
         }
         else if(args[i]=="--manifest" && args[1]=="run" && manifest.isEmpty())manifest=args[++i];
         else if(args[i]=="--accept-index" && args[1]=="run"){
@@ -70,7 +123,16 @@ int execute(const QStringList& args){
         loadSemanticMaskManifest(QUrl::fromLocalFile(manifest),allowFixture);
     if(!input){err<<QString::fromStdString(input.error().messageKey)<<'\n';return 2;}
     if(accept || args[1]=="smoke"){accepted.resize(input.value().names.size());std::iota(accepted.begin(),accepted.end(),0);}
-    auto result=runHeadlessWorkflow({std::move(input.value()),std::move(accepted),std::filesystem::path(output.toUtf8().toStdString()),multiscale});
+    HeadlessWorkflowRequest wfReq;
+    wfReq.input=std::move(input.value());
+    wfReq.accepted=std::move(accepted);
+    wfReq.outputDirectory=std::filesystem::path(output.toUtf8().toStdString());
+    wfReq.multiscale=(planner=="multiscale");
+    wfReq.planner=planner;
+    wfReq.amodalBackground=amodal;
+    wfReq.targetSize=targetSize;
+    wfReq.targetDpi=targetDpi;
+    auto result=runHeadlessWorkflow(wfReq);
     if(!result){err<<QString::fromStdString(result.error().messageKey)<<'\n';return result.error().code==ErrorCode::Cancelled?4:3;}
     out<<QJsonDocument(result.value().metadata).toJson(QJsonDocument::Compact)<<'\n';return 0;
 }

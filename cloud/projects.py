@@ -1,6 +1,9 @@
 """Thin single-worker transport. All painting state and history live in C++."""
 from contextlib import contextmanager, asynccontextmanager
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 import json
 import re
 import os
@@ -54,13 +57,22 @@ class Projects:
         self.stop()
         try:
             self.lease=(self.root/'.owner.lock').open('a+b')
-            fcntl.flock(self.lease,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        except BlockingIOError:
+            if fcntl is not None:
+                fcntl.flock(self.lease,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            elif os.name=='nt':
+                import msvcrt
+                self.lease.seek(0)
+                if self.lease.tell()==0:self.lease.write(b'0');self.lease.flush();self.lease.seek(0)
+                msvcrt.locking(self.lease.fileno(),msvcrt.LK_NBLCK,1)
+        except (BlockingIOError, OSError) as exc:
+            if fcntl is not None and not isinstance(exc, BlockingIOError):
+                raise
             self.stop();fail(409,'busy','This workspace already has an owning server; use one worker')
         try:
             self.log=(self.root/'engine.log').open('ab')
             self.proc=subprocess.Popen([self.engine,'session'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self.log,bufsize=0)
-            os.set_blocking(self.proc.stdin.fileno(),False)
+            if hasattr(os,'set_blocking'):
+                os.set_blocking(self.proc.stdin.fileno(),False)
         except OSError:
             self.stop();fail(503,'engine_unavailable','Native engine could not start')
 
@@ -364,8 +376,9 @@ def install_projects(app,config,authorized):
                     'set_properties':{'node_id','visible','locked'},
                     'add_fill_layer':set(),
                     'bucket_fill':{'layer_id','x','y','tolerance','color','under_ink'},
-                    'draw_stroke':{'layer_id','points','width','color','brush','pressure_taper'},
-                    'update_layer':{'node_id','name','opacity'}}
+                    'draw_stroke':{'layer_id','points','width','color','brush','pressure_taper','opacity','angle'},
+                    'mypaint_direct_stroke':{'points','preset','radius_scale','paint_mode','color','folder_id'},
+                    'update_layer':{'node_id','name','opacity','blend'}}
             kind=body.get('type')
             if not isinstance(kind,str) or kind not in fields:fail(422,'invalid_input','Unknown command type')
             allowed={'expected_revision','type'}|fields[kind]

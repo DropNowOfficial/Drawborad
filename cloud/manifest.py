@@ -15,7 +15,7 @@ import re
 import numpy as np
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-MAX_PIXELS = 4 * 1024 * 1024
+MAX_PIXELS = 20_000_000
 MAX_MASKS = 64
 MAX_SOURCE_BYTES = 32 * 1024 * 1024
 MAX_MANIFEST_BYTES = 256 * 1024
@@ -74,8 +74,10 @@ def load_manifest(folder: Path) -> Document:
         raise ManifestError('Malformed manifest JSON') from exc
     if not isinstance(data, dict) or data.get('schema') != 1 or data.get('backend') not in _ALLOWED_BACKENDS or data.get('promptOrder') != 'back-to-front':
         raise ManifestError('Unsupported semantic manifest schema')
+    if 'amodalBackground' in data and type(data['amodalBackground']) is not bool:
+        raise ManifestError('Invalid amodalBackground flag')
     w, h = data.get('width'), data.get('height')
-    if type(w) is not int or type(h) is not int or min(w,h) < 1 or max(w,h) > 4096 or w*h > MAX_PIXELS:
+    if type(w) is not int or type(h) is not int or min(w,h) < 1 or max(w,h) > 8192 or w*h > MAX_PIXELS:
         raise ManifestError('Invalid image dimensions')
     source_name = data.get('image')
     source = _local_file(folder, source_name, source_name in _ALLOWED_IMAGE)
@@ -97,7 +99,7 @@ def load_manifest(folder: Path) -> Document:
     except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
         raise ManifestError('Invalid source image') from exc
     items = data.get('objects')
-    if not isinstance(items, list) or not 1 <= len(items) <= MAX_MASKS or (len(items) * w*h) > 56*1024*1024:
+    if not isinstance(items, list) or not 1 <= len(items) <= MAX_MASKS or (len(items) * w*h) > 256*1024*1024:
         raise ManifestError('Invalid number of object masks')
     occupied = np.zeros((h,w), dtype=bool)
     layers = []

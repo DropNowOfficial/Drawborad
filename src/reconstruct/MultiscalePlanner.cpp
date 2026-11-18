@@ -24,16 +24,27 @@ Result<EventBatch> planMultiscalePigment(const PlanningRegion& region){
     const auto checked=planning::checkRegion(region,true);if(!checked)return checked.error();
     if(!region.clipToReviewedMask || region.source->format!=PixelFormat{ColorMode::RGB,Depth::U8,true})
         return error(ErrorCode::UnsupportedFeature,"reconstruct.multiscale-layout");
-    // Match the current product's explicit memory gate. No downsampling or
-    // claim of print-size automatic reconstruction is hidden behind this path.
-    if(region.bounds.width*region.bounds.height>4ull*1024*1024)
+    // Allocate planning feedback buffers strictly over the object's active ROI
+    // bounding box rather than full canvas, enabling up to 20M-pixel documents
+    // within the 128 MiB budget.
+    if(region.bounds.width*region.bounds.height>20000000ull)
         return error(ErrorCode::BudgetExceeded,"reconstruct.multiscale-area");
     const auto& src=*region.source;const int w=int(src.width),h=int(src.height);
     const auto inside=[&](Point p){return p.x>=0 && p.y>=0 && p.x<w && p.y<h &&
         region.reviewedMask[std::size_t(int(p.y))*w+std::size_t(int(p.x))]==255;};
+    int roiX0=w,roiY0=h,roiX1=0,roiY1=0;
     for(int y=0;y<h;++y)for(int x=0;x<w;++x)
-        if(region.reviewedMask[std::size_t(y)*w+x] && src.bytes[std::size_t(y)*src.rowStride+x*4+3]!=255)
-            return error(ErrorCode::UnsupportedFeature,"reconstruct.multiscale-soft-alpha");
+        if(region.reviewedMask[std::size_t(y)*w+x]){
+            if(src.bytes[std::size_t(y)*src.rowStride+x*4+3]!=255)
+                return error(ErrorCode::UnsupportedFeature,"reconstruct.multiscale-soft-alpha");
+            roiX0=std::min(roiX0,x);roiY0=std::min(roiY0,y);
+            roiX1=std::max(roiX1,x+1);roiY1=std::max(roiY1,y+1);
+        }
+    if(roiX0>=roiX1 || roiY0>=roiY1)
+        return error(ErrorCode::InvalidInput,"reconstruct.empty-safe-region");
+    roiX0=std::max(0,roiX0-16);roiY0=std::max(0,roiY0-16);
+    roiX1=std::min(w,roiX1+16);roiY1=std::min(h,roiY1+16);
+    const int roiW=roiX1-roiX0,roiH=roiY1-roiY0;
     // Broad underpainting remains ordinary connected brush geometry. Corrections
     // share its native layer, so feedback uses exactly the replay blend operation.
     auto underpainting=region;
@@ -50,21 +61,23 @@ Result<EventBatch> planMultiscalePigment(const PlanningRegion& region){
     auto batch=std::move(base.value());
     auto snapshot=region.snapshot;snapshot.eventIndex=std::make_shared<const EventList>(batch.events);
     ReferenceRenderer renderer;
-    TileData canvas;canvas.width=src.width;canvas.height=src.height;canvas.rowStride=std::uint64_t(w)*4;
-    canvas.format=src.format;canvas.profileId=src.profileId;canvas.bytes.resize(std::size_t(canvas.rowStride)*h);
-    for(int y=0;y<h;y+=TileSide)for(int x=0;x<w;x+=TileSide){
-        Rect box{x,y,std::uint64_t(std::min(int(TileSide),w-x)),std::uint64_t(std::min(int(TileSide),h-y))};
+    TileData canvas;canvas.width=std::uint32_t(roiW);canvas.height=std::uint32_t(roiH);canvas.rowStride=std::uint64_t(roiW)*4;
+    canvas.format=src.format;canvas.profileId=src.profileId;canvas.bytes.resize(std::size_t(canvas.rowStride)*std::size_t(roiH));
+    for(int y=roiY0;y<roiY1;y+=int(TileSide))for(int x=roiX0;x<roiX1;x+=int(TileSide)){
+        Rect box{x,y,std::uint64_t(std::min(int(TileSide),roiX1-x)),std::uint64_t(std::min(int(TileSide),roiY1-y))};
         auto rendered=renderer.renderRegion(snapshot,region.layerId,box,{snapshot.revision},region.stop);
         if(!rendered)return rendered.error();
         auto clipped=nativeMaskedTile(snapshot,region.layerId,rendered.value(),x,y);if(!clipped)return clipped.error();
         const auto& tile=clipped.value();
         for(unsigned row=0;row<tile.height;++row)std::copy_n(tile.bytes.data()+row*tile.rowStride,tile.width*4,
-            canvas.bytes.data()+(row+y)*canvas.rowStride+x*4);
+            canvas.bytes.data()+std::size_t(int(row)+y-roiY0)*canvas.rowStride+std::size_t(x-roiX0)*4);
     }
     std::uint64_t samples=0,time=100;for(const auto& e:batch.events){samples+=e.geometry.size();time=std::max(time,e.endUs+100);}
     const auto initial=batch.events.size(),available=region.maxEvents-initial;
     const auto squaredError=[&](int x,int y){
-        double value=0;const auto a=std::size_t(y)*canvas.rowStride+x*4,b=std::size_t(y)*src.rowStride+x*4;
+        double value=0;
+        const auto a=std::size_t(y-roiY0)*canvas.rowStride+std::size_t(x-roiX0)*4;
+        const auto b=std::size_t(y)*src.rowStride+std::size_t(x)*4;
         for(int c=0;c<3;++c){const auto d=double(canvas.bytes[a+c])-src.bytes[b+c];value+=d*d;}
         return value;
     };
@@ -76,11 +89,11 @@ Result<EventBatch> planMultiscalePigment(const PlanningRegion& region){
         const int cell=std::max(2,int(width*1.5));
         for(int pass=0;pass<2;++pass){
             std::vector<Seed> seeds;
-            for(int y=0;y<h;y+=cell){
+            for(int y=roiY0;y<roiY1;y+=cell){
               if(region.stop.stop_requested())return error(ErrorCode::Cancelled,"reconstruct.planning-cancelled");
-              for(int x=0;x<w;x+=cell){
+              for(int x=roiX0;x<roiX1;x+=cell){
                 Seed best{36,0,0};
-                for(int yy=y;yy<std::min(y+cell,h);++yy)for(int xx=x;xx<std::min(x+cell,w);++xx)
+                for(int yy=y;yy<std::min(y+cell,roiY1);++yy)for(int xx=x;xx<std::min(x+cell,roiX1);++xx)
                     if(inside({xx+.5,yy+.5})){
                         const auto score=squaredError(xx,yy);if(score>best.score)best={score,xx,yy};
                     }
@@ -124,15 +137,17 @@ Result<EventBatch> planMultiscalePigment(const PlanningRegion& region){
                 event.endUs=event.geometry.back().timestampUs;
                 if(event.geometry.size()>region.maxSamples-samples)break;
                 auto bounds=strokeBounds(event);if(!bounds)return bounds.error();
-                const auto b=bounds.value();const auto x0=std::max<std::int64_t>(0,b.x),y0=std::max<std::int64_t>(0,b.y);
-                const auto x1=std::min<std::int64_t>(w,b.x+std::int64_t(b.width)),y1=std::min<std::int64_t>(h,b.y+std::int64_t(b.height));
+                const auto b=bounds.value();const auto x0=std::max<std::int64_t>(roiX0,b.x),y0=std::max<std::int64_t>(roiY0,b.y);
+                const auto x1=std::min<std::int64_t>(roiX1,b.x+std::int64_t(b.width)),y1=std::min<std::int64_t>(roiY1,b.y+std::int64_t(b.height));
+                if(x0>=x1 || y0>=y1 || std::uint64_t(x1-x0)>TileSide || std::uint64_t(y1-y0)>TileSide)continue;
                 Rect box{x0,y0,std::uint64_t(x1-x0),std::uint64_t(y1-y0)};
                 auto coverage=strokeCoverage(event,box,UINT64_MAX,region.stop);if(!coverage)return coverage.error();
                 TileData patch;patch.width=std::uint32_t(box.width);patch.height=std::uint32_t(box.height);patch.rowStride=box.width*4;
                 patch.format=src.format;patch.profileId=src.profileId;patch.bytes.resize(std::size_t(patch.rowStride)*patch.height);
                 std::array<double,3> numerator{};double denominator=0;
                 for(unsigned y=0;y<patch.height;++y)for(unsigned x=0;x<patch.width;++x){
-                    const auto ci=std::size_t(y+y0)*canvas.rowStride+(x+x0)*4,si=std::size_t(y+y0)*src.rowStride+(x+x0)*4,pi=std::size_t(y)*patch.rowStride+x*4;
+                    const auto ci=std::size_t(int(y)+int(y0)-roiY0)*canvas.rowStride+std::size_t(int(x)+int(x0)-roiX0)*4;
+                    const auto si=std::size_t(y+y0)*src.rowStride+(x+x0)*4,pi=std::size_t(y)*patch.rowStride+x*4;
                     std::copy_n(canvas.bytes.data()+ci,4,patch.bytes.data()+pi);
                     auto& cov=coverage.value()[std::size_t(y)*patch.width+x];if(!region.reviewedMask[std::size_t(y+y0)*w+x+x0])cov=0;
                     const double a=cov/65535.;denominator+=a*a;
@@ -149,7 +164,7 @@ Result<EventBatch> planMultiscalePigment(const PlanningRegion& region){
                 }
                 if(gain<48)continue;
                 for(unsigned y=0;y<patch.height;++y)std::copy_n(patch.bytes.data()+y*patch.rowStride,patch.rowStride,
-                    canvas.bytes.data()+(y+y0)*canvas.rowStride+x0*4);
+                    canvas.bytes.data()+std::size_t(int(y)+int(y0)-roiY0)*canvas.rowStride+std::size_t(int(x0)-roiX0)*4);
                 samples+=event.geometry.size();time=event.endUs+100;batch.events.push_back(std::move(event));
             }
         }

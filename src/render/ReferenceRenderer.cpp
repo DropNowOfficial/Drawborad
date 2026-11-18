@@ -1,11 +1,17 @@
 #include "ReferenceRenderer.h"
 #include "CoverageRasterizer.h"
+#include "core/ArtistOptIn.h"
 #include <algorithm>
 namespace drawborad {
 struct PreparedEvents { std::shared_ptr<const EventList> events; ColorSpec color; std::map<TileKey,std::vector<std::size_t>> tiles; std::vector<Rect> bounds; std::shared_ptr<const PreparedCubicEvents> cubics; };
 namespace {
 bool intersects(Rect a,Rect b){return a.x<std::int64_t(b.x+std::int64_t(b.width))&&b.x<a.x+std::int64_t(a.width)&&a.y<std::int64_t(b.y+std::int64_t(b.height))&&b.y<a.y+std::int64_t(a.height);}
 std::int64_t tileAt(std::int64_t p){return p>=0?p/TileSide:-((-p+TileSide-1)/TileSide);}
+bool clipsToRoi(const StrokeEvent& e){
+ return (e.engineVersion==2 && (e.toolId=="marker" || e.toolId=="highlight")) ||
+        e.engineVersion==10 || e.engineVersion==12 || e.engineVersion==19 ||
+        e.engineVersion==21 || e.engineVersion==22 || hasLinearOpticalBlend(e);
+}
 Result<Rect> tileRect(const DocumentSnapshot&s,TileKey k){
  if(k.mip)return error(ErrorCode::UnsupportedFeature,"render.pigment-mip");
  if(k.tileX<0||k.tileY<0)return error(ErrorCode::InvalidInput,"render.tile-outside");
@@ -37,13 +43,13 @@ Result<TileData> ReferenceRenderer::continueRegion(const DocumentSnapshot&s,Node
  auto ok=prepare(s,stop);if(!ok)return ok.error();TileData t;t.width=std::uint32_t(rect.width);t.height=std::uint32_t(rect.height);t.format=s.spec.colorSpec.format;t.profileId=s.spec.colorSpec.profileId;t.rowStride=rect.width*t.format.channelCount()*(t.format.depth==Depth::U16?2:1);try{t.bytes.resize(std::size_t(t.rowStride*t.height));}catch(const std::bad_alloc&){return error(ErrorCode::BudgetExceeded,"render.tile-allocation");}
  if(first){if(checkpoint.width!=t.width||checkpoint.height!=t.height||checkpoint.rowStride!=t.rowStride||checkpoint.format!=t.format||checkpoint.profileId!=t.profileId||checkpoint.bytes.size()!=t.bytes.size())return error(ErrorCode::CorruptData,"render.checkpoint-layout");t.bytes=checkpoint.bytes;}
  std::vector<std::size_t> ids;for(auto y=tileAt(rect.y);y<=tileAt(rect.y+std::int64_t(rect.height)-1);y++)for(auto x=tileAt(rect.x);x<=tileAt(rect.x+std::int64_t(rect.width)-1);x++){auto c=candidates(s,{id,x,y,0},stop);if(!c)return c.error();ids.insert(ids.end(),c.value().begin(),c.value().end());}std::sort(ids.begin(),ids.end());ids.erase(std::unique(ids.begin(),ids.end()),ids.end());stats_.reconstructionCalls++;
- for(auto i:ids){if(i<first||i>=l.lastEvent)continue;stats_.visitedEvents++;const auto&e=s.eventIndex->at(i);if(e.startUs>l.timeTicks||!intersects(prepared_->bounds[i],rect))continue;const StrokeEvent* rendered=&e;if(isAuthoredCubic(e)){if(!prepared_->cubics||!prepared_->cubics->renderEvents.contains(i))return error(ErrorCode::CorruptData,"cubic.preparation-missing");rendered=&prepared_->cubics->renderEvents.at(i);}if(e.engineVersion==2 && e.toolId=="marker"){
+ for(auto i:ids){if(i<first||i>=l.lastEvent)continue;stats_.visitedEvents++;const auto&e=s.eventIndex->at(i);if(e.startUs>l.timeTicks||!intersects(prepared_->bounds[i],rect))continue;const StrokeEvent* rendered=&e;if(isAuthoredCubic(e)){if(!prepared_->cubics||!prepared_->cubics->renderEvents.contains(i))return error(ErrorCode::CorruptData,"cubic.preparation-missing");rendered=&prepared_->cubics->renderEvents.at(i);}if(clipsToRoi(e)){
   const auto& b=prepared_->bounds[i];
   const auto x0=std::max(rect.x,b.x),y0=std::max(rect.y,b.y);
   const auto x1=std::min(rect.x+std::int64_t(rect.width),b.x+std::int64_t(b.width));
   const auto y1=std::min(rect.y+std::int64_t(rect.height),b.y+std::int64_t(b.height));
   Rect roi{x0,y0,std::uint64_t(x1-x0),std::uint64_t(y1-y0)};
-  auto c=strokeCoverage(e,roi,l.timeTicks,stop);if(!c)return c.error();
+  auto c=strokeCoverage(*rendered,roi,l.timeTicks,stop);if(!c)return c.error();
   TileData patch;patch.width=std::uint32_t(roi.width);patch.height=std::uint32_t(roi.height);
   patch.format=t.format;patch.profileId=t.profileId;
   const auto pixelBytes=t.format.channelCount()*(t.format.depth==Depth::U16?2u:1u);

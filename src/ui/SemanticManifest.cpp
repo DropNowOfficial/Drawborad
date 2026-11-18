@@ -59,7 +59,7 @@ Result<SemanticManifestImport> loadSemanticMaskManifest(const QUrl& manifestUrl,
        root.value("promptOrder").toString()!=QLatin1String("back-to-front"))
         return error(ErrorCode::UnsupportedFeature,"semantic.manifest-schema");
     const auto w=root.value("width").toInteger(-1), h=root.value("height").toInteger(-1);
-    if(w<=0 || h<=0 || w>4096 || h>4096 || w*h>4*1024*1024)
+    if(w<=0 || h<=0 || w>8192 || h>8192 || w*h>20000000)
         return error(ErrorCode::BudgetExceeded,"semantic.image-size");
     const auto imageName=root.value("image").toString();
     if(!simpleLocalPath(imageName,false))return error(ErrorCode::PathEscape,"semantic.image-path");
@@ -77,10 +77,11 @@ Result<SemanticManifestImport> loadSemanticMaskManifest(const QUrl& manifestUrl,
         return error(ErrorCode::DigestMismatch,"semantic.source-verification");
     const auto entries=root.value("objects").toArray();
     const auto pixelCount=std::size_t(w*h);
-    if(entries.isEmpty() || entries.size()>64 || std::size_t(entries.size())*pixelCount>56*1024*1024)
+    if(entries.isEmpty() || entries.size()>64 || std::size_t(entries.size())*pixelCount>256*1024*1024)
         return error(ErrorCode::BudgetExceeded,"semantic.layer-count");
     SemanticManifestImport result;
     result.backend=root.value("backend").toString();
+    result.amodalBackground=root.value("amodalBackground").toBool(false);
     result.masks.dimensions={std::uint64_t(w),std::uint64_t(h)};
     result.proposals.sourceSize=result.masks.dimensions;
     result.sourceReference=QJsonObject{{"type",SourceReferenceType},

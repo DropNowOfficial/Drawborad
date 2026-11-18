@@ -93,11 +93,13 @@ Result<ExportReport> writeOraStream(const ExportPlan& plan,std::size_t layerCoun
   auto produced=provider(i,stop);if(!produced)return produced.error();
   auto& layer=produced.value();
   if(!std::isfinite(layer.opacity)||layer.opacity<0||layer.opacity>1||
-     (layer.blend!=BlendMode::Normal&&layer.blend!=BlendMode::Multiply))return error(ErrorCode::UnsupportedFeature,"ora.layer-properties");
+     (layer.blend!=BlendMode::Normal&&layer.blend!=BlendMode::Multiply&&layer.blend!=BlendMode::Screen))return error(ErrorCode::UnsupportedFeature,"ora.layer-properties");
   if(layer.x<INT32_MIN||layer.x>INT32_MAX||layer.y<INT32_MIN||layer.y>INT32_MAX)return error(ErrorCode::InvalidInput,"ora.layer-offset");
   auto name=xml(layer.name);if(!name)return name.error();
   const auto path="data/layer"+std::to_string(i)+".png";
-  stack<<"<layer name=\""<<name.value()<<"\" src=\""<<path<<"\" x=\""<<layer.x<<"\" y=\""<<layer.y<<"\" opacity=\""<<layer.opacity<<"\" visibility=\""<<(layer.visible?"visible":"hidden")<<"\" composite-op=\""<<(layer.blend==BlendMode::Multiply?"svg:multiply":"svg:src-over")<<"\"/>";
+  const char* compositeOp = layer.blend==BlendMode::Multiply ? "svg:multiply" :
+                            layer.blend==BlendMode::Screen ? "svg:screen" : "svg:src-over";
+  stack<<"<layer name=\""<<name.value()<<"\" src=\""<<path<<"\" x=\""<<layer.x<<"\" y=\""<<layer.y<<"\" opacity=\""<<layer.opacity<<"\" visibility=\""<<(layer.visible?"visible":"hidden")<<"\" composite-op=\""<<compositeOp<<"\"/>";
   if(std::uint64_t(stack.tellp())>limits.maxMetadataBytes/8)return error(ErrorCode::BudgetExceeded,"ora.xml-limit");
   auto encoded=png(layer.pixels,false);if(!encoded)return encoded.error();
   emitted=zip.addKnown(path,encoded.value());if(!emitted)return emitted.error();
